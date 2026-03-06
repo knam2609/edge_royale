@@ -65,3 +65,13 @@ Original prompt: PLEASE IMPLEMENT THIS PLAN (3x overtime elixir + Fireball knock
   - `output/web-game-visual-troop/shot-0.png` shows deploy telegraph in-world.
   - `output/web-game-visual-fireball/shot-0.png` shows Fireball reticle + projectile path.
   - No console error logs emitted in these focused runs.
+
+- Polished telegraph visual language (second pass):
+  - Added team-aware palettes (blue/red) and card-aware accents (Fireball/Arrows) for pending effects.
+  - Added eased timing interpolation for travel motion and smoother fade/opacity across effect lifetime.
+  - Fireball reticle now labels phase (`CAST` / `TRAVEL`) and uses layered countdown rings.
+  - Troop deploy marker now shows card mnemonic with cleaner countdown treatment.
+- Validation artifacts for polished pass:
+  - `output/web-game-visual-troop-v3/shot-0.png` confirms updated deploy telegraph styling while pending.
+  - `output/web-game-visual-fireball-v2/shot-0.png` confirms updated Fireball travel styling.
+  - No console error logs emitted in these captures.
