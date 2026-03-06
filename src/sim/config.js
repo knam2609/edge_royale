@@ -6,6 +6,11 @@ export const ELIXIR_REGEN_TICKS = Object.freeze({
   overtime: 20,
 });
 
+export const SIMULATION_CONFIG = Object.freeze({
+  tick_rate: TICK_RATE,
+  elixir_regen_ticks: ELIXIR_REGEN_TICKS,
+});
+
 export const MATCH_CONFIG = Object.freeze({
   regulation_ticks: 180 * TICK_RATE,
   double_elixir_start_tick: 120 * TICK_RATE,
@@ -13,6 +18,7 @@ export const MATCH_CONFIG = Object.freeze({
 });
 
 export const FIREBALL_CONFIG = Object.freeze({
+  cost: 4,
   radius_tiles: 2.5,
   damage: 520,
   knockback_distance_tiles: 0.75,
