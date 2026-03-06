@@ -58,10 +58,41 @@ function lerp(start, end, t) {
   return start + (end - start) * t;
 }
 
+function easeOutCubic(value) {
+  const t = clamp01(value);
+  return 1 - (1 - t) ** 3;
+}
+
 function tilesToPixels(tiles) {
   const pxPerTileX = canvas.width / (arena.maxX - arena.minX);
   const pxPerTileY = canvas.height / (arena.maxY - arena.minY);
   return tiles * ((pxPerTileX + pxPerTileY) * 0.5);
+}
+
+function getTeamPalette(actor) {
+  if (actor === "blue") {
+    return {
+      stroke: "#6fa8ff",
+      glow: "rgba(72,145,255,0.28)",
+      text: "#e4efff",
+    };
+  }
+
+  return {
+    stroke: "#ff8f8f",
+    glow: "rgba(239,95,95,0.28)",
+    text: "#ffe6e6",
+  };
+}
+
+function getCardAccent(cardId) {
+  if (cardId === "fireball") {
+    return "#ff9c4f";
+  }
+  if (cardId === "arrows") {
+    return "#f7d165";
+  }
+  return "#dce7ff";
 }
 
 function getHandSlotRects() {
@@ -309,7 +340,10 @@ function drawEntity(entity) {
   ctx.fillRect(screen.x - barWidth / 2, screen.y - radius - 10, barWidth * hpRatio, barHeight);
 }
 
-function drawCountdownRing(screen, radius, progress, color) {
+function drawCountdownRing(screen, radius, progress, color, alpha = 1) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+
   ctx.beginPath();
   ctx.arc(screen.x, screen.y, radius, 0, Math.PI * 2);
   ctx.strokeStyle = "rgba(255,255,255,0.24)";
@@ -321,22 +355,29 @@ function drawCountdownRing(screen, radius, progress, color) {
   ctx.strokeStyle = color;
   ctx.lineWidth = 3;
   ctx.stroke();
+
+  ctx.restore();
 }
 
-function drawSpellReticle(screen, radius, color, progress, label) {
+function drawSpellReticle({ screen, radius, color, progress, label, actor, alpha = 1 }) {
+  const teamPalette = getTeamPalette(actor);
   const pulse = 1 + 0.06 * Math.sin(appState.engine.state.tick * 0.4);
   const ringRadius = radius * pulse;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
 
   ctx.save();
   ctx.setLineDash([8, 6]);
   ctx.beginPath();
   ctx.arc(screen.x, screen.y, ringRadius, 0, Math.PI * 2);
-  ctx.strokeStyle = `${color}88`;
+  ctx.strokeStyle = color;
   ctx.lineWidth = 2;
   ctx.stroke();
   ctx.restore();
 
-  drawCountdownRing(screen, ringRadius + 8, progress, color);
+  drawCountdownRing(screen, ringRadius + 8, progress, color, alpha);
+  drawCountdownRing(screen, ringRadius + 14, progress, teamPalette.stroke, alpha * 0.8);
 
   ctx.beginPath();
   ctx.moveTo(screen.x - 10, screen.y);
@@ -349,8 +390,10 @@ function drawSpellReticle(screen, radius, color, progress, label) {
 
   ctx.font = "11px Avenir Next";
   ctx.textAlign = "center";
-  ctx.fillStyle = "#f6f9ff";
+  ctx.fillStyle = teamPalette.text;
   ctx.fillText(label, screen.x, screen.y - ringRadius - 14);
+
+  ctx.restore();
 }
 
 function drawPendingEffects() {
@@ -358,26 +401,37 @@ function drawPendingEffects() {
   const effects = [...appState.engine.state.pending_effects].sort((a, b) => a.effect_id - b.effect_id);
 
   for (const effect of effects) {
+    const lifeTicks = Math.max(1, effect.resolve_tick - effect.enqueue_tick);
+    const elapsedLifeTicks = Math.max(0, tick - effect.enqueue_tick);
+    const lifeProgress = clamp01(elapsedLifeTicks / lifeTicks);
+    const easeProgress = easeOutCubic(lifeProgress);
     const remainingTicks = Math.max(0, effect.resolve_tick - tick);
     const target = worldToScreen(effect);
+    const teamPalette = getTeamPalette(effect.actor);
+    const cardAccent = getCardAccent(effect.card_id);
+    const fadeAlpha = 0.35 + (1 - lifeProgress) * 0.65;
 
     if (effect.effect_type === "troop_deploy") {
       const totalTicks = getCard(effect.card_id)?.deploy_time_ticks ?? Math.max(1, effect.resolve_tick - effect.enqueue_tick);
       const progress = clamp01(1 - remainingTicks / Math.max(1, totalTicks));
-      const color = effect.actor === "blue" ? "#6fa8ff" : "#ff8f8f";
+      const cardLabel = (CARD_LABEL[effect.card_id] ?? effect.card_id).slice(0, 3).toUpperCase();
+      const fillRadius = lerp(12, 20, easeProgress);
 
+      ctx.save();
+      ctx.globalAlpha = fadeAlpha;
       ctx.beginPath();
-      ctx.arc(target.x, target.y, 18, 0, Math.PI * 2);
-      ctx.fillStyle = effect.actor === "blue" ? "rgba(37,115,255,0.22)" : "rgba(234,79,79,0.22)";
+      ctx.arc(target.x, target.y, fillRadius, 0, Math.PI * 2);
+      ctx.fillStyle = teamPalette.glow;
       ctx.fill();
+      ctx.restore();
 
-      drawCountdownRing(target, 24, progress, color);
+      drawCountdownRing(target, 24, progress, teamPalette.stroke, fadeAlpha);
 
       ctx.font = "11px Avenir Next";
       ctx.textAlign = "center";
-      ctx.fillStyle = "#ffffff";
-      ctx.fillText("DEPLOY", target.x, target.y + 4);
-      ctx.fillStyle = "rgba(255,255,255,0.85)";
+      ctx.fillStyle = teamPalette.text;
+      ctx.fillText(cardLabel, target.x, target.y + 4);
+      ctx.fillStyle = "rgba(255,255,255,0.9)";
       ctx.fillText(`${(remainingTicks / TICK_RATE).toFixed(1)}s`, target.x, target.y + 20);
       continue;
     }
@@ -386,7 +440,15 @@ function drawPendingEffects() {
       const castTicks = effect.cast_delay_ticks ?? Math.max(1, effect.resolve_tick - effect.enqueue_tick);
       const elapsed = Math.max(0, tick - effect.enqueue_tick);
       const progress = clamp01(elapsed / Math.max(1, castTicks));
-      drawSpellReticle(target, tilesToPixels(ARROWS_CONFIG.radius_tiles), "#f7d165", progress, "ARROWS");
+      drawSpellReticle({
+        screen: target,
+        radius: tilesToPixels(ARROWS_CONFIG.radius_tiles),
+        color: cardAccent,
+        progress,
+        label: "ARROWS",
+        actor: effect.actor,
+        alpha: fadeAlpha,
+      });
       continue;
     }
 
@@ -399,7 +461,15 @@ function drawPendingEffects() {
     const elapsed = Math.max(0, tick - effect.enqueue_tick);
     const totalDuration = Math.max(1, effect.resolve_tick - effect.enqueue_tick);
     const totalProgress = clamp01(elapsed / totalDuration);
-    drawSpellReticle(target, tilesToPixels(FIREBALL_CONFIG.radius_tiles), "#ff9c4f", totalProgress, "FIREBALL");
+    drawSpellReticle({
+      screen: target,
+      radius: tilesToPixels(FIREBALL_CONFIG.radius_tiles),
+      color: cardAccent,
+      progress: totalProgress,
+      label: elapsed < castTicks ? "FIREBALL CAST" : "FIREBALL TRAVEL",
+      actor: effect.actor,
+      alpha: fadeAlpha,
+    });
 
     const launchPoint = worldToScreen({
       x: effect.launch_x ?? effect.x,
@@ -410,40 +480,47 @@ function drawPendingEffects() {
       const castProgress = castTicks <= 0 ? 1 : clamp01(elapsed / Math.max(1, castTicks));
 
       ctx.save();
+      ctx.globalAlpha = fadeAlpha;
+      ctx.save();
       ctx.setLineDash([6, 5]);
       ctx.beginPath();
       ctx.moveTo(launchPoint.x, launchPoint.y);
       ctx.lineTo(target.x, target.y);
-      ctx.strokeStyle = "rgba(255,166,77,0.7)";
+      ctx.strokeStyle = cardAccent;
       ctx.lineWidth = 2;
       ctx.stroke();
       ctx.restore();
+      ctx.restore();
 
-      drawCountdownRing(launchPoint, 12, castProgress, "#ff9c4f");
+      drawCountdownRing(launchPoint, 12, castProgress, teamPalette.stroke, fadeAlpha);
       continue;
     }
 
     const travelElapsed = Math.max(0, tick - (effect.enqueue_tick + castTicks) + 1);
     const travelProgress = clamp01(travelElapsed / travelTicks);
+    const easedTravel = easeOutCubic(travelProgress);
     const projectile = {
-      x: lerp(launchPoint.x, target.x, travelProgress),
-      y: lerp(launchPoint.y, target.y, travelProgress),
+      x: lerp(launchPoint.x, target.x, easedTravel),
+      y: lerp(launchPoint.y, target.y, easedTravel),
     };
 
+    ctx.save();
+    ctx.globalAlpha = fadeAlpha;
     ctx.beginPath();
     ctx.moveTo(launchPoint.x, launchPoint.y);
     ctx.lineTo(projectile.x, projectile.y);
-    ctx.strokeStyle = "rgba(255,166,77,0.45)";
+    ctx.strokeStyle = cardAccent;
     ctx.lineWidth = 3;
     ctx.stroke();
 
     ctx.beginPath();
     ctx.arc(projectile.x, projectile.y, 8, 0, Math.PI * 2);
-    ctx.fillStyle = "#ff9c4f";
+    ctx.fillStyle = cardAccent;
     ctx.fill();
     ctx.strokeStyle = "rgba(255,238,214,0.95)";
     ctx.lineWidth = 2;
     ctx.stroke();
+    ctx.restore();
   }
 }
 
