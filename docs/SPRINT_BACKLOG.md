@@ -26,7 +26,9 @@ This backlog assumes 10 one-week sprints. IDs are stable so they can become GitH
 - `SIM-005` Implement elixir regen/cap logic with phase timing.
 - `SIM-006` Implement deck/hand/cycle rules for 8-card fixed deck.
 - `SIM-007` Implement win conditions + overtime + tiebreak.
+- `SIM-008` Implement Fireball knockback with troop-only displacement and Giant immunity.
 - `QA-003` Add determinism replay tests (golden hash snapshots).
+- `QA-009` Add overtime regen verification (`56/28/20` ticks) and Fireball immunity tests.
 
 ## Sprint 4: Client Scaffolding
 

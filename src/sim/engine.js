@@ -1,0 +1,141 @@
+import { saveReplay } from "../replay/codec.js";
+import { ElixirTracker } from "./elixir.js";
+import { applyForcedMotion } from "./entities.js";
+import { getMatchPhase } from "./config.js";
+import { hashState } from "./hash.js";
+import { createArena } from "./map.js";
+import { createRng } from "./random.js";
+import { resolveFireballImpact } from "./spells.js";
+
+function cloneEntity(entity) {
+  return {
+    ...entity,
+    forced_motion_vector: { ...entity.forced_motion_vector },
+  };
+}
+
+function sortActions(actions) {
+  return [...actions].sort((a, b) => {
+    if (a.tick !== b.tick) {
+      return a.tick - b.tick;
+    }
+    if (a.type !== b.type) {
+      return a.type.localeCompare(b.type);
+    }
+    return (a.actor ?? "").localeCompare(b.actor ?? "");
+  });
+}
+
+export function createEngine({
+  seed = 1,
+  arena = createArena(),
+  fireballConfig,
+  initialEntities = [],
+  initialOvertime = false,
+} = {}) {
+  const rng = createRng(seed);
+
+  const state = {
+    seed,
+    tick: 0,
+    isOvertime: initialOvertime,
+    entities: initialEntities.map(cloneEntity),
+    replay: {
+      seed,
+      actions: [],
+      events: [],
+    },
+    elixir: {
+      blue: new ElixirTracker(),
+      red: new ElixirTracker(),
+    },
+  };
+
+  function setOvertime(flag) {
+    state.isOvertime = Boolean(flag);
+  }
+
+  function step(actionsForTick = []) {
+    state.tick += 1;
+    const phase = getMatchPhase({ tick: state.tick, isOvertime: state.isOvertime });
+    state.elixir.blue.tick(phase);
+    state.elixir.red.tick(phase);
+
+    const actions = sortActions(actionsForTick).filter((action) => action.tick === state.tick);
+
+    for (const action of actions) {
+      state.replay.actions.push(action);
+      if (action.type === "CAST_FIREBALL") {
+        const impact = resolveFireballImpact({
+          tick: state.tick,
+          impactX: action.x,
+          impactY: action.y,
+          entities: state.entities,
+          arena,
+          sourceSpell: "fireball",
+          fireballConfig,
+        });
+
+        state.replay.events.push({
+          type: "spell_impact",
+          tick: state.tick,
+          source_spell: "fireball",
+          impacted_entity_ids: impact.impacted_entity_ids,
+          knockback_events: impact.knockback_events,
+        });
+      }
+    }
+
+    state.entities.sort((a, b) => a.id.localeCompare(b.id));
+    for (const entity of state.entities) {
+      applyForcedMotion(entity, arena);
+    }
+
+    return phase;
+  }
+
+  function run(actions = [], totalTicks = 120) {
+    const indexed = actions.reduce((acc, action) => {
+      const list = acc.get(action.tick) ?? [];
+      list.push(action);
+      acc.set(action.tick, list);
+      return acc;
+    }, new Map());
+
+    for (let tick = 1; tick <= totalTicks; tick += 1) {
+      step(indexed.get(tick) ?? []);
+      rng();
+    }
+
+    return state;
+  }
+
+  function getStateHash() {
+    return hashState({
+      tick: state.tick,
+      isOvertime: state.isOvertime,
+      entities: state.entities.map((entity) => ({
+        id: entity.id,
+        hp: entity.hp,
+        x: entity.x,
+        y: entity.y,
+        forced_motion_vector: entity.forced_motion_vector,
+        forced_motion_ticks_remaining: entity.forced_motion_ticks_remaining,
+      })),
+      replayEvents: state.replay.events,
+    });
+  }
+
+  function exportReplay() {
+    return saveReplay(state.replay);
+  }
+
+  return {
+    state,
+    run,
+    step,
+    setOvertime,
+    getStateHash,
+    exportReplay,
+  };
+}
