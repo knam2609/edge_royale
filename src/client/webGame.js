@@ -3,13 +3,44 @@ import { ARROWS_CONFIG, FIREBALL_CONFIG, MATCH_CONFIG, TICK_RATE, getMatchPhase 
 import { createEngine } from "../sim/engine.js";
 import { createTroop, createTower } from "../sim/entities.js";
 import { createArena } from "../sim/map.js";
+import { createRng } from "../sim/random.js";
+import {
+  BOT_TIERS,
+  enumerateLegalCardActions,
+  getBotTierConfig,
+  normalizeBotTierId,
+  rollDecisionDelayTicks,
+  selectBotAction,
+} from "../ai/ladderRuntime.js";
+import {
+  createDefaultProfile,
+  getProfileProgress,
+  normalizeProfile,
+  recordMatch,
+  setSelectedTier,
+} from "../ai/profile.js";
+import {
+  appendSamples,
+  createDecisionSample,
+  createEmptyTrainingStore,
+  normalizeTrainingStore,
+  summarizeTrainingStore,
+  trainSelfModel,
+} from "../ai/training.js";
 
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 const startBtn = document.getElementById("start-btn");
 const resetBtn = document.getElementById("reset-btn");
+const trainBtn = document.getElementById("train-btn");
+const botTierSelect = document.getElementById("bot-tier-select");
+const profileSummary = document.getElementById("profile-summary");
 
 const arena = createArena({ minX: 0, maxX: 18, minY: 0, maxY: 32 });
+
+const PROFILE_STORAGE_KEY = "edge_royale_profile_v1";
+const TRAINING_STORAGE_KEY = "edge_royale_training_data_v1";
+const SELF_MODEL_STORAGE_KEY = "edge_royale_self_model_v1";
 
 const HAND_SLOTS = 4;
 const HAND_CARD_WIDTH = 140;
@@ -33,10 +64,101 @@ const appState = {
   pendingActions: [],
   statusMessage: "Click Start to begin.",
   selectedCardIndex: 0,
+  selectedBotTier: "noob",
   engine: null,
+  profile: createDefaultProfile(),
+  trainingStore: createEmptyTrainingStore(),
+  selfModel: null,
+  matchRecorded: false,
+  pendingTrainingSamples: [],
+  botRng: createRng(20260306),
+  botNextDecisionTick: 1,
   lastFrameTime: performance.now(),
   lagMs: 0,
 };
+
+function loadStoredJson(key, fallbackValue) {
+  try {
+    const payload = window.localStorage.getItem(key);
+    if (!payload) {
+      return fallbackValue;
+    }
+    return JSON.parse(payload);
+  } catch {
+    return fallbackValue;
+  }
+}
+
+function saveStoredJson(key, value) {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Ignore persistence failures and keep gameplay running.
+  }
+}
+
+function getTierLabel(tierId) {
+  return getBotTierConfig(tierId).label;
+}
+
+function syncTierSelectOptions() {
+  const profile = normalizeProfile(appState.profile);
+  const locked = new Set(
+    BOT_TIERS.map((tier) => tier.id).filter((tierId) => !profile.unlocked_tiers.includes(tierId)),
+  );
+
+  botTierSelect.innerHTML = "";
+  for (const tier of BOT_TIERS) {
+    const option = document.createElement("option");
+    option.value = tier.id;
+    option.textContent = locked.has(tier.id) ? `${tier.label} (Locked)` : tier.label;
+    option.disabled = locked.has(tier.id);
+    botTierSelect.append(option);
+  }
+
+  const selected = profile.unlocked_tiers.includes(appState.selectedBotTier)
+    ? appState.selectedBotTier
+    : profile.selected_tier;
+  appState.selectedBotTier = normalizeBotTierId(selected);
+  botTierSelect.value = appState.selectedBotTier;
+}
+
+function refreshProfileSummary() {
+  const profile = normalizeProfile(appState.profile);
+  const progress = getProfileProgress(profile);
+  const training = summarizeTrainingStore(appState.trainingStore);
+  const selfReady = Boolean(appState.selfModel?.ready);
+
+  const selfStatus = progress.self_play_ready
+    ? "Self unlock ready"
+    : `Self unlock in ${progress.matches_needed_for_self} matches + ${progress.top_wins_needed_for_self} top wins`;
+
+  profileSummary.textContent = `Tier: ${getTierLabel(appState.selectedBotTier)} | Matches: ${progress.total_matches} | Training samples: ${training.sample_count} | ${selfStatus} | Model: ${selfReady ? "ready" : "not trained"}`;
+}
+
+function persistProfile() {
+  saveStoredJson(PROFILE_STORAGE_KEY, appState.profile);
+}
+
+function persistTrainingStore() {
+  saveStoredJson(TRAINING_STORAGE_KEY, appState.trainingStore);
+}
+
+function persistSelfModel() {
+  saveStoredJson(SELF_MODEL_STORAGE_KEY, appState.selfModel);
+}
+
+function hydrateAppState() {
+  appState.profile = normalizeProfile(loadStoredJson(PROFILE_STORAGE_KEY, createDefaultProfile()));
+  appState.trainingStore = normalizeTrainingStore(loadStoredJson(TRAINING_STORAGE_KEY, createEmptyTrainingStore()));
+
+  const loadedModel = loadStoredJson(SELF_MODEL_STORAGE_KEY, null);
+  appState.selfModel = loadedModel && typeof loadedModel === "object" ? loadedModel : null;
+
+  appState.selectedBotTier = normalizeBotTierId(appState.profile.selected_tier);
+  syncTierSelectOptions();
+  refreshProfileSummary();
+}
 
 function worldToScreen(position) {
   const px = ((position.x - arena.minX) / (arena.maxX - arena.minX)) * canvas.width;
@@ -135,17 +257,30 @@ function createInitialEntities() {
 }
 
 function resetGame() {
+  const profile = normalizeProfile(appState.profile);
+  if (!profile.unlocked_tiers.includes(appState.selectedBotTier)) {
+    appState.selectedBotTier = profile.selected_tier;
+  }
+
+  const seedBase = 20260306 + profile.total_matches * 37 + appState.selectedBotTier.length * 13;
   appState.engine = createEngine({
-    seed: 20260306,
+    seed: seedBase,
     arena,
     fireballConfig: FIREBALL_CONFIG,
     initialEntities: createInitialEntities(),
   });
+
+  appState.botRng = createRng(seedBase ^ 0x5f3759df);
+  appState.botNextDecisionTick = 1;
+  appState.matchRecorded = false;
+  appState.pendingTrainingSamples = [];
   appState.pendingActions = [];
   appState.mode = "ready";
   appState.paused = false;
   appState.selectedCardIndex = 0;
-  appState.statusMessage = "Ready. Pick a card and click arena to play.";
+  appState.statusMessage = `Ready. Opponent: ${getTierLabel(appState.selectedBotTier)}.`;
+  syncTierSelectOptions();
+  refreshProfileSummary();
 }
 
 function getSelectedCardId(actor = "blue") {
@@ -190,62 +325,48 @@ function queuePlayerCardPlay(worldPosition) {
     x: Math.round(worldPosition.x * 100) / 100,
     y: Math.round(worldPosition.y * 100) / 100,
   });
-}
-
-function pickBlueTarget() {
-  const enemies = appState.engine.state.entities.filter(
-    (entity) => entity.team === "blue" && entity.hp > 0 && entity.entity_type === "troop",
-  );
-
-  if (enemies.length === 0) {
-    return null;
+  const sample = createDecisionSample({
+    phase: getMatchPhase({
+      tick: appState.engine.state.tick,
+      isOvertime: appState.engine.state.isOvertime,
+    }),
+    elixir: currentElixir,
+    hand: appState.engine.getHand("blue"),
+    cardId,
+    tick: nextTick,
+    sourceTier: appState.selectedBotTier,
+  });
+  if (sample) {
+    appState.pendingTrainingSamples.push(sample);
   }
-
-  enemies.sort((a, b) => a.y - b.y || a.id.localeCompare(b.id));
-  return enemies[0];
 }
 
 function buildBotActions(tick) {
-  if (tick % 8 !== 0) {
+  if (tick < appState.botNextDecisionTick) {
     return [];
   }
 
-  const hand = appState.engine.getHand("red");
-  const redElixir = appState.engine.state.elixir.red.elixir;
-  const target = pickBlueTarget();
+  const legalActions = enumerateLegalCardActions({
+    engine: appState.engine,
+    actor: "red",
+  });
+  const decisionDelay = rollDecisionDelayTicks({
+    tierId: appState.selectedBotTier,
+    rng: appState.botRng,
+  });
+  appState.botNextDecisionTick = tick + decisionDelay;
 
-  const chooseCard = () => {
-    for (const preferred of ["fireball", "arrows", "giant", "mini_pekka", "musketeer", "knight", "archers", "goblins"]) {
-      if (!hand.includes(preferred)) {
-        continue;
-      }
-      const card = getCard(preferred);
-      if (card && card.cost <= redElixir) {
-        return card;
-      }
-    }
-    return null;
-  };
+  const selected = selectBotAction({
+    tierId: appState.selectedBotTier,
+    engine: appState.engine,
+    actor: "red",
+    legalActions,
+    rng: appState.botRng,
+    trainedModel: appState.selfModel,
+  });
 
-  const card = chooseCard();
-  if (!card) {
+  if (!selected || selected.type !== "PLAY_CARD") {
     return [];
-  }
-
-  let x = 9;
-  let y = 8;
-
-  if (card.type === "spell") {
-    if (target) {
-      x = target.x;
-      y = target.y;
-    } else {
-      x = 9;
-      y = 24;
-    }
-  } else {
-    x = 8.2 + ((tick / 8) % 4) * 0.6;
-    y = 8.2;
   }
 
   return [
@@ -253,9 +374,9 @@ function buildBotActions(tick) {
       tick,
       type: "PLAY_CARD",
       actor: "red",
-      cardId: card.id,
-      x,
-      y,
+      cardId: selected.cardId,
+      x: selected.x,
+      y: selected.y,
     },
   ];
 }
@@ -265,6 +386,37 @@ function formatWinnerStatus(result) {
   const score = `${result.score.blue_crowns}-${result.score.red_crowns}`;
   const hp = `${Math.round(result.score.blue_tower_hp)}-${Math.round(result.score.red_tower_hp)}`;
   return `${who} (${result.reason}). Crowns ${score}, tower HP ${hp}.`;
+}
+
+function appendMatchTrainingSamples() {
+  if (appState.pendingTrainingSamples.length === 0) {
+    return;
+  }
+
+  appState.trainingStore = appendSamples(appState.trainingStore, appState.pendingTrainingSamples);
+  persistTrainingStore();
+  appState.pendingTrainingSamples = [];
+}
+
+function applyMatchProgression(matchResult) {
+  if (appState.matchRecorded) {
+    return [];
+  }
+
+  appendMatchTrainingSamples();
+
+  const progression = recordMatch(appState.profile, {
+    opponentTier: appState.selectedBotTier,
+    winner: matchResult.winner,
+  });
+
+  appState.profile = setSelectedTier(progression.profile, appState.selectedBotTier);
+  persistProfile();
+  appState.matchRecorded = true;
+  syncTierSelectOptions();
+  refreshProfileSummary();
+
+  return progression.newlyUnlocked;
 }
 
 function stepGameTick() {
@@ -289,7 +441,10 @@ function stepGameTick() {
   const matchResult = appState.engine.getMatchResult();
   if (matchResult) {
     appState.mode = "game_over";
-    appState.statusMessage = formatWinnerStatus(matchResult);
+    const newlyUnlocked = applyMatchProgression(matchResult);
+    const unlockMessage =
+      newlyUnlocked.length > 0 ? ` Unlocked: ${newlyUnlocked.map((tierId) => getTierLabel(tierId)).join(", ")}.` : "";
+    appState.statusMessage = `${formatWinnerStatus(matchResult)}${unlockMessage}`;
   }
 }
 
@@ -572,22 +727,29 @@ function drawHud() {
   const overtimeRemaining = Math.max(0, MATCH_CONFIG.overtime_ticks - overtimeElapsed);
 
   const score = appState.engine.getScore();
+  const trainingSummary = summarizeTrainingStore(appState.trainingStore);
 
   ctx.fillStyle = "rgba(12, 20, 38, 0.72)";
-  ctx.fillRect(12, 12, 420, 132);
+  ctx.fillRect(12, 12, 520, 152);
 
   ctx.fillStyle = "#ffffff";
   ctx.font = "14px Avenir Next";
   ctx.textAlign = "left";
   ctx.fillText(`Mode: ${appState.mode} ${appState.paused ? "(paused)" : ""}`, 22, 34);
-  ctx.fillText(`Phase: ${phase}`, 22, 54);
-  ctx.fillText(`Elixir - Blue: ${appState.engine.state.elixir.blue.elixir} | Red: ${appState.engine.state.elixir.red.elixir}`, 22, 74);
-  ctx.fillText(`Crowns - Blue: ${score.blue_crowns} | Red: ${score.red_crowns}`, 22, 94);
-  ctx.fillText(`Pending effects: ${appState.engine.state.pending_effects.length}`, 22, 114);
+  ctx.fillText(`Bot: ${getTierLabel(appState.selectedBotTier)}`, 22, 54);
+  ctx.fillText(`Phase: ${phase}`, 22, 74);
+  ctx.fillText(`Elixir - Blue: ${appState.engine.state.elixir.blue.elixir} | Red: ${appState.engine.state.elixir.red.elixir}`, 22, 94);
+  ctx.fillText(`Crowns - Blue: ${score.blue_crowns} | Red: ${score.red_crowns}`, 22, 114);
+  ctx.fillText(`Pending effects: ${appState.engine.state.pending_effects.length}`, 22, 134);
+  ctx.fillText(
+    `Training samples: ${trainingSummary.sample_count} | Self model: ${appState.selfModel?.ready ? "ready" : "not ready"}`,
+    22,
+    154,
+  );
   ctx.fillText(
     `Time - Regulation: ${(regulationRemaining / TICK_RATE).toFixed(1)}s | Overtime: ${(overtimeRemaining / TICK_RATE).toFixed(1)}s`,
-    22,
-    134,
+    250,
+    34,
   );
 
   ctx.fillStyle = "rgba(12, 20, 38, 0.72)";
@@ -648,12 +810,62 @@ canvas.addEventListener("click", (event) => {
 });
 
 startBtn.addEventListener("click", () => {
+  const profile = normalizeProfile(appState.profile);
+  if (!profile.unlocked_tiers.includes(appState.selectedBotTier)) {
+    appState.statusMessage = `${getTierLabel(appState.selectedBotTier)} is locked. Beat lower tiers first.`;
+    syncTierSelectOptions();
+    return;
+  }
+
+  appState.profile = setSelectedTier(profile, appState.selectedBotTier);
+  persistProfile();
+  refreshProfileSummary();
+
+  if (appState.mode === "game_over") {
+    resetGame();
+  }
+
   appState.mode = "playing";
-  appState.statusMessage = "Battle started. Cycle cards to pressure towers.";
+  appState.statusMessage = `Battle started vs ${getTierLabel(appState.selectedBotTier)}.`;
 });
 
 resetBtn.addEventListener("click", () => {
   resetGame();
+});
+
+botTierSelect.addEventListener("change", () => {
+  const requestedTier = normalizeBotTierId(botTierSelect.value);
+  const profile = normalizeProfile(appState.profile);
+
+  if (!profile.unlocked_tiers.includes(requestedTier)) {
+    appState.statusMessage = `${getTierLabel(requestedTier)} is locked.`;
+    syncTierSelectOptions();
+    return;
+  }
+
+  appState.selectedBotTier = requestedTier;
+  appState.profile = setSelectedTier(profile, requestedTier);
+  persistProfile();
+  refreshProfileSummary();
+
+  if (appState.mode === "ready") {
+    appState.statusMessage = `Ready. Opponent: ${getTierLabel(appState.selectedBotTier)}.`;
+  }
+});
+
+trainBtn.addEventListener("click", () => {
+  const model = trainSelfModel(appState.trainingStore.samples);
+  appState.selfModel = model;
+  persistSelfModel();
+  refreshProfileSummary();
+
+  if (model.ready) {
+    appState.statusMessage = `Self-play model trained (${model.sample_count} samples).`;
+    return;
+  }
+
+  const remaining = Math.max(0, model.min_samples_required - model.sample_count);
+  appState.statusMessage = `Need ${remaining} more samples before self model is ready.`;
 });
 
 window.addEventListener("keydown", (event) => {
@@ -708,6 +920,12 @@ window.render_game_to_text = () => {
       axis_y: "down",
       world_bounds: { min_x: arena.minX, max_x: arena.maxX, min_y: arena.minY, max_y: arena.maxY },
     },
+    bot_tier: appState.selectedBotTier,
+    unlocked_tiers: normalizeProfile(appState.profile).unlocked_tiers,
+    training: {
+      samples: appState.trainingStore.samples.length,
+      model_ready: Boolean(appState.selfModel?.ready),
+    },
     mode: appState.mode,
     tick,
     phase,
@@ -760,6 +978,7 @@ window.render_game_to_text = () => {
   });
 };
 
+hydrateAppState();
 resetGame();
 render();
 requestAnimationFrame(frame);
