@@ -24,7 +24,7 @@
 - Regen:
   - 0:00-2:00 elapsed: +1 elixir every 2.8 seconds.
   - 2:00-3:00 elapsed (double elixir): +1 elixir every 1.4 seconds.
-  - Overtime: +1 elixir every 1.0 seconds.
+  - Overtime (3x elixir): +1 elixir every 1.0 seconds.
 - Spending elixir:
   - Card is deployable only if current elixir >= card cost.
   - Elixir deducted immediately when deployment is accepted.
@@ -94,6 +94,8 @@
 - Fireball:
   - Projectile with travel time.
   - Area-of-effect damage + short knockback.
+  - Knockback applies to troops only.
+  - Giant is immune to Fireball knockback (still takes Fireball damage).
 
 ## 10) Determinism Contract
 

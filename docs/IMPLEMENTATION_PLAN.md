@@ -62,11 +62,13 @@ Build a lightweight, single-player Clash Royale-inspired game where players figh
 - Implement damage resolution and death lifecycle.
 - Implement elixir regen/cap and card hand/cycle system.
 - Implement win conditions, overtime, and sudden-death logic.
+- Implement Fireball knockback with troop-only displacement and Giant immunity.
 
 ### Acceptance criteria
 - Same seed + same input stream => identical output hash.
 - Unit tests for all core subsystems pass.
 - 100+ replay determinism tests pass locally.
+- Overtime elixir timing verified at 3x pace (`+1 every 1.0s`) and Fireball knockback immunity tests pass.
 
 ## Phase 2: Playable Client UI (1-1.5 weeks)
 

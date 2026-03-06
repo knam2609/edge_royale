@@ -109,7 +109,10 @@ Values are intentionally approximate and should be tuned with simulation data.
 - Cast delay: 0.3s.
 - Travel speed: 10.0 tiles/s.
 - Targets: Enemy ground units/buildings.
-- Knockback.
+- Knockback:
+  - `distance_tiles=0.75`
+  - `duration_ticks=5` (250ms at 20 TPS)
+  - `immune_card_ids=[\"giant\"]`
 
 ## Balancing Rules
 
