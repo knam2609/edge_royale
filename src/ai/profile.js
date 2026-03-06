@@ -1,5 +1,5 @@
 export const PROFILE_VERSION = 1;
-export const BOT_TIER_ORDER = Object.freeze(["noob", "mid", "top", "self"]);
+export const BOT_TIER_ORDER = Object.freeze(["noob", "mid", "top", "pro", "goat", "god", "self"]);
 
 export const SELF_PLAY_UNLOCK_RULE = Object.freeze({
   min_matches: 100,

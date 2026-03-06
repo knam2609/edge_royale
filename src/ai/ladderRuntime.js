@@ -9,7 +9,7 @@ const BOT_TIER_CONFIG = Object.freeze({
     description: "Random legal actions with frequent hesitation.",
     min_delay_ticks: 10,
     max_delay_ticks: 30,
-    pass_chance: 0.25,
+    pass_chance: 0.4,
   }),
   mid: Object.freeze({
     id: "mid",
@@ -17,7 +17,7 @@ const BOT_TIER_CONFIG = Object.freeze({
     description: "Aggressive and greedy, with weak spell discipline.",
     min_delay_ticks: 7,
     max_delay_ticks: 18,
-    pass_chance: 0.08,
+    pass_chance: 0.03,
   }),
   top: Object.freeze({
     id: "top",
@@ -25,7 +25,31 @@ const BOT_TIER_CONFIG = Object.freeze({
     description: "Elixir-aware defense into counter-push.",
     min_delay_ticks: 5,
     max_delay_ticks: 13,
-    pass_chance: 0.03,
+    pass_chance: 0.01,
+  }),
+  pro: Object.freeze({
+    id: "pro",
+    label: "Pro (Ryley)",
+    description: "Stronger defense timing and better spell discipline.",
+    min_delay_ticks: 4,
+    max_delay_ticks: 10,
+    pass_chance: 0.005,
+  }),
+  goat: Object.freeze({
+    id: "goat",
+    label: "Goat (Mo Light)",
+    description: "Very strong cycle and pressure modulation.",
+    min_delay_ticks: 3,
+    max_delay_ticks: 8,
+    pass_chance: 0.002,
+  }),
+  god: Object.freeze({
+    id: "god",
+    label: "God",
+    description: "Oracle benchmark tier with near-perfect reaction.",
+    min_delay_ticks: 1,
+    max_delay_ticks: 3,
+    pass_chance: 0,
   }),
   self: Object.freeze({
     id: "self",
@@ -49,20 +73,44 @@ const TROOP_BASE_SCORE = Object.freeze({
 });
 
 const MID_SPELL_THRESHOLD = Object.freeze({
-  normal: 460,
-  double: 410,
-  overtime: 360,
+  normal: 360,
+  double: 320,
+  overtime: 280,
 });
 
 const TOP_SPELL_THRESHOLD = Object.freeze({
-  normal: 430,
-  double: 360,
-  overtime: 300,
+  normal: 340,
+  double: 300,
+  overtime: 250,
+});
+
+const PRO_SPELL_THRESHOLD = Object.freeze({
+  normal: 320,
+  double: 280,
+  overtime: 230,
+});
+
+const GOAT_SPELL_THRESHOLD = Object.freeze({
+  normal: 300,
+  double: 260,
+  overtime: 210,
 });
 
 const TOP_RESERVE_AFTER_PLAY = Object.freeze({
-  normal: 2,
-  double: 1,
+  normal: 0,
+  double: 0,
+  overtime: 0,
+});
+
+const PRO_RESERVE_AFTER_PLAY = Object.freeze({
+  normal: 0,
+  double: 0,
+  overtime: 0,
+});
+
+const GOAT_RESERVE_AFTER_PLAY = Object.freeze({
+  normal: 0,
+  double: 0,
   overtime: 0,
 });
 
@@ -231,12 +279,15 @@ function evaluateSpellAction(action, state, actor) {
     const dealt = Math.min(entity.hp, config.damage);
 
     if (entity.entity_type === "tower") {
-      score += dealt * 0.4;
+      score += dealt;
+      if (entity.hp <= config.damage) {
+        score += 900;
+      }
     } else {
       troopHits += 1;
       score += dealt;
       if (entity.hp <= config.damage) {
-        score += 170;
+        score += 140;
       }
     }
   }
@@ -341,6 +392,25 @@ function chooseHighestScoreAction({ actions, state, actor, tierId }) {
   };
 }
 
+function chooseTroopFallback({ actions, state, actor, minScore = -Infinity }) {
+  const troopActions = actions.filter((action) => getCard(action.cardId)?.type === "troop");
+  if (troopActions.length === 0) {
+    return null;
+  }
+
+  const bestTroop = chooseHighestScoreAction({
+    actions: troopActions,
+    state,
+    actor,
+    tierId: "top",
+  });
+  if (!bestTroop.action || bestTroop.score < minScore) {
+    return null;
+  }
+
+  return bestTroop.action;
+}
+
 function chooseRandomAction(actions, rng) {
   if (actions.length === 0) {
     return null;
@@ -379,10 +449,10 @@ function chooseMidAction({ legalActions, state, actor, phase, rng }) {
   if (card?.type === "spell") {
     const threshold = MID_SPELL_THRESHOLD[phase] ?? MID_SPELL_THRESHOLD.normal;
     if (best.score < threshold) {
-      return { type: "PASS" };
+      return chooseTroopFallback({ actions: legalActions, state, actor, minScore: 160 }) ?? { type: "PASS" };
     }
   } else if (best.score < 180) {
-    return { type: "PASS" };
+    return chooseTroopFallback({ actions: legalActions, state, actor, minScore: 120 }) ?? { type: "PASS" };
   }
 
   return best.action;
@@ -393,24 +463,9 @@ function chooseTopAction({ legalActions, state, actor, phase, rng }) {
     return { type: "PASS" };
   }
 
-  const reserve = TOP_RESERVE_AFTER_PLAY[phase] ?? TOP_RESERVE_AFTER_PLAY.normal;
-  const currentElixir = state.elixir[actor]?.elixir ?? 0;
-
-  const filtered = legalActions.filter((action) => {
-    const cost = cardCost(action);
-    return currentElixir - cost >= reserve;
-  });
+  const filtered = [...legalActions];
 
   if (filtered.length === 0) {
-    return { type: "PASS" };
-  }
-
-  const threat = evaluateThreat(state, actor);
-  if (threat.density === 0 && currentElixir < 5 && rng() < 0.2) {
-    return { type: "PASS" };
-  }
-
-  if (threat.density === 0 && rng() < 0.08) {
     return { type: "PASS" };
   }
 
@@ -421,16 +476,132 @@ function chooseTopAction({ legalActions, state, actor, phase, rng }) {
 
   const card = getCard(best.action.cardId);
   if (card?.type === "spell") {
-    const threshold = TOP_SPELL_THRESHOLD[phase] ?? TOP_SPELL_THRESHOLD.normal;
+    const threshold = Math.min(240, TOP_SPELL_THRESHOLD[phase] ?? TOP_SPELL_THRESHOLD.normal);
     if (best.score < threshold) {
-      return { type: "PASS" };
+      return (
+        chooseTroopFallback({ actions: filtered, state, actor, minScore: 80 }) ??
+        chooseRandomAction(filtered, rng) ??
+        { type: "PASS" }
+      );
     }
     return best.action;
   }
 
-  const troopThreshold = threat.density > 0 ? 140 : 200;
+  const threat = evaluateThreat(state, actor);
+  const troopThreshold = threat.density > 0 ? 90 : 110;
   if (best.score < troopThreshold) {
+    return (
+      chooseTroopFallback({ actions: filtered, state, actor, minScore: 70 }) ??
+      chooseRandomAction(filtered, rng) ??
+      { type: "PASS" }
+    );
+  }
+
+  return best.action;
+}
+
+function chooseProAction({ legalActions, state, actor, phase, rng }) {
+  const passiveRoll = BOT_TIER_CONFIG.pro.pass_chance;
+  if (legalActions.length === 0 || rng() < passiveRoll) {
     return { type: "PASS" };
+  }
+
+  const reserve = PRO_RESERVE_AFTER_PLAY[phase] ?? PRO_RESERVE_AFTER_PLAY.normal;
+  const currentElixir = state.elixir[actor]?.elixir ?? 0;
+  const filtered = legalActions.filter((action) => currentElixir - cardCost(action) >= reserve);
+  if (filtered.length === 0) {
+    return { type: "PASS" };
+  }
+
+  const threat = evaluateThreat(state, actor);
+  if (threat.density >= 2) {
+    const defenders = filtered.filter((action) => {
+      const card = getCard(action.cardId);
+      return card?.type === "troop" && isOnOwnSide(actor, action.y, state.arena);
+    });
+    if (defenders.length > 0) {
+      const bestDefense = chooseHighestScoreAction({
+        actions: defenders,
+        state,
+        actor,
+        tierId: "top",
+      });
+      if (bestDefense.action) {
+        return bestDefense.action;
+      }
+    }
+  }
+
+  const best = chooseHighestScoreAction({ actions: filtered, state, actor, tierId: "top" });
+  if (!best.action) {
+    return { type: "PASS" };
+  }
+
+  const card = getCard(best.action.cardId);
+  if (card?.type === "spell") {
+    const threshold = PRO_SPELL_THRESHOLD[phase] ?? PRO_SPELL_THRESHOLD.normal;
+    if (best.score >= threshold) {
+      return best.action;
+    }
+    return chooseTroopFallback({ actions: filtered, state, actor, minScore: 90 }) ?? { type: "PASS" };
+  }
+
+  const troopThreshold = threat.density > 0 ? 95 : 105;
+  return best.score >= troopThreshold ? best.action : { type: "PASS" };
+}
+
+function chooseGoatAction({ legalActions, state, actor, phase, rng }) {
+  if (legalActions.length === 0 || rng() < BOT_TIER_CONFIG.goat.pass_chance) {
+    return { type: "PASS" };
+  }
+
+  const reserve = GOAT_RESERVE_AFTER_PLAY[phase] ?? GOAT_RESERVE_AFTER_PLAY.normal;
+  const currentElixir = state.elixir[actor]?.elixir ?? 0;
+  const filtered = legalActions.filter((action) => currentElixir - cardCost(action) >= reserve);
+  if (filtered.length === 0) {
+    return { type: "PASS" };
+  }
+
+  const best = chooseHighestScoreAction({ actions: filtered, state, actor, tierId: "top" });
+  if (!best.action) {
+    return { type: "PASS" };
+  }
+
+  const card = getCard(best.action.cardId);
+  if (card?.type === "spell") {
+    const threshold = GOAT_SPELL_THRESHOLD[phase] ?? GOAT_SPELL_THRESHOLD.normal;
+    if (best.score >= threshold) {
+      return best.action;
+    }
+    return chooseTroopFallback({ actions: filtered, state, actor, minScore: 85 }) ?? { type: "PASS" };
+  }
+
+  const threat = evaluateThreat(state, actor);
+  const troopThreshold = threat.density > 0 ? 90 : 100;
+  if (best.score >= troopThreshold) {
+    return best.action;
+  }
+  return chooseTroopFallback({ actions: filtered, state, actor, minScore: 80 }) ?? { type: "PASS" };
+}
+
+function chooseGodAction({ legalActions, state, actor }) {
+  if (legalActions.length === 0) {
+    return { type: "PASS" };
+  }
+
+  const best = chooseHighestScoreAction({ actions: legalActions, state, actor, tierId: "top" });
+  if (!best.action) {
+    return { type: "PASS" };
+  }
+
+  const phase = getMatchPhase({ tick: state.tick, isOvertime: state.isOvertime });
+  const card = getCard(best.action.cardId);
+  if (card?.type === "spell") {
+    const threshold = (GOAT_SPELL_THRESHOLD[phase] ?? GOAT_SPELL_THRESHOLD.normal) - 25;
+    if (best.score >= threshold) {
+      return best.action;
+    }
+    return chooseTroopFallback({ actions: legalActions, state, actor, minScore: 100 }) ?? { type: "PASS" };
   }
 
   return best.action;
@@ -506,6 +677,18 @@ export function selectBotAction({
 
   if (normalizedTier === "top") {
     return chooseTopAction({ legalActions, state, actor, phase, rng });
+  }
+
+  if (normalizedTier === "pro") {
+    return chooseProAction({ legalActions, state, actor, phase, rng });
+  }
+
+  if (normalizedTier === "goat") {
+    return chooseGoatAction({ legalActions, state, actor, phase, rng });
+  }
+
+  if (normalizedTier === "god") {
+    return chooseGodAction({ legalActions, state, actor });
   }
 
   return chooseSelfAction({ legalActions, state, actor, phase, hand, rng, trainedModel });
