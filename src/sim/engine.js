@@ -1,4 +1,5 @@
 import { saveReplay } from "../replay/codec.js";
+import { stepCombat } from "./combat.js";
 import { ElixirTracker } from "./elixir.js";
 import { applyForcedMotion } from "./entities.js";
 import { getMatchPhase } from "./config.js";
@@ -11,6 +12,7 @@ function cloneEntity(entity) {
   return {
     ...entity,
     forced_motion_vector: { ...entity.forced_motion_vector },
+    velocity: { ...(entity.velocity ?? { x: 0, y: 0 }) },
   };
 }
 
@@ -96,6 +98,8 @@ export function createEngine({
       }
     }
 
+    stepCombat({ entities: state.entities, arena });
+
     state.entities.sort((a, b) => a.id.localeCompare(b.id));
     for (const entity of state.entities) {
       applyForcedMotion(entity, arena);
@@ -129,6 +133,9 @@ export function createEngine({
         hp: entity.hp,
         x: entity.x,
         y: entity.y,
+        velocity: entity.velocity,
+        target_entity_id: entity.target_entity_id,
+        attack_cooldown_ticks_remaining: entity.attack_cooldown_ticks_remaining,
         forced_motion_vector: entity.forced_motion_vector,
         forced_motion_ticks_remaining: entity.forced_motion_ticks_remaining,
       })),

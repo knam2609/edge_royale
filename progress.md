@@ -11,3 +11,10 @@ Original prompt: PLEASE IMPLEMENT THIS PLAN (3x overtime elixir + Fireball knock
 - Installed Playwright tooling and browsers for validation.
 - Ran Playwright loop against local server; fixed browser import issue by removing Node-only crypto dependency from shared sim hash utility.
 - Re-ran Playwright with click actions: screenshots and state snapshots confirm gameplay loop, elixir spend, troop knockback (Giant immunity), and no console errors.
+- Next chunk: implement troop/tower movement + targeting + auto-attack in sim, then expose velocity/target info in text-state output.
+- Implemented deterministic combat tick (`src/sim/combat.js`): troop movement, target selection, cooldown-based auto-attacks, tower attacks.
+- Expanded entity runtime stats/fields (move speed, attack values, cooldown, current velocity, current target id).
+- Added combat tests (`tests/combat.test.js`) for movement, tower DPS, and Giant building-only targeting behavior.
+- Playwright validation (early-match snapshots) confirms troops now move up/down lanes, acquire targets, and trade damage.
+- `render_game_to_text` now exports velocity, target id, and cooldown for each visible entity.
+- Console error log remained clean in latest run; screenshots/state artifacts under `output/web-game`.
