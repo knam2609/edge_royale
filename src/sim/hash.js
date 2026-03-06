@@ -1,5 +1,3 @@
-import crypto from "node:crypto";
-
 export function stableStringify(value) {
   if (value === null || typeof value !== "object") {
     return JSON.stringify(value);
@@ -15,7 +13,13 @@ export function stableStringify(value) {
 }
 
 export function hashState(state) {
-  const digest = crypto.createHash("sha256");
-  digest.update(stableStringify(state));
-  return digest.digest("hex");
+  const content = stableStringify(state);
+  let hash = 0x811c9dc5;
+
+  for (let i = 0; i < content.length; i += 1) {
+    hash ^= content.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+
+  return hash.toString(16).padStart(8, "0");
 }

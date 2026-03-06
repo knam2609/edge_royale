@@ -14,6 +14,10 @@ function cloneEntity(entity) {
   };
 }
 
+function fireballCost(config) {
+  return config?.cost ?? 4;
+}
+
 function sortActions(actions) {
   return [...actions].sort((a, b) => {
     if (a.tick !== b.tick) {
@@ -66,6 +70,12 @@ export function createEngine({
     for (const action of actions) {
       state.replay.actions.push(action);
       if (action.type === "CAST_FIREBALL") {
+        const actor = action.actor ?? "blue";
+        const tracker = state.elixir[actor];
+        if (!tracker || !tracker.spend(fireballCost(fireballConfig))) {
+          continue;
+        }
+
         const impact = resolveFireballImpact({
           tick: state.tick,
           impactX: action.x,

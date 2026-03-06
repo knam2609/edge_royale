@@ -30,3 +30,22 @@ Learn how to implement UI here: https://github.com/Noisyboy-9/clash_royale_game
 - Card balance spec: `docs/CARD_SPECS.md`
 - Bot tiers spec: `docs/BOT_LEVELS.md`
 - Sprint/task backlog: `docs/SPRINT_BACKLOG.md`
+
+## Run prototype
+
+```bash
+npm install
+npm run dev
+```
+
+Open `http://127.0.0.1:5173`.
+
+Controls:
+- Click arena to cast Fireball (cost 4 elixir)
+- `Space` pause/resume
+- `R` reset
+- `F` fullscreen toggle
+
+Automation hooks exposed in browser:
+- `window.render_game_to_text()`
+- `window.advanceTime(ms)`
