@@ -102,9 +102,11 @@ function buildBotActions(tick) {
   ];
 }
 
-function isFinished() {
-  const maxTicks = MATCH_CONFIG.regulation_ticks + MATCH_CONFIG.overtime_ticks;
-  return appState.engine.state.tick >= maxTicks;
+function formatWinnerStatus(result) {
+  const who = result.winner ? `${result.winner.toUpperCase()} wins` : "Draw";
+  const score = `${result.score.blue_crowns}-${result.score.red_crowns}`;
+  const hp = `${Math.round(result.score.blue_tower_hp)}-${Math.round(result.score.red_tower_hp)}`;
+  return `${who} (${result.reason}). Crowns ${score}, tower HP ${hp}.`;
 }
 
 function stepGameTick() {
@@ -114,20 +116,22 @@ function stepGameTick() {
 
   const nextTick = appState.engine.state.tick + 1;
 
-  if (!appState.engine.state.isOvertime && nextTick > MATCH_CONFIG.regulation_ticks) {
-    appState.engine.setOvertime(true);
-    appState.statusMessage = "Overtime started: 3x elixir active.";
-  }
-
   const playerActions = appState.pendingActions.filter((action) => action.tick === nextTick);
   appState.pendingActions = appState.pendingActions.filter((action) => action.tick > nextTick);
 
   const botActions = buildBotActions(nextTick);
   appState.engine.step([...playerActions, ...botActions]);
 
-  if (isFinished()) {
+  if (appState.engine.shouldStartOvertime()) {
+    appState.engine.setOvertime(true);
+    appState.statusMessage = "Overtime started: 3x elixir active.";
+    return;
+  }
+
+  const matchResult = appState.engine.getMatchResult();
+  if (matchResult) {
     appState.mode = "game_over";
-    appState.statusMessage = "Match finished. Press Reset to run again.";
+    appState.statusMessage = formatWinnerStatus(matchResult);
   }
 }
 
@@ -186,8 +190,10 @@ function drawHud() {
   const overtimeElapsed = Math.max(0, tick - MATCH_CONFIG.regulation_ticks);
   const overtimeRemaining = Math.max(0, MATCH_CONFIG.overtime_ticks - overtimeElapsed);
 
+  const score = appState.engine.getScore();
+
   ctx.fillStyle = "rgba(12, 20, 38, 0.72)";
-  ctx.fillRect(12, 12, 340, 94);
+  ctx.fillRect(12, 12, 360, 112);
 
   ctx.fillStyle = "#ffffff";
   ctx.font = "14px Avenir Next";
@@ -195,10 +201,11 @@ function drawHud() {
   ctx.fillText(`Mode: ${appState.mode} ${appState.paused ? "(paused)" : ""}`, 22, 34);
   ctx.fillText(`Phase: ${phase}`, 22, 54);
   ctx.fillText(`Elixir - Blue: ${appState.engine.state.elixir.blue.elixir} | Red: ${appState.engine.state.elixir.red.elixir}`, 22, 74);
+  ctx.fillText(`Crowns - Blue: ${score.blue_crowns} | Red: ${score.red_crowns}`, 22, 94);
   ctx.fillText(
     `Time - Regulation: ${(regulationRemaining / TICK_RATE).toFixed(1)}s | Overtime: ${(overtimeRemaining / TICK_RATE).toFixed(1)}s`,
     22,
-    94,
+    114,
   );
 
   ctx.fillStyle = "rgba(12, 20, 38, 0.72)";
@@ -315,6 +322,8 @@ window.render_game_to_text = () => {
       regulation_remaining_s: Number((regulationRemaining / TICK_RATE).toFixed(2)),
       overtime_remaining_s: Number((overtimeRemaining / TICK_RATE).toFixed(2)),
     },
+    score: appState.engine.getScore(),
+    match_result: appState.engine.getMatchResult(),
     entities: appState.engine.state.entities
       .filter((entity) => entity.hp > 0)
       .map((entity) => ({
