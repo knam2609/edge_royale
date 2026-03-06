@@ -93,3 +93,20 @@ Original prompt: PLEASE IMPLEMENT THIS PLAN (3x overtime elixir + Fireball knock
   - Add touch-friendly drag ghost/card icon scaling for smaller screens.
   - Add explicit placement boundary/invalid-zone line labels for troop-only restrictions.
   - Add a small integration UI smoke test around drag-drop + fullscreen resize behavior.
+- Started bot levels + training implementation pass (March 6, 2026):
+  - Added ladder runtime (`src/ai/ladderRuntime.js`) with tier configs (`noob`, `mid`, `top`, `self`), legal action generation from hand/elixir/placement rules, reaction delay ranges, and tier-specific action selection heuristics.
+  - Added profile progression module (`src/ai/profile.js`) with persistent unlock/win tracking and self-play unlock gating (`100` matches + `3` top wins).
+  - Added training module (`src/ai/training.js`) for local decision sample storage + simple phase/elixir bucket model used by `self` bot tier.
+  - Integrated new systems into browser client (`src/client/webGame.js`): tier selection UI, local storage persistence, per-match training sample capture, progression updates on match result, and self-model training button flow.
+  - Updated top toolbar (`index.html`) to include Bot Level selector, Train Self Bot button, and profile/training summary line.
+  - Added tests: `tests/profile.test.js`, `tests/training.test.js`, `tests/ladder-runtime.test.js`.
+- TODO next:
+  - Replace current heuristic-only self policy with dataset export + offline trainer script and model evaluation report.
+  - Add client tests for localStorage migration/failure paths and unlock UX states.
+  - Add benchmark matrix for ladder tiers using full `PLAY_CARD` action space (current `bot-regression` still measures legacy fireball-only policies).
+- Validation pass for bot/training slice:
+  - Full unit/integration suite passed: `npm test` (`35/35`).
+  - Browser validation run completed with Playwright client against `http://127.0.0.1:4173` and action burst file `/tmp/edge-royale-actions.json`.
+  - Captured artifacts in `output/web-game-bot-training/` (`shot-0..2.png`, `state-0..2.json`).
+  - Visual check confirms tier label and training status render in HUD; text-state includes `bot_tier`, `unlocked_tiers`, and `training` payload.
+  - No console/page errors were emitted during the Playwright run.
