@@ -12,6 +12,7 @@ function makeInitialEntities() {
   return [
     createTroop({ id: "a", cardId: "knight", team: "blue", x: 4, y: 4, hp: 1400 }),
     createTroop({ id: "b", cardId: "goblins", team: "red", x: 4.4, y: 4.2, hp: 220 }),
+    createTroop({ id: "d", cardId: "knight", team: "red", x: 4.8, y: 4.5, hp: 1400 }),
     createTroop({ id: "c", cardId: "giant", team: "red", x: 5.1, y: 5.1, hp: 2500 }),
   ];
 }
