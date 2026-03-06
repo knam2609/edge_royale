@@ -11,10 +11,13 @@ const resetBtn = document.getElementById("reset-btn");
 
 const arena = createArena({ minX: 0, maxX: 18, minY: 0, maxY: 32 });
 
+const MAX_ELIXIR = 10;
 const HAND_SLOTS = 4;
 const HAND_CARD_WIDTH = 140;
 const HAND_CARD_HEIGHT = 54;
 const HAND_GAP = 10;
+const HAND_Y_OFFSET = 110;
+const DRAG_START_DISTANCE = 8;
 
 const CARD_LABEL = Object.freeze({
   giant: "Giant",
@@ -34,19 +37,47 @@ const appState = {
   statusMessage: "Click Start to begin.",
   selectedCardIndex: 0,
   engine: null,
+  canvasMetrics: { width: canvas.width, height: canvas.height, dpr: 1 },
+  dragState: null,
+  suppressNextClick: false,
   lastFrameTime: performance.now(),
   lagMs: 0,
 };
 
+function getCanvasWidth() {
+  return appState.canvasMetrics.width;
+}
+
+function getCanvasHeight() {
+  return appState.canvasMetrics.height;
+}
+
+function resizeCanvasToDisplaySize() {
+  const rect = canvas.getBoundingClientRect();
+  const cssWidth = Math.max(1, Math.round(rect.width));
+  const cssHeight = Math.max(1, Math.round(rect.height));
+  const dpr = Math.max(1, window.devicePixelRatio || 1);
+  const pixelWidth = Math.max(1, Math.round(cssWidth * dpr));
+  const pixelHeight = Math.max(1, Math.round(cssHeight * dpr));
+
+  if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+    canvas.width = pixelWidth;
+    canvas.height = pixelHeight;
+  }
+
+  appState.canvasMetrics = { width: cssWidth, height: cssHeight, dpr };
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
 function worldToScreen(position) {
-  const px = ((position.x - arena.minX) / (arena.maxX - arena.minX)) * canvas.width;
-  const py = ((position.y - arena.minY) / (arena.maxY - arena.minY)) * canvas.height;
+  const px = ((position.x - arena.minX) / (arena.maxX - arena.minX)) * getCanvasWidth();
+  const py = ((position.y - arena.minY) / (arena.maxY - arena.minY)) * getCanvasHeight();
   return { x: px, y: py };
 }
 
 function screenToWorld(position) {
-  const x = arena.minX + (position.x / canvas.width) * (arena.maxX - arena.minX);
-  const y = arena.minY + (position.y / canvas.height) * (arena.maxY - arena.minY);
+  const x = arena.minX + (position.x / getCanvasWidth()) * (arena.maxX - arena.minX);
+  const y = arena.minY + (position.y / getCanvasHeight()) * (arena.maxY - arena.minY);
   return { x: Math.max(arena.minX, Math.min(arena.maxX, x)), y: Math.max(arena.minY, Math.min(arena.maxY, y)) };
 }
 
@@ -64,8 +95,8 @@ function easeOutCubic(value) {
 }
 
 function tilesToPixels(tiles) {
-  const pxPerTileX = canvas.width / (arena.maxX - arena.minX);
-  const pxPerTileY = canvas.height / (arena.maxY - arena.minY);
+  const pxPerTileX = getCanvasWidth() / (arena.maxX - arena.minX);
+  const pxPerTileY = getCanvasHeight() / (arena.maxY - arena.minY);
   return tiles * ((pxPerTileX + pxPerTileY) * 0.5);
 }
 
@@ -97,8 +128,8 @@ function getCardAccent(cardId) {
 
 function getHandSlotRects() {
   const totalWidth = HAND_SLOTS * HAND_CARD_WIDTH + (HAND_SLOTS - 1) * HAND_GAP;
-  const startX = (canvas.width - totalWidth) / 2;
-  const y = canvas.height - 110;
+  const startX = (getCanvasWidth() - totalWidth) / 2;
+  const y = getCanvasHeight() - HAND_Y_OFFSET;
 
   const slots = [];
   for (let i = 0; i < HAND_SLOTS; i += 1) {
@@ -145,6 +176,9 @@ function resetGame() {
   appState.mode = "ready";
   appState.paused = false;
   appState.selectedCardIndex = 0;
+  appState.dragState = null;
+  appState.suppressNextClick = false;
+  appState.lagMs = 0;
   appState.statusMessage = "Ready. Pick a card and click arena to play.";
 }
 
@@ -153,32 +187,49 @@ function getSelectedCardId(actor = "blue") {
   return hand[appState.selectedCardIndex] ?? null;
 }
 
-function queuePlayerCardPlay(worldPosition) {
-  if (appState.mode !== "playing") {
-    return;
-  }
-
-  const cardId = getSelectedCardId("blue");
-  if (!cardId) {
-    appState.statusMessage = "No card in selected slot.";
-    return;
-  }
-
+function getPlacementStatus(cardId, worldPosition, actor = "blue") {
   const card = getCard(cardId);
   if (!card) {
-    appState.statusMessage = "Unknown card.";
-    return;
+    return { ok: false, reason: "Unknown card.", card: null };
   }
 
-  const currentElixir = appState.engine.state.elixir.blue.elixir;
+  if (appState.mode !== "playing") {
+    return { ok: false, reason: "Press Start to begin.", card };
+  }
+
+  const currentElixir = appState.engine.state.elixir[actor]?.elixir ?? 0;
   if (currentElixir < card.cost) {
-    appState.statusMessage = `Not enough elixir for ${CARD_LABEL[cardId] ?? cardId}.`;
-    return;
+    return { ok: false, reason: `Not enough elixir for ${CARD_LABEL[cardId] ?? cardId}.`, card };
   }
 
-  if (card.type === "troop" && worldPosition.y < 16) {
-    appState.statusMessage = "Troops must be played on your side.";
-    return;
+  if (card.type === "troop") {
+    if (actor === "blue" && worldPosition.y < 16) {
+      return { ok: false, reason: "Troops must be played on your side.", card };
+    }
+    if (actor === "red" && worldPosition.y > 16) {
+      return { ok: false, reason: "Troops must be played on your side.", card };
+    }
+  }
+
+  return { ok: true, reason: null, card };
+}
+
+function queuePlayerCardPlay(worldPosition, { cardIndex = appState.selectedCardIndex } = {}) {
+  if (appState.mode !== "playing") {
+    return false;
+  }
+
+  const hand = appState.engine.getHand("blue");
+  const cardId = hand[cardIndex] ?? null;
+  if (!cardId) {
+    appState.statusMessage = "No card in selected slot.";
+    return false;
+  }
+
+  const placementStatus = getPlacementStatus(cardId, worldPosition, "blue");
+  if (!placementStatus.ok) {
+    appState.statusMessage = placementStatus.reason;
+    return false;
   }
 
   const nextTick = appState.engine.state.tick + 1;
@@ -190,6 +241,8 @@ function queuePlayerCardPlay(worldPosition) {
     x: Math.round(worldPosition.x * 100) / 100,
     y: Math.round(worldPosition.y * 100) / 100,
   });
+  appState.selectedCardIndex = cardIndex;
+  return true;
 }
 
 function pickBlueTarget() {
@@ -293,19 +346,38 @@ function stepGameTick() {
   }
 }
 
+function getActivePlacementCardId() {
+  if (appState.dragState?.cardId) {
+    return appState.dragState.cardId;
+  }
+  return getSelectedCardId("blue");
+}
+
 function drawArenaBackground() {
-  const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+  const width = getCanvasWidth();
+  const height = getCanvasHeight();
+  const gradient = ctx.createLinearGradient(0, 0, 0, height);
   gradient.addColorStop(0, "#1e466f");
   gradient.addColorStop(1, "#3d6e93");
   ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillRect(0, 0, width, height);
+
+  const placementCardId = getActivePlacementCardId();
+  const placementCard = placementCardId ? getCard(placementCardId) : null;
+  if (placementCard?.type === "troop") {
+    const splitY = worldToScreen({ x: arena.minX, y: 16 }).y;
+    ctx.fillStyle = "rgba(83, 188, 248, 0.08)";
+    ctx.fillRect(0, splitY, width, height - splitY);
+    ctx.fillStyle = "rgba(233, 86, 86, 0.08)";
+    ctx.fillRect(0, 0, width, splitY);
+  }
 
   ctx.strokeStyle = "rgba(255,255,255,0.3)";
   ctx.lineWidth = 4;
-  const riverY = canvas.height * 0.5;
+  const riverY = height * 0.5;
   ctx.beginPath();
   ctx.moveTo(0, riverY);
-  ctx.lineTo(canvas.width, riverY);
+  ctx.lineTo(width, riverY);
   ctx.stroke();
 }
 
@@ -524,23 +596,109 @@ function drawPendingEffects() {
   }
 }
 
+function drawPlacementPreview() {
+  const drag = appState.dragState;
+  if (!drag || !drag.isDragging) {
+    return;
+  }
+
+  const card = getCard(drag.cardId);
+  if (!card) {
+    return;
+  }
+
+  const world = screenToWorld({ x: drag.currentX, y: drag.currentY });
+  const screen = worldToScreen(world);
+  const placementStatus = getPlacementStatus(drag.cardId, world, "blue");
+  const legal = placementStatus.ok;
+  const stroke = legal ? "#79ffab" : "#ff9c9c";
+  const fill = legal ? "rgba(80, 214, 138, 0.2)" : "rgba(239, 95, 95, 0.2)";
+  const label = CARD_LABEL[drag.cardId] ?? drag.cardId;
+  const radius =
+    card.type === "spell"
+      ? tilesToPixels(card.id === "fireball" ? FIREBALL_CONFIG.radius_tiles : ARROWS_CONFIG.radius_tiles)
+      : 18;
+
+  const originSlot = getHandSlotRects().find((slot) => slot.index === drag.slotIndex);
+  if (originSlot) {
+    ctx.save();
+    ctx.globalAlpha = 0.65;
+    ctx.setLineDash([6, 6]);
+    ctx.beginPath();
+    ctx.moveTo(originSlot.x + originSlot.width / 2, originSlot.y + originSlot.height / 2);
+    ctx.lineTo(screen.x, screen.y);
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = stroke;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  ctx.save();
+  ctx.globalAlpha = 0.95;
+  ctx.beginPath();
+  ctx.arc(screen.x, screen.y, radius, 0, Math.PI * 2);
+  ctx.fillStyle = fill;
+  ctx.fill();
+
+  ctx.setLineDash([8, 6]);
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = stroke;
+  ctx.stroke();
+  ctx.restore();
+
+  ctx.save();
+  ctx.font = "12px Avenir Next";
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#f6f9ff";
+  ctx.fillText(label, screen.x, screen.y - radius - 14);
+  if (!legal && placementStatus.reason) {
+    ctx.fillStyle = "#ffd6d6";
+    ctx.fillText(placementStatus.reason, screen.x, screen.y + radius + 18);
+  }
+  ctx.restore();
+}
+
+function drawElixirPips({ x, y, actor, amount }) {
+  const color = actor === "blue" ? "#7cb3ff" : "#ff9f9f";
+
+  ctx.font = "12px Avenir Next";
+  ctx.textAlign = "left";
+  ctx.fillStyle = "#e5ecff";
+  ctx.fillText(`${actor.toUpperCase()} ELIXIR`, x, y);
+
+  for (let i = 0; i < MAX_ELIXIR; i += 1) {
+    const pipX = x + i * 14;
+    const filled = i < amount;
+    ctx.fillStyle = filled ? color : "rgba(199, 214, 240, 0.25)";
+    ctx.fillRect(pipX, y + 6, 10, 12);
+    ctx.strokeStyle = "rgba(255,255,255,0.28)";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(pipX, y + 6, 10, 12);
+  }
+}
+
 function drawHand() {
   const hand = appState.engine.getHand("blue");
   const deckQueue = appState.engine.getDeckQueue("blue");
   const slots = getHandSlotRects();
+  const dragIndex = appState.dragState?.slotIndex ?? null;
 
   for (const slot of slots) {
     const cardId = hand[slot.index] ?? null;
     const card = cardId ? getCard(cardId) : null;
     const isSelected = slot.index === appState.selectedCardIndex;
     const affordable = card ? appState.engine.state.elixir.blue.elixir >= card.cost : false;
+    const isDraggingCard = appState.dragState?.isDragging && dragIndex === slot.index;
 
+    ctx.save();
+    ctx.globalAlpha = isDraggingCard ? 0.45 : 1;
     ctx.fillStyle = isSelected ? "rgba(28,45,78,0.95)" : "rgba(17,31,57,0.9)";
     ctx.fillRect(slot.x, slot.y, slot.width, slot.height);
 
     ctx.lineWidth = 2;
     ctx.strokeStyle = isSelected ? "#f7d165" : "rgba(255,255,255,0.25)";
     ctx.strokeRect(slot.x, slot.y, slot.width, slot.height);
+    ctx.restore();
 
     if (!card) {
       continue;
@@ -572,28 +730,32 @@ function drawHud() {
   const overtimeRemaining = Math.max(0, MATCH_CONFIG.overtime_ticks - overtimeElapsed);
 
   const score = appState.engine.getScore();
+  const width = getCanvasWidth();
+  const height = getCanvasHeight();
+  const panelWidth = Math.min(490, width - 24);
 
-  ctx.fillStyle = "rgba(12, 20, 38, 0.72)";
-  ctx.fillRect(12, 12, 420, 132);
+  ctx.fillStyle = "rgba(12, 20, 38, 0.74)";
+  ctx.fillRect(12, 12, panelWidth, 164);
 
   ctx.fillStyle = "#ffffff";
   ctx.font = "14px Avenir Next";
   ctx.textAlign = "left";
   ctx.fillText(`Mode: ${appState.mode} ${appState.paused ? "(paused)" : ""}`, 22, 34);
   ctx.fillText(`Phase: ${phase}`, 22, 54);
-  ctx.fillText(`Elixir - Blue: ${appState.engine.state.elixir.blue.elixir} | Red: ${appState.engine.state.elixir.red.elixir}`, 22, 74);
-  ctx.fillText(`Crowns - Blue: ${score.blue_crowns} | Red: ${score.red_crowns}`, 22, 94);
-  ctx.fillText(`Pending effects: ${appState.engine.state.pending_effects.length}`, 22, 114);
+  ctx.fillText(`Crowns - Blue: ${score.blue_crowns} | Red: ${score.red_crowns}`, 22, 74);
+  ctx.fillText(`Pending effects: ${appState.engine.state.pending_effects.length}`, 22, 94);
   ctx.fillText(
     `Time - Regulation: ${(regulationRemaining / TICK_RATE).toFixed(1)}s | Overtime: ${(overtimeRemaining / TICK_RATE).toFixed(1)}s`,
     22,
-    134,
+    114,
   );
+  drawElixirPips({ x: 22, y: 128, actor: "blue", amount: appState.engine.state.elixir.blue.elixir });
+  drawElixirPips({ x: 190, y: 128, actor: "red", amount: appState.engine.state.elixir.red.elixir });
 
   ctx.fillStyle = "rgba(12, 20, 38, 0.72)";
-  ctx.fillRect(12, canvas.height - 40, canvas.width - 24, 30);
+  ctx.fillRect(12, height - 40, width - 24, 30);
   ctx.fillStyle = "#f6f9ff";
-  ctx.fillText(`Controls: click card slot, then click arena to play | ${appState.statusMessage}`, 20, canvas.height - 20);
+  ctx.fillText(`Controls: click or drag card to arena | ${appState.statusMessage}`, 20, height - 20);
 }
 
 function render() {
@@ -605,6 +767,7 @@ function render() {
     drawEntity(entity);
   }
 
+  drawPlacementPreview();
   drawHand();
   drawHud();
 }
@@ -633,10 +796,114 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 
-canvas.addEventListener("click", (event) => {
+function getCanvasPointFromEvent(event) {
   const rect = canvas.getBoundingClientRect();
-  const x = ((event.clientX - rect.left) / rect.width) * canvas.width;
-  const y = ((event.clientY - rect.top) / rect.height) * canvas.height;
+  return {
+    x: ((event.clientX - rect.left) / rect.width) * getCanvasWidth(),
+    y: ((event.clientY - rect.top) / rect.height) * getCanvasHeight(),
+  };
+}
+
+function clearDragState() {
+  appState.dragState = null;
+}
+
+canvas.addEventListener("pointerdown", (event) => {
+  const point = getCanvasPointFromEvent(event);
+  const slotHit = findHandSlotHit(point.x, point.y);
+  if (slotHit === null) {
+    return;
+  }
+
+  const hand = appState.engine.getHand("blue");
+  const cardId = hand[slotHit] ?? null;
+  appState.selectedCardIndex = slotHit;
+  if (!cardId) {
+    return;
+  }
+
+  appState.dragState = {
+    pointerId: event.pointerId,
+    slotIndex: slotHit,
+    cardId,
+    startX: point.x,
+    startY: point.y,
+    currentX: point.x,
+    currentY: point.y,
+    isDragging: false,
+  };
+  canvas.setPointerCapture(event.pointerId);
+});
+
+canvas.addEventListener("pointermove", (event) => {
+  const drag = appState.dragState;
+  if (!drag || drag.pointerId !== event.pointerId) {
+    return;
+  }
+
+  const point = getCanvasPointFromEvent(event);
+  drag.currentX = point.x;
+  drag.currentY = point.y;
+
+  const distance = Math.hypot(point.x - drag.startX, point.y - drag.startY);
+  if (!drag.isDragging && distance >= DRAG_START_DISTANCE) {
+    drag.isDragging = true;
+  }
+
+  if (drag.isDragging) {
+    const placementStatus = getPlacementStatus(drag.cardId, screenToWorld(point), "blue");
+    appState.statusMessage = placementStatus.ok
+      ? `Release to play ${CARD_LABEL[drag.cardId] ?? drag.cardId}.`
+      : placementStatus.reason;
+  }
+});
+
+canvas.addEventListener("pointerup", (event) => {
+  const drag = appState.dragState;
+  if (!drag || drag.pointerId !== event.pointerId) {
+    return;
+  }
+
+  const point = getCanvasPointFromEvent(event);
+  const slotHit = findHandSlotHit(point.x, point.y);
+
+  if (drag.isDragging) {
+    if (slotHit !== null) {
+      appState.selectedCardIndex = slotHit;
+      appState.statusMessage = "Card selection updated.";
+    } else {
+      const played = queuePlayerCardPlay(screenToWorld(point), { cardIndex: drag.slotIndex });
+      if (played) {
+        appState.statusMessage = `Played ${CARD_LABEL[drag.cardId] ?? drag.cardId}.`;
+      }
+    }
+    appState.suppressNextClick = true;
+  }
+
+  clearDragState();
+  if (canvas.hasPointerCapture(event.pointerId)) {
+    canvas.releasePointerCapture(event.pointerId);
+  }
+});
+
+canvas.addEventListener("pointercancel", (event) => {
+  const drag = appState.dragState;
+  if (!drag || drag.pointerId !== event.pointerId) {
+    return;
+  }
+  clearDragState();
+  if (canvas.hasPointerCapture(event.pointerId)) {
+    canvas.releasePointerCapture(event.pointerId);
+  }
+});
+
+canvas.addEventListener("click", (event) => {
+  if (appState.suppressNextClick) {
+    appState.suppressNextClick = false;
+    return;
+  }
+
+  const { x, y } = getCanvasPointFromEvent(event);
 
   const slotHit = findHandSlotHit(x, y);
   if (slotHit !== null) {
@@ -649,6 +916,8 @@ canvas.addEventListener("click", (event) => {
 
 startBtn.addEventListener("click", () => {
   appState.mode = "playing";
+  appState.paused = false;
+  appState.lagMs = 0;
   appState.statusMessage = "Battle started. Cycle cards to pressure towers.";
 });
 
@@ -682,6 +951,16 @@ window.addEventListener("keydown", (event) => {
   }
 });
 
+window.addEventListener("resize", () => {
+  resizeCanvasToDisplaySize();
+  render();
+});
+
+document.addEventListener("fullscreenchange", () => {
+  resizeCanvasToDisplaySize();
+  render();
+});
+
 window.advanceTime = (ms) => {
   const tickCount = Math.max(1, Math.round(ms / (1000 / TICK_RATE)));
   const previousMode = appState.mode;
@@ -689,7 +968,7 @@ window.advanceTime = (ms) => {
     appState.mode = "playing";
   }
   runTicks(tickCount);
-  if (previousMode === "ready") {
+  if (previousMode === "ready" && appState.mode === "playing") {
     appState.mode = "ready";
   }
 };
@@ -761,5 +1040,6 @@ window.render_game_to_text = () => {
 };
 
 resetGame();
+resizeCanvasToDisplaySize();
 render();
 requestAnimationFrame(frame);

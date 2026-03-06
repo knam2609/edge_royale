@@ -75,3 +75,21 @@ Original prompt: PLEASE IMPLEMENT THIS PLAN (3x overtime elixir + Fireball knock
   - `output/web-game-visual-troop-v3/shot-0.png` confirms updated deploy telegraph styling while pending.
   - `output/web-game-visual-fireball-v2/shot-0.png` confirms updated Fireball travel styling.
   - No console error logs emitted in these captures.
+
+- Code review + UI continuation pass completed in `src/client/webGame.js` and `index.html`:
+  - Fixed fullscreen/render-surface bug by adding DPR-aware canvas resize logic, `resize` + `fullscreenchange` handlers, and fullscreen CSS sizing rules.
+  - Fixed deterministic stepping edge case: `window.advanceTime(ms)` now only restores `ready` mode if the simulation is still `playing` after stepping (prevents clobbering `game_over`).
+  - Added drag-and-drop card placement UX on canvas (pointer capture, drag threshold, release-to-play flow, drop feedback, and selection fallback).
+  - Added live drag placement preview (tether line from hand slot, legal/illegal reticle, on-canvas reason text).
+  - Added deploy-side tint overlay when troop cards are active/dragged to improve placement affordance.
+  - Added HUD elixir pip meters (blue/red) and updated control hint text for drag flow.
+- Validation runs after changes:
+  - Unit tests: `npm test` passing (`23/23`).
+  - Playwright loop via skill client on clean local port: `output/web-game-ui-v3` (`shot-0..2.png`, `state-0..2.json`), no error artifacts generated.
+  - Focused drag verification script captured `output/web-game-ui-v3/drag-preview.png` and `output/web-game-ui-v3/drag-drop.png`; `drag-state.json` confirms drop created pending troop deploy effect.
+- Environment note:
+  - Port `5173` was already occupied by a stale dev server from another checkout (`/Users/thangnguyen/Documents/GitHub/edge_royale`), so validation used isolated ports (`5174`, `5175`) to avoid cross-worktree artifacts.
+- Next UI TODO suggestions:
+  - Add touch-friendly drag ghost/card icon scaling for smaller screens.
+  - Add explicit placement boundary/invalid-zone line labels for troop-only restrictions.
+  - Add a small integration UI smoke test around drag-drop + fullscreen resize behavior.
