@@ -41,7 +41,9 @@ npm run dev
 Open `http://127.0.0.1:5173`.
 
 Controls:
-- Click arena to cast Fireball (cost 4 elixir)
+- Click a card slot (or press `1-4`) to select a hand card
+- Click arena to play the selected card
+- Drag a card from hand to arena to play on release
 - `Space` pause/resume
 - `R` reset
 - `F` fullscreen toggle
