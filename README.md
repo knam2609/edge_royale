@@ -42,11 +42,17 @@ Open `http://127.0.0.1:5173`.
 
 Controls:
 - Click a card slot (or press `1-4`) to select a hand card
-- Click arena to play the selected card
+- Click arena to play the selected card (troops on your side only)
 - Drag a card from hand to arena to play on release
 - `Space` pause/resume
 - `R` reset
 - `F` fullscreen toggle
+
+Ladder + training:
+- Select bot difficulty from the `Bot Level` dropdown (locked levels show as disabled).
+- Beat a tier to unlock the next (`Noob` -> `Mid-ladder Menace` -> `Top Ladder`).
+- Click `Train Self Bot` to fit a local imitation model from logged player actions.
+- Self-play unlock rule is enforced from profile data (`100` matches and `3` wins vs Top).
 
 Automation hooks exposed in browser:
 - `window.render_game_to_text()`
