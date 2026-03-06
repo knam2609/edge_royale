@@ -36,3 +36,21 @@ Original prompt: PLEASE IMPLEMENT THIS PLAN (3x overtime elixir + Fireball knock
   - Verified slot selection + card-play loop works and hand/draw queue rotate in `render_game_to_text`.
   - Verified no console/page errors were emitted.
   - Captured screenshots + state snapshots for three iterations; observed expected ongoing match state and elixir constraints.
+
+- Implemented deterministic delayed card resolution in simulation:
+  - Added troop deploy timing metadata in card library (`deploy_time_ticks=20` for troops).
+  - Added spell timing config (`fireball.cast_delay_ticks=6`, `fireball.travel_speed_tiles_per_second=10`, `arrows.cast_delay_ticks=16`).
+  - Refactored engine to schedule and resolve effects via `pending_effects` queue (`effect_scheduled`, `troop_deployed`, delayed `spell_impact` events).
+  - Preserved immediate elixir spend + hand cycle on accepted `PLAY_CARD`, with effect resolution deferred by timing rules.
+  - Added pending effects to state hash for determinism with in-flight actions.
+- Added timing-focused regression tests (`tests/action-timing.test.js`):
+  - Troop deployment resolves after 20 ticks.
+  - Arrows damage resolves after cast delay.
+  - Fireball resolves after cast+travel delay.
+  - Full suite passes (`23/23`).
+- Updated browser HUD/text-state to surface delayed effects:
+  - HUD now displays `Pending effects` count.
+  - `render_game_to_text` now includes structured `pending_effects`.
+- Playwright validation after timing refactor:
+  - Main gameplay run: `output/web-game-timing` (3 iterations), no console/page errors.
+  - Additional early snapshot run: `output/web-game-timing-pending` confirms non-zero pending effect state in both screenshot and text output.
