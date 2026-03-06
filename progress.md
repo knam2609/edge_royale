@@ -23,3 +23,16 @@ Original prompt: PLEASE IMPLEMENT THIS PLAN (3x overtime elixir + Fireball knock
 - Client now starts overtime only on tied crowns at regulation end, shows crowns in HUD, and transitions to `game_over` with structured winner reason.
 - Added integration tests for regulation winner, overtime tie path, overtime HP tiebreak, and overtime draw (`tests/match.test.js`).
 - Playwright run on updated build confirmed `game_over` transition and winner status message in HUD with score data in text output.
+
+- Implemented real deck/hand cycle flow for gameplay actions:
+  - Added `src/sim/cards.js` with `CARD_LIBRARY` + deterministic `DEFAULT_DECK`.
+  - Updated engine action handling to support `PLAY_CARD` with hand validation, cost spend, placement rules, troop spawn/spell resolution, and post-play cycling.
+  - Added arrows spell resolution path and hand/deck APIs (`getHand`, `getDeckQueue`) for both actors.
+  - Updated browser client to card-slot selection + arena click card play, and switched bot from free-cast to hand-driven `PLAY_CARD`.
+- Resolved replay regression introduced by enemy-only spell filtering:
+  - Updated replay fixture to include a surviving enemy troop so knockback event assertions remain meaningful.
+  - Full test suite now passes (`20/20`).
+- Ran Playwright gameplay validation for hand/deck UX against local server (`output/web-game-hand`):
+  - Verified slot selection + card-play loop works and hand/draw queue rotate in `render_game_to_text`.
+  - Verified no console/page errors were emitted.
+  - Captured screenshots + state snapshots for three iterations; observed expected ongoing match state and elixir constraints.

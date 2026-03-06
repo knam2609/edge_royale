@@ -26,6 +26,12 @@ export const FIREBALL_CONFIG = Object.freeze({
   knockback_immune_card_ids: Object.freeze(["giant"]),
 });
 
+export const ARROWS_CONFIG = Object.freeze({
+  cost: 3,
+  radius_tiles: 3.0,
+  damage: 350,
+});
+
 export function getMatchPhase({ tick, isOvertime }) {
   if (isOvertime) {
     return "overtime";

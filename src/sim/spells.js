@@ -15,6 +15,13 @@ function isInImpactRadius(entity, center, radiusTiles) {
   return squaredDistance(entity, center) <= radiusTiles * radiusTiles;
 }
 
+function isEnemyEntity(entity, actorTeam) {
+  if (!actorTeam) {
+    return true;
+  }
+  return entity.team !== actorTeam;
+}
+
 function isEligibleForFireballKnockback(entity, immuneIds) {
   if (entity.entity_type !== "troop") {
     return false;
@@ -41,6 +48,7 @@ export function resolveFireballImpact({
   entities,
   arena,
   sourceSpell,
+  actorTeam = null,
   fireballConfig,
 }) {
   const center = { x: impactX, y: impactY };
@@ -48,7 +56,7 @@ export function resolveFireballImpact({
 
   // 1) Impact detection
   for (const entity of entities) {
-    if (isInImpactRadius(entity, center, fireballConfig.radius_tiles)) {
+    if (isEnemyEntity(entity, actorTeam) && isInImpactRadius(entity, center, fireballConfig.radius_tiles)) {
       impacted.push(entity);
     }
   }
@@ -97,5 +105,40 @@ export function resolveFireballImpact({
   return {
     impacted_entity_ids: impacted.map((entity) => entity.id),
     knockback_events: knockbackEvents,
+  };
+}
+
+export function resolveArrowsImpact({
+  tick,
+  impactX,
+  impactY,
+  entities,
+  sourceSpell,
+  actorTeam = null,
+  arrowsConfig,
+}) {
+  const center = { x: impactX, y: impactY };
+  const impacted = [];
+
+  for (const entity of entities) {
+    if (entity.entity_type !== "troop") {
+      continue;
+    }
+    if (!isEnemyEntity(entity, actorTeam)) {
+      continue;
+    }
+    if (isInImpactRadius(entity, center, arrowsConfig.radius_tiles)) {
+      impacted.push(entity);
+    }
+  }
+
+  for (const entity of impacted) {
+    entity.hp = Math.max(0, entity.hp - arrowsConfig.damage);
+  }
+
+  return {
+    tick,
+    source_spell: sourceSpell,
+    impacted_entity_ids: impacted.map((entity) => entity.id),
   };
 }

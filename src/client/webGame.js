@@ -1,3 +1,4 @@
+import { getCard } from "../sim/cards.js";
 import { FIREBALL_CONFIG, MATCH_CONFIG, TICK_RATE, getMatchPhase } from "../sim/config.js";
 import { createEngine } from "../sim/engine.js";
 import { createTroop, createTower } from "../sim/entities.js";
@@ -10,11 +11,28 @@ const resetBtn = document.getElementById("reset-btn");
 
 const arena = createArena({ minX: 0, maxX: 18, minY: 0, maxY: 32 });
 
+const HAND_SLOTS = 4;
+const HAND_CARD_WIDTH = 140;
+const HAND_CARD_HEIGHT = 54;
+const HAND_GAP = 10;
+
+const CARD_LABEL = Object.freeze({
+  giant: "Giant",
+  knight: "Knight",
+  archers: "Archers",
+  mini_pekka: "Mini P.E.K.K.A",
+  musketeer: "Musketeer",
+  goblins: "Goblins",
+  arrows: "Arrows",
+  fireball: "Fireball",
+});
+
 const appState = {
   mode: "ready",
   paused: false,
   pendingActions: [],
   statusMessage: "Click Start to begin.",
+  selectedCardIndex: 0,
   engine: null,
   lastFrameTime: performance.now(),
   lagMs: 0,
@@ -30,6 +48,34 @@ function screenToWorld(position) {
   const x = arena.minX + (position.x / canvas.width) * (arena.maxX - arena.minX);
   const y = arena.minY + (position.y / canvas.height) * (arena.maxY - arena.minY);
   return { x: Math.max(arena.minX, Math.min(arena.maxX, x)), y: Math.max(arena.minY, Math.min(arena.maxY, y)) };
+}
+
+function getHandSlotRects() {
+  const totalWidth = HAND_SLOTS * HAND_CARD_WIDTH + (HAND_SLOTS - 1) * HAND_GAP;
+  const startX = (canvas.width - totalWidth) / 2;
+  const y = canvas.height - 110;
+
+  const slots = [];
+  for (let i = 0; i < HAND_SLOTS; i += 1) {
+    slots.push({
+      index: i,
+      x: startX + i * (HAND_CARD_WIDTH + HAND_GAP),
+      y,
+      width: HAND_CARD_WIDTH,
+      height: HAND_CARD_HEIGHT,
+    });
+  }
+
+  return slots;
+}
+
+function findHandSlotHit(x, y) {
+  for (const slot of getHandSlotRects()) {
+    if (x >= slot.x && x <= slot.x + slot.width && y >= slot.y && y <= slot.y + slot.height) {
+      return slot.index;
+    }
+  }
+  return null;
 }
 
 function createInitialEntities() {
@@ -53,31 +99,61 @@ function resetGame() {
   appState.pendingActions = [];
   appState.mode = "ready";
   appState.paused = false;
-  appState.statusMessage = "Ready. Press Start to battle bots.";
+  appState.selectedCardIndex = 0;
+  appState.statusMessage = "Ready. Pick a card and click arena to play.";
 }
 
-function queuePlayerFireball(worldPosition) {
+function getSelectedCardId(actor = "blue") {
+  const hand = appState.engine.getHand(actor);
+  return hand[appState.selectedCardIndex] ?? null;
+}
+
+function queuePlayerCardPlay(worldPosition) {
   if (appState.mode !== "playing") {
+    return;
+  }
+
+  const cardId = getSelectedCardId("blue");
+  if (!cardId) {
+    appState.statusMessage = "No card in selected slot.";
+    return;
+  }
+
+  const card = getCard(cardId);
+  if (!card) {
+    appState.statusMessage = "Unknown card.";
+    return;
+  }
+
+  const currentElixir = appState.engine.state.elixir.blue.elixir;
+  if (currentElixir < card.cost) {
+    appState.statusMessage = `Not enough elixir for ${CARD_LABEL[cardId] ?? cardId}.`;
+    return;
+  }
+
+  if (card.type === "troop" && worldPosition.y < 16) {
+    appState.statusMessage = "Troops must be played on your side.";
     return;
   }
 
   const nextTick = appState.engine.state.tick + 1;
   appState.pendingActions.push({
     tick: nextTick,
-    type: "CAST_FIREBALL",
+    type: "PLAY_CARD",
     actor: "blue",
+    cardId,
     x: Math.round(worldPosition.x * 100) / 100,
     y: Math.round(worldPosition.y * 100) / 100,
   });
 }
 
-function pickBotTarget() {
+function pickBlueTarget() {
   const enemies = appState.engine.state.entities.filter(
     (entity) => entity.team === "blue" && entity.hp > 0 && entity.entity_type === "troop",
   );
 
   if (enemies.length === 0) {
-    return { x: 9, y: 26 };
+    return null;
   }
 
   enemies.sort((a, b) => a.y - b.y || a.id.localeCompare(b.id));
@@ -85,19 +161,56 @@ function pickBotTarget() {
 }
 
 function buildBotActions(tick) {
-  const redElixir = appState.engine.state.elixir.red.elixir;
-  if (tick % TICK_RATE !== 0 || redElixir < FIREBALL_CONFIG.cost) {
+  if (tick % 8 !== 0) {
     return [];
   }
 
-  const target = pickBotTarget();
+  const hand = appState.engine.getHand("red");
+  const redElixir = appState.engine.state.elixir.red.elixir;
+  const target = pickBlueTarget();
+
+  const chooseCard = () => {
+    for (const preferred of ["fireball", "arrows", "giant", "mini_pekka", "musketeer", "knight", "archers", "goblins"]) {
+      if (!hand.includes(preferred)) {
+        continue;
+      }
+      const card = getCard(preferred);
+      if (card && card.cost <= redElixir) {
+        return card;
+      }
+    }
+    return null;
+  };
+
+  const card = chooseCard();
+  if (!card) {
+    return [];
+  }
+
+  let x = 9;
+  let y = 8;
+
+  if (card.type === "spell") {
+    if (target) {
+      x = target.x;
+      y = target.y;
+    } else {
+      x = 9;
+      y = 24;
+    }
+  } else {
+    x = 8.2 + ((tick / 8) % 4) * 0.6;
+    y = 8.2;
+  }
+
   return [
     {
       tick,
-      type: "CAST_FIREBALL",
+      type: "PLAY_CARD",
       actor: "red",
-      x: target.x,
-      y: target.y,
+      cardId: card.id,
+      x,
+      y,
     },
   ];
 }
@@ -171,7 +284,7 @@ function drawEntity(entity) {
   ctx.font = "12px Avenir Next";
   ctx.fillStyle = "#ffffff";
   ctx.textAlign = "center";
-  ctx.fillText(entity.cardId.slice(0, 3).toUpperCase(), screen.x, screen.y + 4);
+  ctx.fillText((CARD_LABEL[entity.cardId] ?? entity.cardId).slice(0, 3).toUpperCase(), screen.x, screen.y + 4);
 
   const hpRatio = Math.max(0, Math.min(1, entity.hp / entity.maxHp));
   const barWidth = entity.entity_type === "tower" ? 42 : 28;
@@ -180,6 +293,45 @@ function drawEntity(entity) {
   ctx.fillRect(screen.x - barWidth / 2, screen.y - radius - 10, barWidth, barHeight);
   ctx.fillStyle = "#6cf58a";
   ctx.fillRect(screen.x - barWidth / 2, screen.y - radius - 10, barWidth * hpRatio, barHeight);
+}
+
+function drawHand() {
+  const hand = appState.engine.getHand("blue");
+  const deckQueue = appState.engine.getDeckQueue("blue");
+  const slots = getHandSlotRects();
+
+  for (const slot of slots) {
+    const cardId = hand[slot.index] ?? null;
+    const card = cardId ? getCard(cardId) : null;
+    const isSelected = slot.index === appState.selectedCardIndex;
+    const affordable = card ? appState.engine.state.elixir.blue.elixir >= card.cost : false;
+
+    ctx.fillStyle = isSelected ? "rgba(28,45,78,0.95)" : "rgba(17,31,57,0.9)";
+    ctx.fillRect(slot.x, slot.y, slot.width, slot.height);
+
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = isSelected ? "#f7d165" : "rgba(255,255,255,0.25)";
+    ctx.strokeRect(slot.x, slot.y, slot.width, slot.height);
+
+    if (!card) {
+      continue;
+    }
+
+    ctx.fillStyle = affordable ? "#ffffff" : "#b5bdd1";
+    ctx.font = "12px Avenir Next";
+    ctx.textAlign = "left";
+    ctx.fillText(`${slot.index + 1}. ${CARD_LABEL[cardId] ?? cardId}`, slot.x + 8, slot.y + 20);
+
+    ctx.textAlign = "right";
+    ctx.fillText(`${card.cost} elixir`, slot.x + slot.width - 8, slot.y + 20);
+    ctx.textAlign = "left";
+
+    if (slot.index === 0 && deckQueue.length > 0) {
+      const nextLabel = CARD_LABEL[deckQueue[0]] ?? deckQueue[0];
+      ctx.fillStyle = "#9bb2da";
+      ctx.fillText(`Next: ${nextLabel}`, slot.x + 8, slot.y + 40);
+    }
+  }
 }
 
 function drawHud() {
@@ -193,7 +345,7 @@ function drawHud() {
   const score = appState.engine.getScore();
 
   ctx.fillStyle = "rgba(12, 20, 38, 0.72)";
-  ctx.fillRect(12, 12, 360, 112);
+  ctx.fillRect(12, 12, 420, 112);
 
   ctx.fillStyle = "#ffffff";
   ctx.font = "14px Avenir Next";
@@ -209,9 +361,9 @@ function drawHud() {
   );
 
   ctx.fillStyle = "rgba(12, 20, 38, 0.72)";
-  ctx.fillRect(12, canvas.height - 46, canvas.width - 24, 34);
+  ctx.fillRect(12, canvas.height - 40, canvas.width - 24, 30);
   ctx.fillStyle = "#f6f9ff";
-  ctx.fillText(`Controls: click to cast Fireball (cost 4), Space pause, R reset, F fullscreen | ${appState.statusMessage}`, 20, canvas.height - 24);
+  ctx.fillText(`Controls: click card slot, then click arena to play | ${appState.statusMessage}`, 20, canvas.height - 20);
 }
 
 function render() {
@@ -221,6 +373,7 @@ function render() {
     drawEntity(entity);
   }
 
+  drawHand();
   drawHud();
 }
 
@@ -252,12 +405,19 @@ canvas.addEventListener("click", (event) => {
   const rect = canvas.getBoundingClientRect();
   const x = ((event.clientX - rect.left) / rect.width) * canvas.width;
   const y = ((event.clientY - rect.top) / rect.height) * canvas.height;
-  queuePlayerFireball(screenToWorld({ x, y }));
+
+  const slotHit = findHandSlotHit(x, y);
+  if (slotHit !== null) {
+    appState.selectedCardIndex = slotHit;
+    return;
+  }
+
+  queuePlayerCardPlay(screenToWorld({ x, y }));
 });
 
 startBtn.addEventListener("click", () => {
   appState.mode = "playing";
-  appState.statusMessage = "Battle started. Deflect pushes with Fireball knockback.";
+  appState.statusMessage = "Battle started. Cycle cards to pressure towers.";
 });
 
 resetBtn.addEventListener("click", () => {
@@ -268,6 +428,11 @@ window.addEventListener("keydown", (event) => {
   if (event.key === " ") {
     event.preventDefault();
     appState.paused = !appState.paused;
+    return;
+  }
+
+  if (["1", "2", "3", "4"].includes(event.key)) {
+    appState.selectedCardIndex = Number.parseInt(event.key, 10) - 1;
     return;
   }
 
@@ -317,6 +482,13 @@ window.render_game_to_text = () => {
     elixir: {
       blue: appState.engine.state.elixir.blue.elixir,
       red: appState.engine.state.elixir.red.elixir,
+    },
+    hand: {
+      blue: appState.engine.getHand("blue"),
+      blue_selected_index: appState.selectedCardIndex,
+      blue_draw_queue: appState.engine.getDeckQueue("blue"),
+      red: appState.engine.getHand("red"),
+      red_draw_queue: appState.engine.getDeckQueue("red"),
     },
     timers: {
       regulation_remaining_s: Number((regulationRemaining / TICK_RATE).toFixed(2)),
