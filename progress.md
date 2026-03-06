@@ -124,3 +124,20 @@ Original prompt: PLEASE IMPLEMENT THIS PLAN (3x overtime elixir + Fireball knock
 - Validation:
   - `npm test` passed (`37/37`).
   - Playwright run completed against `http://127.0.0.1:4174` with artifacts in `output/web-game-bots-v2/` and no console/page errors.
+
+- Continued UI iteration (`src/client/webGame.js`) focused on responsiveness and placement clarity:
+  - Implemented responsive hand layout sizing (`getHandLayout`) so 4 card slots always fit narrow canvases without overflow.
+  - Added compact hand text rendering logic for narrow cards (auto-fit labels with ellipsis, stacked cost text).
+  - Added explicit troop placement boundary guide treatment in arena (dashed midline + side labels when space allows).
+  - Added drag ghost card widget near pointer during drag (card name + elixir cost, legal/illegal border coloring).
+  - Added compact HUD mode for small canvas sizes and width-clamped status text to reduce overflow.
+- Regression/validation checks:
+  - Syntax check: `node --check src/client/webGame.js`.
+  - Unit tests: `npm test` passing (`23/23`).
+- Browser validation artifacts:
+  - Main UI loop on clean port: `output/web-game-ui-v5` (`shot-0..2.png`, `state-0..2.json`), no error artifacts generated.
+  - Focused troop-boundary visibility capture: `output/web-game-ui-v5-boundary/shot-0.png` + `state-0.json`.
+  - Focused mobile drag captures: `output/web-game-ui-v5/drag-preview-mobile.png`, `drag-drop-mobile.png`, and `drag-state-mobile.json`.
+- Notes:
+  - Compact mode substantially reduces clipping on small canvases, but portrait mobile still has inherently dense UI due fixed 16:9 arena footprint.
+  - Next likely step: split gameplay HUD into toggleable “minimal” and “full” overlays for portrait devices.
