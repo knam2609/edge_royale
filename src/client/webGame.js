@@ -345,7 +345,7 @@ function drawHud() {
   const score = appState.engine.getScore();
 
   ctx.fillStyle = "rgba(12, 20, 38, 0.72)";
-  ctx.fillRect(12, 12, 420, 112);
+  ctx.fillRect(12, 12, 420, 132);
 
   ctx.fillStyle = "#ffffff";
   ctx.font = "14px Avenir Next";
@@ -354,10 +354,11 @@ function drawHud() {
   ctx.fillText(`Phase: ${phase}`, 22, 54);
   ctx.fillText(`Elixir - Blue: ${appState.engine.state.elixir.blue.elixir} | Red: ${appState.engine.state.elixir.red.elixir}`, 22, 74);
   ctx.fillText(`Crowns - Blue: ${score.blue_crowns} | Red: ${score.red_crowns}`, 22, 94);
+  ctx.fillText(`Pending effects: ${appState.engine.state.pending_effects.length}`, 22, 114);
   ctx.fillText(
     `Time - Regulation: ${(regulationRemaining / TICK_RATE).toFixed(1)}s | Overtime: ${(overtimeRemaining / TICK_RATE).toFixed(1)}s`,
     22,
-    114,
+    134,
   );
 
   ctx.fillStyle = "rgba(12, 20, 38, 0.72)";
@@ -496,6 +497,17 @@ window.render_game_to_text = () => {
     },
     score: appState.engine.getScore(),
     match_result: appState.engine.getMatchResult(),
+    pending_effects: appState.engine.state.pending_effects.map((effect) => ({
+      effect_id: effect.effect_id,
+      effect_type: effect.effect_type,
+      actor: effect.actor,
+      card_id: effect.card_id,
+      resolve_tick: effect.resolve_tick,
+      x: effect.x,
+      y: effect.y,
+      cast_delay_ticks: effect.cast_delay_ticks ?? null,
+      travel_ticks: effect.travel_ticks ?? null,
+    })),
     entities: appState.engine.state.entities
       .filter((entity) => entity.hp > 0)
       .map((entity) => ({

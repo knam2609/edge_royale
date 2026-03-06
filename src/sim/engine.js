@@ -1,7 +1,7 @@
 import { saveReplay } from "../replay/codec.js";
 import { getCard, DEFAULT_DECK } from "./cards.js";
 import { stepCombat } from "./combat.js";
-import { ARROWS_CONFIG, MATCH_CONFIG, getMatchPhase } from "./config.js";
+import { ARROWS_CONFIG, FIREBALL_CONFIG, MATCH_CONFIG, TICK_RATE, getMatchPhase } from "./config.js";
 import { ElixirTracker } from "./elixir.js";
 import { applyForcedMotion, createTroop } from "./entities.js";
 import { hashState } from "./hash.js";
@@ -31,6 +31,12 @@ function cloneCardState(cardState) {
   };
 }
 
+function clonePendingEffect(effect) {
+  return {
+    ...effect,
+  };
+}
+
 function sortActions(actions) {
   return [...actions].sort((a, b) => {
     if (a.tick !== b.tick) {
@@ -40,6 +46,21 @@ function sortActions(actions) {
       return a.type.localeCompare(b.type);
     }
     return (a.actor ?? "").localeCompare(b.actor ?? "");
+  });
+}
+
+function sortEffects(effects) {
+  return [...effects].sort((a, b) => {
+    if (a.resolve_tick !== b.resolve_tick) {
+      return a.resolve_tick - b.resolve_tick;
+    }
+    if (a.enqueue_tick !== b.enqueue_tick) {
+      return a.enqueue_tick - b.enqueue_tick;
+    }
+    if (a.effect_type !== b.effect_type) {
+      return a.effect_type.localeCompare(b.effect_type);
+    }
+    return a.effect_id - b.effect_id;
   });
 }
 
@@ -113,63 +134,100 @@ function isLegalPlacement(arena, actor, card, x, y) {
   return y <= midY;
 }
 
-function applySpell({ state, actor, cardId, x, y, fireballConfig }) {
-  if (cardId === "fireball") {
-    const impact = resolveFireballImpact({
-      tick: state.tick,
-      impactX: x,
-      impactY: y,
-      entities: state.entities,
-      arena: state.arena,
-      sourceSpell: "fireball",
-      actorTeam: actor,
-      fireballConfig,
-    });
+function squaredDistance(a, b) {
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  return dx * dx + dy * dy;
+}
 
-    state.replay.events.push({
-      type: "spell_impact",
-      tick: state.tick,
-      source_spell: "fireball",
-      actor,
-      impacted_entity_ids: impact.impacted_entity_ids,
-      knockback_events: impact.knockback_events,
-    });
-    return;
+function getDefaultLaunchPosition(arena, actor) {
+  return {
+    x: (arena.minX + arena.maxX) / 2,
+    y: actor === "blue" ? arena.maxY : arena.minY,
+  };
+}
+
+function getFireballLaunchPosition(state, actor, impactX, impactY) {
+  const towers = state.entities.filter(
+    (entity) => entity.team === actor && entity.entity_type === "tower" && entity.hp > 0,
+  );
+
+  if (towers.length === 0) {
+    return getDefaultLaunchPosition(state.arena, actor);
   }
 
-  if (cardId === "arrows") {
-    const impact = resolveArrowsImpact({
-      tick: state.tick,
-      impactX: x,
-      impactY: y,
-      entities: state.entities,
-      sourceSpell: "arrows",
-      actorTeam: actor,
-      arrowsConfig: ARROWS_CONFIG,
-    });
+  const target = { x: impactX, y: impactY };
+  towers.sort((a, b) => {
+    const distA = squaredDistance(a, target);
+    const distB = squaredDistance(b, target);
+    if (distA !== distB) {
+      return distA - distB;
+    }
+    return a.id.localeCompare(b.id);
+  });
 
-    state.replay.events.push({
-      type: "spell_impact",
-      tick: state.tick,
-      source_spell: "arrows",
-      actor,
-      impacted_entity_ids: impact.impacted_entity_ids,
-      knockback_events: [],
-    });
+  return {
+    x: towers[0].x,
+    y: towers[0].y,
+  };
+}
+
+function getFireballTiming({ state, actor, x, y, fireballConfig }) {
+  const launchPosition = getFireballLaunchPosition(state, actor, x, y);
+  const castDelayTicks = fireballConfig.cast_delay_ticks ?? 0;
+  const speedTilesPerSecond = fireballConfig.travel_speed_tiles_per_second ?? 10;
+
+  let travelTicks = 1;
+  if (speedTilesPerSecond > 0) {
+    const distance = Math.hypot(x - launchPosition.x, y - launchPosition.y);
+    const travelSeconds = distance / speedTilesPerSecond;
+    travelTicks = Math.max(1, Math.round(travelSeconds * TICK_RATE));
   }
+
+  return {
+    castDelayTicks,
+    travelTicks,
+    launchPosition,
+    resolveTick: state.tick + castDelayTicks + travelTicks,
+  };
+}
+
+function enqueueScheduledEffect({ state, effect }) {
+  const scheduled = {
+    effect_id: state.effect_sequence++,
+    enqueue_tick: state.tick,
+    ...effect,
+  };
+
+  state.pending_effects.push(scheduled);
+  state.replay.events.push({
+    type: "effect_scheduled",
+    tick: state.tick,
+    effect_id: scheduled.effect_id,
+    effect_type: scheduled.effect_type,
+    actor: scheduled.actor,
+    card_id: scheduled.card_id,
+    resolve_tick: scheduled.resolve_tick,
+    x: scheduled.x,
+    y: scheduled.y,
+  });
+
+  return scheduled;
 }
 
 function spawnTroops({ state, actor, card, x, y }) {
   const count = card.spawn_count ?? 1;
   const spread = card.spread ?? 0;
+  const createdEntityIds = [];
 
   for (let i = 0; i < count; i += 1) {
     const slotOffset = (i - (count - 1) / 2) * spread;
     const spawnPosition = clampToArena({ x: x + slotOffset, y }, state.arena);
+    const entityId = `${actor}_${card.id}_${state.spawn_sequence++}`;
 
     state.entities.push(
       createTroop({
-        id: `${actor}_${card.id}_${state.spawn_sequence++}`,
+        id: entityId,
         cardId: card.id,
         team: actor,
         x: spawnPosition.x,
@@ -177,6 +235,168 @@ function spawnTroops({ state, actor, card, x, y }) {
         hp: card.hp,
       }),
     );
+
+    createdEntityIds.push(entityId);
+  }
+
+  return createdEntityIds;
+}
+
+function resolveScheduledTroopDeploy({ state, effect }) {
+  const card = getCard(effect.card_id);
+  if (!card || card.type !== "troop") {
+    return;
+  }
+
+  const entityIds = spawnTroops({
+    state,
+    actor: effect.actor,
+    card,
+    x: effect.x,
+    y: effect.y,
+  });
+
+  state.replay.events.push({
+    type: "troop_deployed",
+    tick: state.tick,
+    effect_id: effect.effect_id,
+    actor: effect.actor,
+    card_id: card.id,
+    x: effect.x,
+    y: effect.y,
+    entity_ids: entityIds,
+  });
+}
+
+function resolveScheduledSpell({ state, effect, fireballConfig }) {
+  if (effect.card_id === "fireball") {
+    const impact = resolveFireballImpact({
+      tick: state.tick,
+      impactX: effect.x,
+      impactY: effect.y,
+      entities: state.entities,
+      arena: state.arena,
+      sourceSpell: "fireball",
+      actorTeam: effect.actor,
+      fireballConfig,
+    });
+
+    state.replay.events.push({
+      type: "spell_impact",
+      tick: state.tick,
+      effect_id: effect.effect_id,
+      source_spell: "fireball",
+      actor: effect.actor,
+      impacted_entity_ids: impact.impacted_entity_ids,
+      knockback_events: impact.knockback_events,
+    });
+    return;
+  }
+
+  if (effect.card_id === "arrows") {
+    const impact = resolveArrowsImpact({
+      tick: state.tick,
+      impactX: effect.x,
+      impactY: effect.y,
+      entities: state.entities,
+      sourceSpell: "arrows",
+      actorTeam: effect.actor,
+      arrowsConfig: ARROWS_CONFIG,
+    });
+
+    state.replay.events.push({
+      type: "spell_impact",
+      tick: state.tick,
+      effect_id: effect.effect_id,
+      source_spell: "arrows",
+      actor: effect.actor,
+      impacted_entity_ids: impact.impacted_entity_ids,
+      knockback_events: [],
+    });
+  }
+}
+
+function scheduleCardEffect({ state, actor, card, x, y, fireballConfig }) {
+  if (card.type === "troop") {
+    const deployTicks = card.deploy_time_ticks ?? 0;
+    return enqueueScheduledEffect({
+      state,
+      effect: {
+        resolve_tick: state.tick + deployTicks,
+        effect_type: "troop_deploy",
+        actor,
+        card_id: card.id,
+        x,
+        y,
+      },
+    });
+  }
+
+  if (card.id === "fireball") {
+    const timing = getFireballTiming({ state, actor, x, y, fireballConfig });
+    return enqueueScheduledEffect({
+      state,
+      effect: {
+        resolve_tick: timing.resolveTick,
+        effect_type: "spell_fireball",
+        actor,
+        card_id: card.id,
+        x,
+        y,
+        launch_x: timing.launchPosition.x,
+        launch_y: timing.launchPosition.y,
+        cast_delay_ticks: timing.castDelayTicks,
+        travel_ticks: timing.travelTicks,
+      },
+    });
+  }
+
+  if (card.id === "arrows") {
+    const castDelayTicks = ARROWS_CONFIG.cast_delay_ticks ?? 0;
+    return enqueueScheduledEffect({
+      state,
+      effect: {
+        resolve_tick: state.tick + castDelayTicks,
+        effect_type: "spell_arrows",
+        actor,
+        card_id: card.id,
+        x,
+        y,
+        cast_delay_ticks: castDelayTicks,
+      },
+    });
+  }
+
+  return null;
+}
+
+function processDueEffects({ state, fireballConfig }) {
+  if (state.pending_effects.length === 0) {
+    return;
+  }
+
+  const due = [];
+  const pending = [];
+
+  for (const effect of state.pending_effects) {
+    if (effect.resolve_tick <= state.tick) {
+      due.push(effect);
+    } else {
+      pending.push(effect);
+    }
+  }
+
+  state.pending_effects = pending;
+
+  for (const effect of sortEffects(due)) {
+    if (effect.effect_type === "troop_deploy") {
+      resolveScheduledTroopDeploy({ state, effect });
+      continue;
+    }
+
+    if (effect.effect_type === "spell_fireball" || effect.effect_type === "spell_arrows") {
+      resolveScheduledSpell({ state, effect, fireballConfig });
+    }
   }
 }
 
@@ -201,10 +421,16 @@ function processPlayCardAction({ state, action, fireballConfig }) {
     return false;
   }
 
-  if (card.type === "spell") {
-    applySpell({ state, actor, cardId: card.id, x: action.x, y: action.y, fireballConfig });
-  } else {
-    spawnTroops({ state, actor, card, x: action.x, y: action.y });
+  const scheduledEffect = scheduleCardEffect({
+    state,
+    actor,
+    card,
+    x: action.x,
+    y: action.y,
+    fireballConfig,
+  });
+  if (!scheduledEffect) {
+    return false;
   }
 
   cyclePlayedCard(state.card_state, actor, card.id);
@@ -216,6 +442,8 @@ function processPlayCardAction({ state, action, fireballConfig }) {
     card_id: card.id,
     x: action.x,
     y: action.y,
+    effect_id: scheduledEffect.effect_id,
+    resolve_tick: scheduledEffect.resolve_tick,
     hand_after: [...state.card_state[actor].hand],
   });
 
@@ -229,24 +457,13 @@ function processLegacyCastFireball({ state, action, fireballConfig }) {
     return false;
   }
 
-  const impact = resolveFireballImpact({
-    tick: state.tick,
-    impactX: action.x,
-    impactY: action.y,
-    entities: state.entities,
-    arena: state.arena,
-    sourceSpell: "fireball",
-    actorTeam: actor,
-    fireballConfig,
-  });
-
-  state.replay.events.push({
-    type: "spell_impact",
-    tick: state.tick,
-    source_spell: "fireball",
+  scheduleCardEffect({
+    state,
     actor,
-    impacted_entity_ids: impact.impacted_entity_ids,
-    knockback_events: impact.knockback_events,
+    card: getCard("fireball"),
+    x: action.x,
+    y: action.y,
+    fireballConfig,
   });
 
   return true;
@@ -255,7 +472,7 @@ function processLegacyCastFireball({ state, action, fireballConfig }) {
 export function createEngine({
   seed = 1,
   arena = createArena(),
-  fireballConfig,
+  fireballConfig = FIREBALL_CONFIG,
   initialEntities = [],
   initialOvertime = false,
   initialCardState = null,
@@ -270,6 +487,8 @@ export function createEngine({
     overtime_start_tick: initialOvertime ? 0 : null,
     entities: initialEntities.map(cloneEntity),
     spawn_sequence: 1,
+    effect_sequence: 1,
+    pending_effects: [],
     card_state: makeInitialCardState(rng, initialCardState),
     replay: {
       seed,
@@ -339,6 +558,8 @@ export function createEngine({
       }
     }
 
+    processDueEffects({ state, fireballConfig });
+
     stepCombat({ entities: state.entities, arena });
 
     state.entities.sort((a, b) => a.id.localeCompare(b.id));
@@ -392,6 +613,8 @@ export function createEngine({
       isOvertime: state.isOvertime,
       overtime_start_tick: state.overtime_start_tick,
       card_state: state.card_state,
+      pending_effects: sortEffects(state.pending_effects).map(clonePendingEffect),
+      effect_sequence: state.effect_sequence,
       match_result: state.match_result,
       entities: state.entities.map((entity) => ({
         id: entity.id,

@@ -21,6 +21,8 @@ export const FIREBALL_CONFIG = Object.freeze({
   cost: 4,
   radius_tiles: 2.5,
   damage: 520,
+  cast_delay_ticks: 6,
+  travel_speed_tiles_per_second: 10,
   knockback_distance_tiles: 0.75,
   knockback_duration_ticks: 5,
   knockback_immune_card_ids: Object.freeze(["giant"]),
@@ -30,6 +32,7 @@ export const ARROWS_CONFIG = Object.freeze({
   cost: 3,
   radius_tiles: 3.0,
   damage: 350,
+  cast_delay_ticks: 16,
 });
 
 export function getMatchPhase({ tick, isOvertime }) {
