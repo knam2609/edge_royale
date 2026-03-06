@@ -2,8 +2,9 @@ import { saveReplay } from "../replay/codec.js";
 import { stepCombat } from "./combat.js";
 import { ElixirTracker } from "./elixir.js";
 import { applyForcedMotion } from "./entities.js";
-import { getMatchPhase } from "./config.js";
+import { MATCH_CONFIG, getMatchPhase } from "./config.js";
 import { hashState } from "./hash.js";
+import { evaluateMatchResult, getScoreSnapshot, isRegulationTieForOvertime } from "./match.js";
 import { createArena } from "./map.js";
 import { createRng } from "./random.js";
 import { resolveFireballImpact } from "./spells.js";
@@ -45,12 +46,14 @@ export function createEngine({
     seed,
     tick: 0,
     isOvertime: initialOvertime,
+    overtime_start_tick: initialOvertime ? 0 : null,
     entities: initialEntities.map(cloneEntity),
     replay: {
       seed,
       actions: [],
       events: [],
     },
+    match_result: null,
     elixir: {
       blue: new ElixirTracker(),
       red: new ElixirTracker(),
@@ -58,10 +61,36 @@ export function createEngine({
   };
 
   function setOvertime(flag) {
-    state.isOvertime = Boolean(flag);
+    const nextFlag = Boolean(flag);
+    if (nextFlag && !state.isOvertime) {
+      state.overtime_start_tick = state.tick;
+    }
+    if (!nextFlag) {
+      state.overtime_start_tick = null;
+    }
+    state.isOvertime = nextFlag;
+  }
+
+  function getMatchResult() {
+    return state.match_result;
+  }
+
+  function getScore() {
+    return getScoreSnapshot(state.entities);
+  }
+
+  function shouldStartOvertime() {
+    if (state.isOvertime || state.tick < 1 || state.match_result) {
+      return false;
+    }
+    return isRegulationTieForOvertime(getScore()) && state.tick >= MATCH_CONFIG.regulation_ticks;
   }
 
   function step(actionsForTick = []) {
+    if (state.match_result) {
+      return getMatchPhase({ tick: state.tick, isOvertime: state.isOvertime });
+    }
+
     state.tick += 1;
     const phase = getMatchPhase({ tick: state.tick, isOvertime: state.isOvertime });
     state.elixir.blue.tick(phase);
@@ -105,6 +134,24 @@ export function createEngine({
       applyForcedMotion(entity, arena);
     }
 
+    const result = evaluateMatchResult({
+      tick: state.tick,
+      isOvertime: state.isOvertime,
+      entities: state.entities,
+      overtimeStartTick: state.overtime_start_tick,
+    });
+
+    if (result) {
+      state.match_result = result;
+      state.replay.events.push({
+        type: "match_result",
+        tick: result.tick,
+        winner: result.winner,
+        reason: result.reason,
+        score: result.score,
+      });
+    }
+
     return phase;
   }
 
@@ -118,6 +165,9 @@ export function createEngine({
 
     for (let tick = 1; tick <= totalTicks; tick += 1) {
       step(indexed.get(tick) ?? []);
+      if (state.match_result) {
+        break;
+      }
       rng();
     }
 
@@ -128,6 +178,8 @@ export function createEngine({
     return hashState({
       tick: state.tick,
       isOvertime: state.isOvertime,
+      overtime_start_tick: state.overtime_start_tick,
+      match_result: state.match_result,
       entities: state.entities.map((entity) => ({
         id: entity.id,
         hp: entity.hp,
@@ -152,6 +204,9 @@ export function createEngine({
     run,
     step,
     setOvertime,
+    getMatchResult,
+    getScore,
+    shouldStartOvertime,
     getStateHash,
     exportReplay,
   };
