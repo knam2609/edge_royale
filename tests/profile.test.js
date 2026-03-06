@@ -42,6 +42,8 @@ test("self tier unlocks after 100 matches and 3 top wins", () => {
 
   assert.equal(result.profile.total_matches, 100);
   assert.equal(result.profile.wins_by_tier.top, 3);
+  assert.ok(result.profile.unlocked_tiers.includes("pro"));
+  assert.ok(result.newlyUnlocked.includes("pro"));
   assert.ok(result.profile.unlocked_tiers.includes("self"));
   assert.ok(result.newlyUnlocked.includes("self"));
 });

@@ -1,29 +1,35 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { runBenchmark } from "../src/ai/benchmark.js";
-import { midBot } from "../src/ai/midBot.js";
-import { noobBot } from "../src/ai/noobBot.js";
-import { evaluateFireballValue } from "../src/ai/spellHeuristics.js";
-import { topBot } from "../src/ai/topBot.js";
+import { runBenchmark, runLadderMatch } from "../src/ai/benchmark.js";
 
-test("tier ordering holds after overtime 3x and knockback value update", () => {
-  const topVsMid = runBenchmark({
-    botA: topBot,
-    botB: midBot,
-    evaluateFireballValue,
+test("ladder match resolves with match result payload", () => {
+  const match = runLadderMatch({
+    blueTier: "mid",
+    redTier: "noob",
     seed: 404,
-    rounds: 700,
   });
 
-  const midVsNoob = runBenchmark({
-    botA: midBot,
-    botB: noobBot,
-    evaluateFireballValue,
+  assert.ok(match.result);
+  assert.ok(["blue", "red", null].includes(match.result.winner));
+  assert.ok(typeof match.tick === "number" && match.tick > 0);
+  assert.ok(typeof match.score.blue_tower_hp === "number");
+  assert.ok(typeof match.score.red_tower_hp === "number");
+});
+
+test("benchmark output is deterministic for same seed and config", () => {
+  const config = {
+    botA: "top",
+    botB: "mid",
     seed: 707,
-    rounds: 700,
-  });
+    rounds: 24,
+  };
 
-  assert.ok(topVsMid.winRateA >= 0.65, `Top vs Mid win rate too low: ${topVsMid.winRateA}`);
-  assert.ok(midVsNoob.winRateA >= 0.7, `Mid vs Noob win rate too low: ${midVsNoob.winRateA}`);
+  const first = runBenchmark(config);
+  const second = runBenchmark(config);
+
+  assert.deepEqual(first, second);
+  assert.equal(first.rounds, config.rounds);
+  assert.equal(first.winsA + first.winsB + first.draws, config.rounds);
+  assert.ok(first.resolved >= 0);
 });

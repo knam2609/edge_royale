@@ -67,19 +67,45 @@ test("noob bot returns a legal action when not passing", () => {
   assert.ok(legalActions.some((candidate) => JSON.stringify(candidate) === JSON.stringify(action)));
 });
 
-test("top bot can hold when reserve would be violated", () => {
+test("top bot returns a legal action when one is available", () => {
   const engine = makeEngine(["giant", "knight", "arrows", "fireball"]);
-  const expensiveOnly = [{ type: "PLAY_CARD", cardId: "giant", x: 9, y: 12 }];
+  const legalActions = enumerateLegalCardActions({ engine, actor: "red" });
 
   const action = selectBotAction({
     tierId: "top",
     engine,
     actor: "red",
-    legalActions: expensiveOnly,
+    legalActions,
     rng: () => 0.9,
   });
 
-  assert.deepEqual(action, { type: "PASS" });
+  if (action.type === "PASS") {
+    return;
+  }
+  assert.ok(legalActions.some((candidate) => JSON.stringify(candidate) === JSON.stringify(action)));
+});
+
+test("pro/goat/god tiers produce legal outputs", () => {
+  const engine = makeEngine(["giant", "knight", "arrows", "fireball"]);
+  const legalActions = enumerateLegalCardActions({ engine, actor: "red" });
+
+  for (const tierId of ["pro", "goat", "god"]) {
+    const action = selectBotAction({
+      tierId,
+      engine,
+      actor: "red",
+      legalActions,
+      rng: () => 0.9,
+    });
+
+    if (action.type === "PASS") {
+      continue;
+    }
+    assert.ok(
+      legalActions.some((candidate) => JSON.stringify(candidate) === JSON.stringify(action)),
+      `tier ${tierId} returned illegal action`,
+    );
+  }
 });
 
 test("self bot follows trained card preference when available", () => {

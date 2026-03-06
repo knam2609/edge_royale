@@ -110,3 +110,17 @@ Original prompt: PLEASE IMPLEMENT THIS PLAN (3x overtime elixir + Fireball knock
   - Captured artifacts in `output/web-game-bot-training/` (`shot-0..2.png`, `state-0..2.json`).
   - Visual check confirms tier label and training status render in HUD; text-state includes `bot_tier`, `unlocked_tiers`, and `training` payload.
   - No console/page errors were emitted during the Playwright run.
+
+- Continued bot work (March 7, 2026):
+  - Expanded ladder tiers in runtime to include post-MVP tiers: `pro`, `goat`, `god` in `src/ai/ladderRuntime.js`.
+  - Refined tier action selection logic and delay/error characteristics; kept all tiers on legal `PLAY_CARD` action path.
+  - Updated progression ordering in `src/ai/profile.js` to: `noob -> mid -> top -> pro -> goat -> god -> self`.
+  - Replaced legacy fireball-scenario benchmark with full simulated bot-vs-bot match benchmark in `src/ai/benchmark.js`:
+    - Added `runLadderMatch(...)` for one deterministic match.
+    - Updated `runBenchmark(...)` to run round-robin side-swapped full matches.
+  - Rewrote regression tests to validate full-match benchmark determinism + payload shape (`tests/bot-regression.test.js`).
+  - Updated ladder runtime tests for new tier set and legal action guarantees (`tests/ladder-runtime.test.js`).
+  - Updated profile tests for new tier chain behavior (Top win now unlocks `pro`, and self unlock gate still works).
+- Validation:
+  - `npm test` passed (`37/37`).
+  - Playwright run completed against `http://127.0.0.1:4174` with artifacts in `output/web-game-bots-v2/` and no console/page errors.
