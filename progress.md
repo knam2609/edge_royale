@@ -54,3 +54,14 @@ Original prompt: PLEASE IMPLEMENT THIS PLAN (3x overtime elixir + Fireball knock
 - Playwright validation after timing refactor:
   - Main gameplay run: `output/web-game-timing` (3 iterations), no console/page errors.
   - Additional early snapshot run: `output/web-game-timing-pending` confirms non-zero pending effect state in both screenshot and text output.
+
+- Added visual telegraphs for delayed action timing in client canvas:
+  - Troop deploy pending effects now render as countdown circles + labels at spawn coordinates.
+  - Spell pending effects now render target reticles with countdown progress.
+  - Fireball pending effect now renders cast-phase link (launcher to target) and travel-phase projectile + trail.
+- Extended text-state pending effect payload with enqueue/launch fields:
+  - `enqueue_tick`, `launch_x`, `launch_y` are now included in `render_game_to_text`.
+- Validation artifacts for visuals:
+  - `output/web-game-visual-troop/shot-0.png` shows deploy telegraph in-world.
+  - `output/web-game-visual-fireball/shot-0.png` shows Fireball reticle + projectile path.
+  - No console error logs emitted in these focused runs.

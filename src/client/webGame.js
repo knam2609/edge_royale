@@ -1,5 +1,5 @@
 import { getCard } from "../sim/cards.js";
-import { FIREBALL_CONFIG, MATCH_CONFIG, TICK_RATE, getMatchPhase } from "../sim/config.js";
+import { ARROWS_CONFIG, FIREBALL_CONFIG, MATCH_CONFIG, TICK_RATE, getMatchPhase } from "../sim/config.js";
 import { createEngine } from "../sim/engine.js";
 import { createTroop, createTower } from "../sim/entities.js";
 import { createArena } from "../sim/map.js";
@@ -48,6 +48,20 @@ function screenToWorld(position) {
   const x = arena.minX + (position.x / canvas.width) * (arena.maxX - arena.minX);
   const y = arena.minY + (position.y / canvas.height) * (arena.maxY - arena.minY);
   return { x: Math.max(arena.minX, Math.min(arena.maxX, x)), y: Math.max(arena.minY, Math.min(arena.maxY, y)) };
+}
+
+function clamp01(value) {
+  return Math.max(0, Math.min(1, value));
+}
+
+function lerp(start, end, t) {
+  return start + (end - start) * t;
+}
+
+function tilesToPixels(tiles) {
+  const pxPerTileX = canvas.width / (arena.maxX - arena.minX);
+  const pxPerTileY = canvas.height / (arena.maxY - arena.minY);
+  return tiles * ((pxPerTileX + pxPerTileY) * 0.5);
 }
 
 function getHandSlotRects() {
@@ -295,6 +309,144 @@ function drawEntity(entity) {
   ctx.fillRect(screen.x - barWidth / 2, screen.y - radius - 10, barWidth * hpRatio, barHeight);
 }
 
+function drawCountdownRing(screen, radius, progress, color) {
+  ctx.beginPath();
+  ctx.arc(screen.x, screen.y, radius, 0, Math.PI * 2);
+  ctx.strokeStyle = "rgba(255,255,255,0.24)";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.arc(screen.x, screen.y, radius, -Math.PI * 0.5, -Math.PI * 0.5 + progress * Math.PI * 2);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 3;
+  ctx.stroke();
+}
+
+function drawSpellReticle(screen, radius, color, progress, label) {
+  const pulse = 1 + 0.06 * Math.sin(appState.engine.state.tick * 0.4);
+  const ringRadius = radius * pulse;
+
+  ctx.save();
+  ctx.setLineDash([8, 6]);
+  ctx.beginPath();
+  ctx.arc(screen.x, screen.y, ringRadius, 0, Math.PI * 2);
+  ctx.strokeStyle = `${color}88`;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.restore();
+
+  drawCountdownRing(screen, ringRadius + 8, progress, color);
+
+  ctx.beginPath();
+  ctx.moveTo(screen.x - 10, screen.y);
+  ctx.lineTo(screen.x + 10, screen.y);
+  ctx.moveTo(screen.x, screen.y - 10);
+  ctx.lineTo(screen.x, screen.y + 10);
+  ctx.strokeStyle = `${color}CC`;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  ctx.font = "11px Avenir Next";
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#f6f9ff";
+  ctx.fillText(label, screen.x, screen.y - ringRadius - 14);
+}
+
+function drawPendingEffects() {
+  const tick = appState.engine.state.tick;
+  const effects = [...appState.engine.state.pending_effects].sort((a, b) => a.effect_id - b.effect_id);
+
+  for (const effect of effects) {
+    const remainingTicks = Math.max(0, effect.resolve_tick - tick);
+    const target = worldToScreen(effect);
+
+    if (effect.effect_type === "troop_deploy") {
+      const totalTicks = getCard(effect.card_id)?.deploy_time_ticks ?? Math.max(1, effect.resolve_tick - effect.enqueue_tick);
+      const progress = clamp01(1 - remainingTicks / Math.max(1, totalTicks));
+      const color = effect.actor === "blue" ? "#6fa8ff" : "#ff8f8f";
+
+      ctx.beginPath();
+      ctx.arc(target.x, target.y, 18, 0, Math.PI * 2);
+      ctx.fillStyle = effect.actor === "blue" ? "rgba(37,115,255,0.22)" : "rgba(234,79,79,0.22)";
+      ctx.fill();
+
+      drawCountdownRing(target, 24, progress, color);
+
+      ctx.font = "11px Avenir Next";
+      ctx.textAlign = "center";
+      ctx.fillStyle = "#ffffff";
+      ctx.fillText("DEPLOY", target.x, target.y + 4);
+      ctx.fillStyle = "rgba(255,255,255,0.85)";
+      ctx.fillText(`${(remainingTicks / TICK_RATE).toFixed(1)}s`, target.x, target.y + 20);
+      continue;
+    }
+
+    if (effect.effect_type === "spell_arrows") {
+      const castTicks = effect.cast_delay_ticks ?? Math.max(1, effect.resolve_tick - effect.enqueue_tick);
+      const elapsed = Math.max(0, tick - effect.enqueue_tick);
+      const progress = clamp01(elapsed / Math.max(1, castTicks));
+      drawSpellReticle(target, tilesToPixels(ARROWS_CONFIG.radius_tiles), "#f7d165", progress, "ARROWS");
+      continue;
+    }
+
+    if (effect.effect_type !== "spell_fireball") {
+      continue;
+    }
+
+    const castTicks = effect.cast_delay_ticks ?? 0;
+    const travelTicks = Math.max(1, effect.travel_ticks ?? 1);
+    const elapsed = Math.max(0, tick - effect.enqueue_tick);
+    const totalDuration = Math.max(1, effect.resolve_tick - effect.enqueue_tick);
+    const totalProgress = clamp01(elapsed / totalDuration);
+    drawSpellReticle(target, tilesToPixels(FIREBALL_CONFIG.radius_tiles), "#ff9c4f", totalProgress, "FIREBALL");
+
+    const launchPoint = worldToScreen({
+      x: effect.launch_x ?? effect.x,
+      y: effect.launch_y ?? effect.y,
+    });
+
+    if (elapsed < castTicks) {
+      const castProgress = castTicks <= 0 ? 1 : clamp01(elapsed / Math.max(1, castTicks));
+
+      ctx.save();
+      ctx.setLineDash([6, 5]);
+      ctx.beginPath();
+      ctx.moveTo(launchPoint.x, launchPoint.y);
+      ctx.lineTo(target.x, target.y);
+      ctx.strokeStyle = "rgba(255,166,77,0.7)";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.restore();
+
+      drawCountdownRing(launchPoint, 12, castProgress, "#ff9c4f");
+      continue;
+    }
+
+    const travelElapsed = Math.max(0, tick - (effect.enqueue_tick + castTicks) + 1);
+    const travelProgress = clamp01(travelElapsed / travelTicks);
+    const projectile = {
+      x: lerp(launchPoint.x, target.x, travelProgress),
+      y: lerp(launchPoint.y, target.y, travelProgress),
+    };
+
+    ctx.beginPath();
+    ctx.moveTo(launchPoint.x, launchPoint.y);
+    ctx.lineTo(projectile.x, projectile.y);
+    ctx.strokeStyle = "rgba(255,166,77,0.45)";
+    ctx.lineWidth = 3;
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(projectile.x, projectile.y, 8, 0, Math.PI * 2);
+    ctx.fillStyle = "#ff9c4f";
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255,238,214,0.95)";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+}
+
 function drawHand() {
   const hand = appState.engine.getHand("blue");
   const deckQueue = appState.engine.getDeckQueue("blue");
@@ -369,6 +521,8 @@ function drawHud() {
 
 function render() {
   drawArenaBackground();
+
+  drawPendingEffects();
 
   for (const entity of appState.engine.state.entities) {
     drawEntity(entity);
@@ -502,9 +656,12 @@ window.render_game_to_text = () => {
       effect_type: effect.effect_type,
       actor: effect.actor,
       card_id: effect.card_id,
+      enqueue_tick: effect.enqueue_tick,
       resolve_tick: effect.resolve_tick,
       x: effect.x,
       y: effect.y,
+      launch_x: effect.launch_x ?? null,
+      launch_y: effect.launch_y ?? null,
       cast_delay_ticks: effect.cast_delay_ticks ?? null,
       travel_ticks: effect.travel_ticks ?? null,
     })),
