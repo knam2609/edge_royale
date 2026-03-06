@@ -43,10 +43,10 @@ const PROFILE_STORAGE_KEY = "edge_royale_profile_v1";
 const TRAINING_STORAGE_KEY = "edge_royale_training_data_v1";
 const SELF_MODEL_STORAGE_KEY = "edge_royale_self_model_v1";
 const HAND_SLOTS = 4;
-const HAND_CARD_WIDTH = 140;
-const HAND_CARD_HEIGHT = 54;
-const HAND_GAP = 10;
-const HAND_Y_OFFSET = 110;
+const BASE_HAND_CARD_WIDTH = 140;
+const BASE_HAND_CARD_HEIGHT = 54;
+const BASE_HAND_GAP = 10;
+const BASE_HAND_Y_OFFSET = 110;
 const DRAG_START_DISTANCE = 8;
 
 const CARD_LABEL = Object.freeze({
@@ -215,6 +215,17 @@ function easeOutCubic(value) {
   return 1 - (1 - t) ** 3;
 }
 
+function fitTextToWidth(text, maxWidth) {
+  if (ctx.measureText(text).width <= maxWidth) {
+    return text;
+  }
+  let candidate = text;
+  while (candidate.length > 1 && ctx.measureText(`${candidate}…`).width > maxWidth) {
+    candidate = candidate.slice(0, -1);
+  }
+  return `${candidate}…`;
+}
+
 function tilesToPixels(tiles) {
   const pxPerTileX = getCanvasWidth() / (arena.maxX - arena.minX);
   const pxPerTileY = getCanvasHeight() / (arena.maxY - arena.minY);
@@ -247,19 +258,43 @@ function getCardAccent(cardId) {
   return "#dce7ff";
 }
 
+function getHandLayout() {
+  const width = getCanvasWidth();
+  const availableWidth = Math.max(260, width - 24);
+  const baseTotalWidth = HAND_SLOTS * BASE_HAND_CARD_WIDTH + (HAND_SLOTS - 1) * BASE_HAND_GAP;
+  const baseScale = Math.min(1, availableWidth / baseTotalWidth);
+  const gap = Math.max(4, Math.round(BASE_HAND_GAP * Math.max(0.48, baseScale)));
+  const cardWidth = Math.max(62, Math.floor((availableWidth - (HAND_SLOTS - 1) * gap) / HAND_SLOTS));
+  const cardScale = cardWidth / BASE_HAND_CARD_WIDTH;
+  const cardHeight = Math.max(34, Math.round(BASE_HAND_CARD_HEIGHT * cardScale));
+  const yOffset = Math.max(cardHeight + 18, Math.round(BASE_HAND_Y_OFFSET * Math.max(0.55, cardScale)));
+  const titleFont = Math.max(8, Math.round(12 * Math.max(0.55, cardScale)));
+  const auxFont = Math.max(8, Math.round(11 * Math.max(0.55, cardScale)));
+
+  return {
+    cardWidth,
+    cardHeight,
+    gap,
+    yOffset,
+    titleFont,
+    auxFont,
+  };
+}
+
 function getHandSlotRects() {
-  const totalWidth = HAND_SLOTS * HAND_CARD_WIDTH + (HAND_SLOTS - 1) * HAND_GAP;
+  const layout = getHandLayout();
+  const totalWidth = HAND_SLOTS * layout.cardWidth + (HAND_SLOTS - 1) * layout.gap;
   const startX = (getCanvasWidth() - totalWidth) / 2;
-  const y = getCanvasHeight() - HAND_Y_OFFSET;
+  const y = getCanvasHeight() - layout.yOffset;
 
   const slots = [];
   for (let i = 0; i < HAND_SLOTS; i += 1) {
     slots.push({
       index: i,
-      x: startX + i * (HAND_CARD_WIDTH + HAND_GAP),
+      x: startX + i * (layout.cardWidth + layout.gap),
       y,
-      width: HAND_CARD_WIDTH,
-      height: HAND_CARD_HEIGHT,
+      width: layout.cardWidth,
+      height: layout.cardHeight,
     });
   }
 
@@ -527,6 +562,25 @@ function drawArenaBackground() {
     ctx.fillRect(0, splitY, width, height - splitY);
     ctx.fillStyle = "rgba(233, 86, 86, 0.08)";
     ctx.fillRect(0, 0, width, splitY);
+
+    ctx.save();
+    ctx.setLineDash([10, 7]);
+    ctx.strokeStyle = "rgba(255, 246, 187, 0.75)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, splitY);
+    ctx.lineTo(width, splitY);
+    ctx.stroke();
+    ctx.restore();
+
+    if (height >= 320) {
+      ctx.font = `${Math.max(10, Math.round(width < 700 ? 10 : 11))}px Avenir Next`;
+      ctx.textAlign = "left";
+      ctx.fillStyle = "rgba(255, 210, 210, 0.95)";
+      ctx.fillText("Enemy side: troops blocked", 14, Math.max(20, splitY - 10));
+      ctx.fillStyle = "rgba(204, 239, 255, 0.95)";
+      ctx.fillText("Your side: troops allowed", 14, Math.min(height - 140, splitY + 18));
+    }
   }
 
   ctx.strokeStyle = "rgba(255,255,255,0.3)";
@@ -764,6 +818,7 @@ function drawPlacementPreview() {
     return;
   }
 
+  const handLayout = getHandLayout();
   const world = screenToWorld({ x: drag.currentX, y: drag.currentY });
   const screen = worldToScreen(world);
   const placementStatus = getPlacementStatus(drag.cardId, world, "blue");
@@ -813,24 +868,49 @@ function drawPlacementPreview() {
     ctx.fillText(placementStatus.reason, screen.x, screen.y + radius + 18);
   }
   ctx.restore();
+
+  const ghostWidth = Math.max(92, handLayout.cardWidth);
+  const ghostHeight = Math.max(40, Math.round(handLayout.cardHeight * 0.78));
+  const ghostX = Math.min(getCanvasWidth() - ghostWidth - 10, drag.currentX + 16);
+  const ghostY = Math.max(10, drag.currentY - ghostHeight - 16);
+  const cost = card.cost ?? 0;
+
+  ctx.save();
+  ctx.globalAlpha = 0.92;
+  ctx.fillStyle = legal ? "rgba(19, 46, 84, 0.96)" : "rgba(71, 27, 27, 0.94)";
+  ctx.fillRect(ghostX, ghostY, ghostWidth, ghostHeight);
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = legal ? "rgba(123, 255, 171, 0.9)" : "rgba(255, 156, 156, 0.9)";
+  ctx.strokeRect(ghostX, ghostY, ghostWidth, ghostHeight);
+
+  ctx.fillStyle = "#f6f9ff";
+  ctx.textAlign = "left";
+  ctx.font = `${handLayout.titleFont}px Avenir Next`;
+  ctx.fillText(label, ghostX + 8, ghostY + Math.min(16, ghostHeight * 0.45));
+  ctx.textAlign = "right";
+  ctx.font = `${Math.max(10, handLayout.auxFont)}px Avenir Next`;
+  ctx.fillStyle = "#f7d165";
+  ctx.fillText(`${cost} elixir`, ghostX + ghostWidth - 8, ghostY + Math.min(16, ghostHeight * 0.45));
+  ctx.restore();
 }
 
-function drawElixirPips({ x, y, actor, amount }) {
+function drawElixirPips({ x, y, actor, amount, pipWidth = 10, pipGap = 4, labelFont = 12, label = null }) {
   const color = actor === "blue" ? "#7cb3ff" : "#ff9f9f";
+  const step = pipWidth + pipGap;
 
-  ctx.font = "12px Avenir Next";
+  ctx.font = `${labelFont}px Avenir Next`;
   ctx.textAlign = "left";
   ctx.fillStyle = "#e5ecff";
-  ctx.fillText(`${actor.toUpperCase()} ELIXIR`, x, y);
+  ctx.fillText(label ?? `${actor.toUpperCase()} ELIXIR`, x, y);
 
   for (let i = 0; i < MAX_ELIXIR; i += 1) {
-    const pipX = x + i * 14;
+    const pipX = x + i * step;
     const filled = i < amount;
     ctx.fillStyle = filled ? color : "rgba(199, 214, 240, 0.25)";
-    ctx.fillRect(pipX, y + 6, 10, 12);
+    ctx.fillRect(pipX, y + 6, pipWidth, 12);
     ctx.strokeStyle = "rgba(255,255,255,0.28)";
     ctx.lineWidth = 1;
-    ctx.strokeRect(pipX, y + 6, 10, 12);
+    ctx.strokeRect(pipX, y + 6, pipWidth, 12);
   }
 }
 
@@ -838,6 +918,7 @@ function drawHand() {
   const hand = appState.engine.getHand("blue");
   const deckQueue = appState.engine.getDeckQueue("blue");
   const slots = getHandSlotRects();
+  const layout = getHandLayout();
   const dragIndex = appState.dragState?.slotIndex ?? null;
 
   for (const slot of slots) {
@@ -861,19 +942,33 @@ function drawHand() {
       continue;
     }
 
+    const titleY = slot.y + Math.min(slot.height - 20, 8 + layout.titleFont);
+    const subY = slot.y + Math.min(slot.height - 8, titleY + Math.max(14, layout.titleFont + 6));
+    const narrowCard = slot.width < 96;
     ctx.fillStyle = affordable ? "#ffffff" : "#b5bdd1";
-    ctx.font = "12px Avenir Next";
+    ctx.font = `${layout.titleFont}px Avenir Next`;
     ctx.textAlign = "left";
-    ctx.fillText(`${slot.index + 1}. ${CARD_LABEL[cardId] ?? cardId}`, slot.x + 8, slot.y + 20);
+    if (narrowCard) {
+      const compactTitle = fitTextToWidth(`${slot.index + 1}. ${CARD_LABEL[cardId] ?? cardId}`, slot.width - 16);
+      ctx.fillText(compactTitle, slot.x + 8, titleY);
+      ctx.fillStyle = "#f7d165";
+      ctx.font = `${layout.auxFont}px Avenir Next`;
+      ctx.fillText(`${card.cost} elixir`, slot.x + 8, subY);
+    } else {
+      const mainLabel = fitTextToWidth(`${slot.index + 1}. ${CARD_LABEL[cardId] ?? cardId}`, slot.width - 70);
+      ctx.fillText(mainLabel, slot.x + 8, titleY);
 
-    ctx.textAlign = "right";
-    ctx.fillText(`${card.cost} elixir`, slot.x + slot.width - 8, slot.y + 20);
-    ctx.textAlign = "left";
+      ctx.textAlign = "right";
+      ctx.fillText(`${card.cost} elixir`, slot.x + slot.width - 8, titleY);
+      ctx.textAlign = "left";
+    }
 
     if (slot.index === 0 && deckQueue.length > 0) {
       const nextLabel = CARD_LABEL[deckQueue[0]] ?? deckQueue[0];
       ctx.fillStyle = "#9bb2da";
-      ctx.fillText(`Next: ${nextLabel}`, slot.x + 8, slot.y + 40);
+      ctx.font = `${layout.auxFont}px Avenir Next`;
+      const nextText = fitTextToWidth(`Next: ${nextLabel}`, slot.width - 16);
+      ctx.fillText(nextText, slot.x + 8, subY);
     }
   }
 }
@@ -890,37 +985,113 @@ function drawHud() {
   const width = getCanvasWidth();
   const height = getCanvasHeight();
   const trainingSummary = summarizeTrainingStore(appState.trainingStore);
-  const panelWidth = Math.min(560, width - 24);
-  const panelHeight = 194;
+  const isCompact = width < 760 || height < 420;
+  const panelWidth = Math.min(isCompact ? 520 : 560, width - 24);
+  const titleFont = isCompact ? 12 : 14;
+  const bodyFont = isCompact ? 11 : 14;
+  const pipWidth = isCompact ? 6 : width < 760 ? 8 : 10;
+  const pipGap = isCompact ? 2 : width < 760 ? 3 : 4;
+  const pipBlockWidth = MAX_ELIXIR * pipWidth + (MAX_ELIXIR - 1) * pipGap;
+  const gapBetweenPipBlocks = isCompact ? 10 : width < 760 ? 16 : 24;
+  const pipStartX = 22;
+  const preferredRedPipX = pipStartX + pipBlockWidth + gapBetweenPipBlocks;
+  const maxRedPipX = 22 + panelWidth - pipBlockWidth;
+  const redPipX = Math.max(pipStartX, Math.min(maxRedPipX, preferredRedPipX));
+  const panelHeight = isCompact ? 132 : 194;
 
-  ctx.fillStyle = "rgba(12, 20, 38, 0.72)";
+  ctx.fillStyle = "rgba(12, 20, 38, 0.74)";
   ctx.fillRect(12, 12, panelWidth, panelHeight);
 
   ctx.fillStyle = "#ffffff";
-  ctx.font = "14px Avenir Next";
   ctx.textAlign = "left";
-  ctx.fillText(`Mode: ${appState.mode} ${appState.paused ? "(paused)" : ""}`, 22, 34);
-  ctx.fillText(`Bot: ${getTierLabel(appState.selectedBotTier)}`, 22, 54);
-  ctx.fillText(`Phase: ${phase}`, 22, 74);
-  ctx.fillText(`Crowns - Blue: ${score.blue_crowns} | Red: ${score.red_crowns}`, 22, 94);
-  ctx.fillText(`Pending effects: ${appState.engine.state.pending_effects.length}`, 22, 114);
-  ctx.fillText(
-    `Training samples: ${trainingSummary.sample_count} | Self model: ${appState.selfModel?.ready ? "ready" : "not ready"}`,
-    22,
-    134,
-  );
-  ctx.fillText(
-    `Time - Regulation: ${(regulationRemaining / TICK_RATE).toFixed(1)}s | Overtime: ${(overtimeRemaining / TICK_RATE).toFixed(1)}s`,
-    22,
-    154,
-  );
-  drawElixirPips({ x: 22, y: 164, actor: "blue", amount: appState.engine.state.elixir.blue.elixir });
-  drawElixirPips({ x: 190, y: 164, actor: "red", amount: appState.engine.state.elixir.red.elixir });
+  if (isCompact) {
+    ctx.font = `${titleFont}px Avenir Next`;
+    const compactMode = fitTextToWidth(
+      `Mode: ${appState.mode}${appState.paused ? " (paused)" : ""} | ${phase}`,
+      panelWidth - 22,
+    );
+    ctx.fillText(compactMode, 22, 30);
+    ctx.font = `${bodyFont}px Avenir Next`;
+    const compactLine1 = fitTextToWidth(
+      `Bot: ${getTierLabel(appState.selectedBotTier)} | Crowns ${score.blue_crowns}-${score.red_crowns}`,
+      panelWidth - 22,
+    );
+    ctx.fillText(compactLine1, 22, 48);
+    const compactLine2 = fitTextToWidth(
+      `Pending ${appState.engine.state.pending_effects.length} | Samples ${trainingSummary.sample_count}`,
+      panelWidth - 22,
+    );
+    ctx.fillText(compactLine2, 22, 64);
+    ctx.fillText(
+      `Time ${(regulationRemaining / TICK_RATE).toFixed(1)}s${phase === "overtime" ? ` | OT ${(overtimeRemaining / TICK_RATE).toFixed(1)}s` : ""}`,
+      22,
+      80,
+    );
+    drawElixirPips({
+      x: pipStartX,
+      y: 96,
+      actor: "blue",
+      label: "BLUE ELIXIR",
+      amount: appState.engine.state.elixir.blue.elixir,
+      pipWidth,
+      pipGap,
+      labelFont: 10,
+    });
+    drawElixirPips({
+      x: redPipX,
+      y: 82,
+      actor: "red",
+      label: "RED ELIXIR",
+      amount: appState.engine.state.elixir.red.elixir,
+      pipWidth,
+      pipGap,
+      labelFont: 10,
+    });
+  } else {
+    ctx.font = `${titleFont}px Avenir Next`;
+    ctx.fillText(`Mode: ${appState.mode} ${appState.paused ? "(paused)" : ""}`, 22, 34);
+    ctx.fillText(`Bot: ${getTierLabel(appState.selectedBotTier)}`, 22, 54);
+    ctx.fillText(`Phase: ${phase}`, 22, 74);
+    ctx.fillText(`Crowns - Blue: ${score.blue_crowns} | Red: ${score.red_crowns}`, 22, 94);
+    ctx.fillText(`Pending effects: ${appState.engine.state.pending_effects.length}`, 22, 114);
+    ctx.fillText(
+      `Training samples: ${trainingSummary.sample_count} | Self model: ${appState.selfModel?.ready ? "ready" : "not ready"}`,
+      22,
+      134,
+    );
+    ctx.fillText(
+      `Time - Regulation: ${(regulationRemaining / TICK_RATE).toFixed(1)}s | Overtime: ${(overtimeRemaining / TICK_RATE).toFixed(1)}s`,
+      22,
+      154,
+    );
+    drawElixirPips({
+      x: pipStartX,
+      y: 164,
+      actor: "blue",
+      amount: appState.engine.state.elixir.blue.elixir,
+      pipWidth,
+      pipGap,
+      labelFont: Math.max(10, titleFont - 2),
+    });
+    drawElixirPips({
+      x: redPipX,
+      y: 128,
+      actor: "red",
+      amount: appState.engine.state.elixir.red.elixir,
+      pipWidth,
+      pipGap,
+      labelFont: Math.max(10, titleFont - 2),
+    });
+  }
 
   ctx.fillStyle = "rgba(12, 20, 38, 0.72)";
   ctx.fillRect(12, height - 40, width - 24, 30);
   ctx.fillStyle = "#f6f9ff";
-  ctx.fillText(`Controls: click or drag card to arena | ${appState.statusMessage}`, 20, height - 20);
+  const statusFont = isCompact ? 10 : width < 760 ? 11 : 14;
+  ctx.font = `${statusFont}px Avenir Next`;
+  const controlHint = isCompact ? "Controls: tap/drag card" : "Controls: click or drag card to arena";
+  const status = fitTextToWidth(`${controlHint} | ${appState.statusMessage}`, width - 40);
+  ctx.fillText(status, 20, height - 20);
 }
 
 function render() {
