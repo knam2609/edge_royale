@@ -168,6 +168,14 @@ function drawEntity(entity) {
   ctx.fillStyle = "#ffffff";
   ctx.textAlign = "center";
   ctx.fillText(entity.cardId.slice(0, 3).toUpperCase(), screen.x, screen.y + 4);
+
+  const hpRatio = Math.max(0, Math.min(1, entity.hp / entity.maxHp));
+  const barWidth = entity.entity_type === "tower" ? 42 : 28;
+  const barHeight = 4;
+  ctx.fillStyle = "rgba(0,0,0,0.45)";
+  ctx.fillRect(screen.x - barWidth / 2, screen.y - radius - 10, barWidth, barHeight);
+  ctx.fillStyle = "#6cf58a";
+  ctx.fillRect(screen.x - barWidth / 2, screen.y - radius - 10, barWidth * hpRatio, barHeight);
 }
 
 function drawHud() {
@@ -317,6 +325,9 @@ window.render_game_to_text = () => {
         hp: entity.hp,
         x: entity.x,
         y: entity.y,
+        velocity: entity.velocity,
+        target_entity_id: entity.target_entity_id,
+        attack_cooldown_ticks_remaining: entity.attack_cooldown_ticks_remaining,
         forced_motion_ticks_remaining: entity.forced_motion_ticks_remaining,
       })),
   });
