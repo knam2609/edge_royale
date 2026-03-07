@@ -141,6 +141,6 @@ test("decision delay for tier is always within configured bounds", () => {
   const tiny = rollDecisionDelayTicks({ tierId: "mid", rng: () => 0 });
   const huge = rollDecisionDelayTicks({ tierId: "mid", rng: () => 0.999 });
 
-  assert.ok(tiny >= 7 && tiny <= 18);
-  assert.ok(huge >= 7 && huge <= 18);
+  assert.ok(tiny >= 8 && tiny <= 20);
+  assert.ok(huge >= 8 && huge <= 20);
 });
