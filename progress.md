@@ -141,3 +141,23 @@ Original prompt: PLEASE IMPLEMENT THIS PLAN (3x overtime elixir + Fireball knock
 - Notes:
   - Compact mode substantially reduces clipping on small canvases, but portrait mobile still has inherently dense UI due fixed 16:9 arena footprint.
   - Next likely step: split gameplay HUD into toggleable “minimal” and “full” overlays for portrait devices.
+
+- UI + startup-state continuation pass (March 7, 2026):
+  - Refactored canvas layout in `src/client/webGame.js` to use dedicated bands: top info panel, middle arena viewport, bottom hand panel, and status strip.
+  - Updated world/screen transforms and tile sizing to map through the arena viewport so gameplay coordinates are isolated from UI bands.
+  - Added arena-bound placement guardrails: click/drag card placement now rejects drops outside arena viewport with explicit status message.
+  - Updated arena rendering to draw gameplay background only inside the viewport and added an arena frame border.
+  - Updated hand rendering to draw in a dedicated hand panel (no overlap with arena).
+  - Simplified and repositioned HUD text/elixir rows into top info band to avoid overlap with arena entities.
+  - Changed initial match entities to towers only (removed all pre-seeded troops) so both sides must play cards to create first troop presence.
+- Validation runs for this pass:
+  - Syntax + tests: `node --check src/client/webGame.js` and `npm test` passed (`37/37`).
+  - Playwright gameplay validation: `output/web-game-ui-v6b/` (`shot-0..2.png`, `state-0..2.json`), no error artifacts emitted.
+  - Focused initial-state capture: `output/web-game-ui-v6-initial/state-0.json` confirms only `blue_tower` and `red_tower` in `entities` (no troop entities at startup).
+- Notes / next suggestions:
+  - Compact/mobile top info band may still need a single-line condensed variant at very small heights.
+  - Consider a tiny deck-cycle indicator for bot hand to make early no-troop openings clearer to players.
+- Post-fix validation refresh (March 7, 2026):
+  - Fixed `getUiLayout` vertical sizing math to avoid over-allocation on short canvas heights by shrinking info/hand/status bands before arena height assignment.
+  - Re-ran browser validation artifacts: `output/web-game-ui-v6c/` (`shot-0..2.png`, `state-0..2.json`) with clean run.
+  - Re-ran startup-state check: `output/web-game-ui-v6-initial2/state-0.json` still shows only towers in `entities`.
