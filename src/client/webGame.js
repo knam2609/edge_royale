@@ -1,7 +1,7 @@
 import { getCard } from "../sim/cards.js";
 import { ARROWS_CONFIG, FIREBALL_CONFIG, MATCH_CONFIG, TICK_RATE, getMatchPhase } from "../sim/config.js";
 import { createEngine } from "../sim/engine.js";
-import { createTroop, createTower } from "../sim/entities.js";
+import { createTower } from "../sim/entities.js";
 import { createArena } from "../sim/map.js";
 import { createRng } from "../sim/random.js";
 import {
@@ -46,8 +46,10 @@ const HAND_SLOTS = 4;
 const BASE_HAND_CARD_WIDTH = 140;
 const BASE_HAND_CARD_HEIGHT = 54;
 const BASE_HAND_GAP = 10;
-const BASE_HAND_Y_OFFSET = 110;
 const DRAG_START_DISTANCE = 8;
+const LAYOUT_PADDING = 12;
+const LAYOUT_GAP = 8;
+const MIN_ARENA_HEIGHT = 140;
 
 const CARD_LABEL = Object.freeze({
   giant: "Giant",
@@ -191,15 +193,113 @@ function hydrateAppState() {
 }
 
 function worldToScreen(position) {
-  const px = ((position.x - arena.minX) / (arena.maxX - arena.minX)) * getCanvasWidth();
-  const py = ((position.y - arena.minY) / (arena.maxY - arena.minY)) * getCanvasHeight();
+  const viewport = getArenaViewport();
+  const px =
+    viewport.x + ((position.x - arena.minX) / (arena.maxX - arena.minX)) * viewport.width;
+  const py =
+    viewport.y + ((position.y - arena.minY) / (arena.maxY - arena.minY)) * viewport.height;
   return { x: px, y: py };
 }
 
 function screenToWorld(position) {
-  const x = arena.minX + (position.x / getCanvasWidth()) * (arena.maxX - arena.minX);
-  const y = arena.minY + (position.y / getCanvasHeight()) * (arena.maxY - arena.minY);
+  const viewport = getArenaViewport();
+  const normalizedX = clamp01((position.x - viewport.x) / viewport.width);
+  const normalizedY = clamp01((position.y - viewport.y) / viewport.height);
+  const x = arena.minX + normalizedX * (arena.maxX - arena.minX);
+  const y = arena.minY + normalizedY * (arena.maxY - arena.minY);
   return { x: Math.max(arena.minX, Math.min(arena.maxX, x)), y: Math.max(arena.minY, Math.min(arena.maxY, y)) };
+}
+
+function getUiLayout() {
+  const width = getCanvasWidth();
+  const height = getCanvasHeight();
+  const isCompact = width < 760 || height < 420;
+  const frameX = LAYOUT_PADDING;
+  const frameWidth = Math.max(1, width - LAYOUT_PADDING * 2);
+  const availableHeight = Math.max(1, height - LAYOUT_PADDING * 2);
+
+  const desiredInfoHeight = isCompact ? 92 : 118;
+  const desiredHandHeight = isCompact ? 64 : 78;
+  const desiredStatusHeight = isCompact ? 24 : 30;
+  const minInfoHeight = 46;
+  const minHandHeight = 38;
+  const minStatusHeight = 18;
+
+  let infoHeight = desiredInfoHeight;
+  let handHeight = desiredHandHeight;
+  let statusHeight = desiredStatusHeight;
+
+  const minArenaCap = Math.max(
+    20,
+    availableHeight - (minInfoHeight + minHandHeight + minStatusHeight + LAYOUT_GAP * 3),
+  );
+  const minArenaHeight = Math.min(MIN_ARENA_HEIGHT, minArenaCap);
+
+  let arenaHeight = Math.max(
+    minArenaHeight,
+    availableHeight - (infoHeight + handHeight + statusHeight + LAYOUT_GAP * 3),
+  );
+  let overflow =
+    infoHeight + handHeight + statusHeight + LAYOUT_GAP * 3 + arenaHeight - availableHeight;
+
+  if (overflow > 0) {
+    const infoReduction = Math.min(infoHeight - minInfoHeight, overflow);
+    infoHeight -= infoReduction;
+    overflow -= infoReduction;
+
+    const handReduction = Math.min(handHeight - minHandHeight, overflow);
+    handHeight -= handReduction;
+    overflow -= handReduction;
+
+    const statusReduction = Math.min(statusHeight - minStatusHeight, overflow);
+    statusHeight -= statusReduction;
+  }
+
+  arenaHeight = Math.max(20, availableHeight - (infoHeight + handHeight + statusHeight + LAYOUT_GAP * 3));
+
+  const infoPanel = {
+    x: frameX,
+    y: LAYOUT_PADDING,
+    width: frameWidth,
+    height: infoHeight,
+  };
+
+  const arenaViewport = {
+    x: frameX,
+    y: Math.min(height - LAYOUT_PADDING - arenaHeight, infoPanel.y + infoPanel.height + LAYOUT_GAP),
+    width: frameWidth,
+    height: arenaHeight,
+  };
+
+  const handPanel = {
+    x: frameX,
+    y: arenaViewport.y + arenaViewport.height + LAYOUT_GAP,
+    width: frameWidth,
+    height: handHeight,
+  };
+
+  const statusPanel = {
+    x: frameX,
+    y: handPanel.y + handPanel.height + LAYOUT_GAP,
+    width: frameWidth,
+    height: statusHeight,
+  };
+
+  return { isCompact, infoPanel, arenaViewport, handPanel, statusPanel };
+}
+
+function getArenaViewport() {
+  return getUiLayout().arenaViewport;
+}
+
+function isPointInArenaViewport(point) {
+  const viewport = getArenaViewport();
+  return (
+    point.x >= viewport.x &&
+    point.x <= viewport.x + viewport.width &&
+    point.y >= viewport.y &&
+    point.y <= viewport.y + viewport.height
+  );
 }
 
 function clamp01(value) {
@@ -227,8 +327,9 @@ function fitTextToWidth(text, maxWidth) {
 }
 
 function tilesToPixels(tiles) {
-  const pxPerTileX = getCanvasWidth() / (arena.maxX - arena.minX);
-  const pxPerTileY = getCanvasHeight() / (arena.maxY - arena.minY);
+  const viewport = getArenaViewport();
+  const pxPerTileX = viewport.width / (arena.maxX - arena.minX);
+  const pxPerTileY = viewport.height / (arena.maxY - arena.minY);
   return tiles * ((pxPerTileX + pxPerTileY) * 0.5);
 }
 
@@ -259,15 +360,15 @@ function getCardAccent(cardId) {
 }
 
 function getHandLayout() {
-  const width = getCanvasWidth();
-  const availableWidth = Math.max(260, width - 24);
+  const { handPanel } = getUiLayout();
+  const availableWidth = Math.max(220, handPanel.width - 20);
   const baseTotalWidth = HAND_SLOTS * BASE_HAND_CARD_WIDTH + (HAND_SLOTS - 1) * BASE_HAND_GAP;
   const baseScale = Math.min(1, availableWidth / baseTotalWidth);
   const gap = Math.max(4, Math.round(BASE_HAND_GAP * Math.max(0.48, baseScale)));
   const cardWidth = Math.max(62, Math.floor((availableWidth - (HAND_SLOTS - 1) * gap) / HAND_SLOTS));
   const cardScale = cardWidth / BASE_HAND_CARD_WIDTH;
-  const cardHeight = Math.max(34, Math.round(BASE_HAND_CARD_HEIGHT * cardScale));
-  const yOffset = Math.max(cardHeight + 18, Math.round(BASE_HAND_Y_OFFSET * Math.max(0.55, cardScale)));
+  const preferredCardHeight = Math.max(34, Math.round(BASE_HAND_CARD_HEIGHT * cardScale));
+  const cardHeight = Math.min(preferredCardHeight, Math.max(34, handPanel.height - 16));
   const titleFont = Math.max(8, Math.round(12 * Math.max(0.55, cardScale)));
   const auxFont = Math.max(8, Math.round(11 * Math.max(0.55, cardScale)));
 
@@ -275,17 +376,17 @@ function getHandLayout() {
     cardWidth,
     cardHeight,
     gap,
-    yOffset,
     titleFont,
     auxFont,
   };
 }
 
 function getHandSlotRects() {
+  const { handPanel } = getUiLayout();
   const layout = getHandLayout();
   const totalWidth = HAND_SLOTS * layout.cardWidth + (HAND_SLOTS - 1) * layout.gap;
-  const startX = (getCanvasWidth() - totalWidth) / 2;
-  const y = getCanvasHeight() - layout.yOffset;
+  const startX = handPanel.x + (handPanel.width - totalWidth) / 2;
+  const y = handPanel.y + (handPanel.height - layout.cardHeight) / 2;
 
   const slots = [];
   for (let i = 0; i < HAND_SLOTS; i += 1) {
@@ -314,10 +415,6 @@ function createInitialEntities() {
   return [
     createTower({ id: "blue_tower", team: "blue", x: 9, y: 29, hp: 3800 }),
     createTower({ id: "red_tower", team: "red", x: 9, y: 3, hp: 3800 }),
-    createTroop({ id: "blue_giant", cardId: "giant", team: "blue", x: 9, y: 24, hp: 2500 }),
-    createTroop({ id: "blue_knight", cardId: "knight", team: "blue", x: 7.2, y: 26.2, hp: 1400 }),
-    createTroop({ id: "red_knight", cardId: "knight", team: "red", x: 10.2, y: 8, hp: 1400 }),
-    createTroop({ id: "red_goblins", cardId: "goblins", team: "red", x: 8.4, y: 10, hp: 220 }),
   ];
 }
 
@@ -383,8 +480,13 @@ function getPlacementStatus(cardId, worldPosition, actor = "blue") {
   return { ok: true, reason: null, card };
 }
 
-function queuePlayerCardPlay(worldPosition, { cardIndex = appState.selectedCardIndex } = {}) {
+function queuePlayerCardPlay(worldPosition, { cardIndex = appState.selectedCardIndex, insideArena = true } = {}) {
   if (appState.mode !== "playing") {
+    return false;
+  }
+
+  if (!insideArena) {
+    appState.statusMessage = "Play cards inside the arena.";
     return false;
   }
 
@@ -546,50 +648,70 @@ function getActivePlacementCardId() {
 }
 
 function drawArenaBackground() {
+  const { arenaViewport } = getUiLayout();
   const width = getCanvasWidth();
   const height = getCanvasHeight();
-  const gradient = ctx.createLinearGradient(0, 0, 0, height);
+  const gradient = ctx.createLinearGradient(0, 0, 0, arenaViewport.y + arenaViewport.height);
   gradient.addColorStop(0, "#1e466f");
   gradient.addColorStop(1, "#3d6e93");
-  ctx.fillStyle = gradient;
+  ctx.fillStyle = "#152741";
   ctx.fillRect(0, 0, width, height);
+  ctx.fillStyle = gradient;
+  ctx.fillRect(arenaViewport.x, arenaViewport.y, arenaViewport.width, arenaViewport.height);
 
   const placementCardId = getActivePlacementCardId();
   const placementCard = placementCardId ? getCard(placementCardId) : null;
   if (placementCard?.type === "troop") {
     const splitY = worldToScreen({ x: arena.minX, y: 16 }).y;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(arenaViewport.x, arenaViewport.y, arenaViewport.width, arenaViewport.height);
+    ctx.clip();
     ctx.fillStyle = "rgba(83, 188, 248, 0.08)";
-    ctx.fillRect(0, splitY, width, height - splitY);
+    ctx.fillRect(arenaViewport.x, splitY, arenaViewport.width, arenaViewport.y + arenaViewport.height - splitY);
     ctx.fillStyle = "rgba(233, 86, 86, 0.08)";
-    ctx.fillRect(0, 0, width, splitY);
+    ctx.fillRect(arenaViewport.x, arenaViewport.y, arenaViewport.width, splitY - arenaViewport.y);
 
     ctx.save();
     ctx.setLineDash([10, 7]);
     ctx.strokeStyle = "rgba(255, 246, 187, 0.75)";
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(0, splitY);
-    ctx.lineTo(width, splitY);
+    ctx.moveTo(arenaViewport.x, splitY);
+    ctx.lineTo(arenaViewport.x + arenaViewport.width, splitY);
     ctx.stroke();
     ctx.restore();
+    ctx.restore();
 
-    if (height >= 320) {
-      ctx.font = `${Math.max(10, Math.round(width < 700 ? 10 : 11))}px Avenir Next`;
+    if (arenaViewport.height >= 220) {
+      ctx.font = `${Math.max(10, Math.round(arenaViewport.width < 700 ? 10 : 11))}px Avenir Next`;
       ctx.textAlign = "left";
       ctx.fillStyle = "rgba(255, 210, 210, 0.95)";
-      ctx.fillText("Enemy side: troops blocked", 14, Math.max(20, splitY - 10));
+      ctx.fillText(
+        "Enemy side: troops blocked",
+        arenaViewport.x + 12,
+        Math.max(arenaViewport.y + 16, splitY - 10),
+      );
       ctx.fillStyle = "rgba(204, 239, 255, 0.95)";
-      ctx.fillText("Your side: troops allowed", 14, Math.min(height - 140, splitY + 18));
+      ctx.fillText(
+        "Your side: troops allowed",
+        arenaViewport.x + 12,
+        Math.min(arenaViewport.y + arenaViewport.height - 12, splitY + 18),
+      );
     }
   }
 
   ctx.strokeStyle = "rgba(255,255,255,0.3)";
   ctx.lineWidth = 4;
-  const riverY = height * 0.5;
+  const riverY = worldToScreen({ x: arena.minX, y: 16 }).y;
   ctx.beginPath();
-  ctx.moveTo(0, riverY);
-  ctx.lineTo(width, riverY);
+  ctx.moveTo(arenaViewport.x, riverY);
+  ctx.lineTo(arenaViewport.x + arenaViewport.width, riverY);
   ctx.stroke();
+
+  ctx.strokeStyle = "rgba(255,255,255,0.42)";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(arenaViewport.x, arenaViewport.y, arenaViewport.width, arenaViewport.height);
 }
 
 function drawEntity(entity) {
@@ -819,9 +941,13 @@ function drawPlacementPreview() {
   }
 
   const handLayout = getHandLayout();
-  const world = screenToWorld({ x: drag.currentX, y: drag.currentY });
+  const pointer = { x: drag.currentX, y: drag.currentY };
+  const pointerInArena = isPointInArenaViewport(pointer);
+  const world = screenToWorld(pointer);
   const screen = worldToScreen(world);
-  const placementStatus = getPlacementStatus(drag.cardId, world, "blue");
+  const placementStatus = pointerInArena
+    ? getPlacementStatus(drag.cardId, world, "blue")
+    : { ok: false, reason: "Play cards inside the arena." };
   const legal = placementStatus.ok;
   const stroke = legal ? "#79ffab" : "#ff9c9c";
   const fill = legal ? "rgba(80, 214, 138, 0.2)" : "rgba(239, 95, 95, 0.2)";
@@ -915,11 +1041,15 @@ function drawElixirPips({ x, y, actor, amount, pipWidth = 10, pipGap = 4, labelF
 }
 
 function drawHand() {
+  const { handPanel } = getUiLayout();
   const hand = appState.engine.getHand("blue");
   const deckQueue = appState.engine.getDeckQueue("blue");
   const slots = getHandSlotRects();
   const layout = getHandLayout();
   const dragIndex = appState.dragState?.slotIndex ?? null;
+
+  ctx.fillStyle = "rgba(12, 20, 38, 0.72)";
+  ctx.fillRect(handPanel.x, handPanel.y, handPanel.width, handPanel.height);
 
   for (const slot of slots) {
     const cardId = hand[slot.index] ?? null;
@@ -982,126 +1112,123 @@ function drawHud() {
   const overtimeRemaining = Math.max(0, MATCH_CONFIG.overtime_ticks - overtimeElapsed);
 
   const score = appState.engine.getScore();
-  const width = getCanvasWidth();
-  const height = getCanvasHeight();
+  const { infoPanel, statusPanel, isCompact } = getUiLayout();
   const trainingSummary = summarizeTrainingStore(appState.trainingStore);
-  const isCompact = width < 760 || height < 420;
-  const panelWidth = Math.min(isCompact ? 520 : 560, width - 24);
   const titleFont = isCompact ? 12 : 14;
-  const bodyFont = isCompact ? 11 : 14;
-  const pipWidth = isCompact ? 6 : width < 760 ? 8 : 10;
-  const pipGap = isCompact ? 2 : width < 760 ? 3 : 4;
+  const bodyFont = isCompact ? 10 : 12;
+  const pipWidth = isCompact ? 6 : infoPanel.width < 720 ? 8 : 10;
+  const pipGap = isCompact ? 2 : infoPanel.width < 720 ? 3 : 4;
   const pipBlockWidth = MAX_ELIXIR * pipWidth + (MAX_ELIXIR - 1) * pipGap;
-  const gapBetweenPipBlocks = isCompact ? 10 : width < 760 ? 16 : 24;
-  const pipStartX = 22;
-  const preferredRedPipX = pipStartX + pipBlockWidth + gapBetweenPipBlocks;
-  const maxRedPipX = 22 + panelWidth - pipBlockWidth;
-  const redPipX = Math.max(pipStartX, Math.min(maxRedPipX, preferredRedPipX));
-  const panelHeight = isCompact ? 132 : 194;
+  const textLeft = infoPanel.x + 10;
+  const textMaxWidth = infoPanel.width - 20;
+  const pipLeftX = infoPanel.x + 10;
+  const pipRightX = infoPanel.x + infoPanel.width - pipBlockWidth - 10;
+  const pipY = infoPanel.y + infoPanel.height - 24;
 
-  ctx.fillStyle = "rgba(12, 20, 38, 0.74)";
-  ctx.fillRect(12, 12, panelWidth, panelHeight);
+  ctx.fillStyle = "rgba(12, 20, 38, 0.76)";
+  ctx.fillRect(infoPanel.x, infoPanel.y, infoPanel.width, infoPanel.height);
 
   ctx.fillStyle = "#ffffff";
   ctx.textAlign = "left";
   if (isCompact) {
+    const compactLineHeight = 14;
+    const compactTop = infoPanel.y + 18;
     ctx.font = `${titleFont}px Avenir Next`;
-    const compactMode = fitTextToWidth(
-      `Mode: ${appState.mode}${appState.paused ? " (paused)" : ""} | ${phase}`,
-      panelWidth - 22,
-    );
-    ctx.fillText(compactMode, 22, 30);
-    ctx.font = `${bodyFont}px Avenir Next`;
     const compactLine1 = fitTextToWidth(
       `Bot: ${getTierLabel(appState.selectedBotTier)} | Crowns ${score.blue_crowns}-${score.red_crowns}`,
-      panelWidth - 22,
+      textMaxWidth,
     );
-    ctx.fillText(compactLine1, 22, 48);
+    ctx.fillText(compactLine1, textLeft, compactTop);
+    ctx.font = `${bodyFont}px Avenir Next`;
     const compactLine2 = fitTextToWidth(
-      `Pending ${appState.engine.state.pending_effects.length} | Samples ${trainingSummary.sample_count}`,
-      panelWidth - 22,
+      `Phase ${phase} | Time ${(regulationRemaining / TICK_RATE).toFixed(1)}s | Pending ${appState.engine.state.pending_effects.length}`,
+      textMaxWidth,
     );
-    ctx.fillText(compactLine2, 22, 64);
-    ctx.fillText(
-      `Time ${(regulationRemaining / TICK_RATE).toFixed(1)}s${phase === "overtime" ? ` | OT ${(overtimeRemaining / TICK_RATE).toFixed(1)}s` : ""}`,
-      22,
-      80,
-    );
+    ctx.fillText(compactLine2, textLeft, compactTop + compactLineHeight);
     drawElixirPips({
-      x: pipStartX,
-      y: 96,
+      x: pipLeftX,
+      y: pipY,
       actor: "blue",
       label: "BLUE ELIXIR",
       amount: appState.engine.state.elixir.blue.elixir,
       pipWidth,
       pipGap,
-      labelFont: 10,
+      labelFont: 9,
     });
     drawElixirPips({
-      x: redPipX,
-      y: 82,
+      x: pipRightX,
+      y: pipY,
       actor: "red",
       label: "RED ELIXIR",
       amount: appState.engine.state.elixir.red.elixir,
       pipWidth,
       pipGap,
-      labelFont: 10,
+      labelFont: 9,
     });
   } else {
+    const rowGap = 18;
+    const rowStart = infoPanel.y + 22;
     ctx.font = `${titleFont}px Avenir Next`;
-    ctx.fillText(`Mode: ${appState.mode} ${appState.paused ? "(paused)" : ""}`, 22, 34);
-    ctx.fillText(`Bot: ${getTierLabel(appState.selectedBotTier)}`, 22, 54);
-    ctx.fillText(`Phase: ${phase}`, 22, 74);
-    ctx.fillText(`Crowns - Blue: ${score.blue_crowns} | Red: ${score.red_crowns}`, 22, 94);
-    ctx.fillText(`Pending effects: ${appState.engine.state.pending_effects.length}`, 22, 114);
     ctx.fillText(
-      `Training samples: ${trainingSummary.sample_count} | Self model: ${appState.selfModel?.ready ? "ready" : "not ready"}`,
-      22,
-      134,
+      `Mode: ${appState.mode}${appState.paused ? " (paused)" : ""} | Bot: ${getTierLabel(appState.selectedBotTier)} | Phase: ${phase}`,
+      textLeft,
+      rowStart,
     );
     ctx.fillText(
-      `Time - Regulation: ${(regulationRemaining / TICK_RATE).toFixed(1)}s | Overtime: ${(overtimeRemaining / TICK_RATE).toFixed(1)}s`,
-      22,
-      154,
+      `Crowns - Blue: ${score.blue_crowns} | Red: ${score.red_crowns} | Pending effects: ${appState.engine.state.pending_effects.length}`,
+      textLeft,
+      rowStart + rowGap,
+    );
+    ctx.font = `${bodyFont}px Avenir Next`;
+    ctx.fillText(
+      `Time - Regulation: ${(regulationRemaining / TICK_RATE).toFixed(1)}s | Overtime: ${(overtimeRemaining / TICK_RATE).toFixed(1)}s | Samples: ${trainingSummary.sample_count} | Model: ${appState.selfModel?.ready ? "ready" : "not ready"}`,
+      textLeft,
+      rowStart + rowGap * 2,
     );
     drawElixirPips({
-      x: pipStartX,
-      y: 164,
+      x: pipLeftX,
+      y: pipY,
       actor: "blue",
       amount: appState.engine.state.elixir.blue.elixir,
       pipWidth,
       pipGap,
-      labelFont: Math.max(10, titleFont - 2),
+      labelFont: 10,
     });
     drawElixirPips({
-      x: redPipX,
-      y: 128,
+      x: pipRightX,
+      y: pipY,
       actor: "red",
       amount: appState.engine.state.elixir.red.elixir,
       pipWidth,
       pipGap,
-      labelFont: Math.max(10, titleFont - 2),
+      labelFont: 10,
     });
   }
 
   ctx.fillStyle = "rgba(12, 20, 38, 0.72)";
-  ctx.fillRect(12, height - 40, width - 24, 30);
+  ctx.fillRect(statusPanel.x, statusPanel.y, statusPanel.width, statusPanel.height);
   ctx.fillStyle = "#f6f9ff";
-  const statusFont = isCompact ? 10 : width < 760 ? 11 : 14;
+  const statusFont = isCompact ? 10 : infoPanel.width < 760 ? 11 : 13;
   ctx.font = `${statusFont}px Avenir Next`;
   const controlHint = isCompact ? "Controls: tap/drag card" : "Controls: click or drag card to arena";
-  const status = fitTextToWidth(`${controlHint} | ${appState.statusMessage}`, width - 40);
-  ctx.fillText(status, 20, height - 20);
+  const status = fitTextToWidth(`${controlHint} | ${appState.statusMessage}`, statusPanel.width - 16);
+  ctx.fillText(status, statusPanel.x + 8, statusPanel.y + Math.round(statusPanel.height * 0.68));
 }
 
 function render() {
   drawArenaBackground();
 
+  const arenaViewport = getArenaViewport();
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(arenaViewport.x, arenaViewport.y, arenaViewport.width, arenaViewport.height);
+  ctx.clip();
   drawPendingEffects();
 
   for (const entity of appState.engine.state.entities) {
     drawEntity(entity);
   }
+  ctx.restore();
 
   drawPlacementPreview();
   drawHand();
@@ -1187,7 +1314,9 @@ canvas.addEventListener("pointermove", (event) => {
   }
 
   if (drag.isDragging) {
-    const placementStatus = getPlacementStatus(drag.cardId, screenToWorld(point), "blue");
+    const placementStatus = isPointInArenaViewport(point)
+      ? getPlacementStatus(drag.cardId, screenToWorld(point), "blue")
+      : { ok: false, reason: "Play cards inside the arena." };
     appState.statusMessage = placementStatus.ok
       ? `Release to play ${CARD_LABEL[drag.cardId] ?? drag.cardId}.`
       : placementStatus.reason;
@@ -1208,7 +1337,10 @@ canvas.addEventListener("pointerup", (event) => {
       appState.selectedCardIndex = slotHit;
       appState.statusMessage = "Card selection updated.";
     } else {
-      const played = queuePlayerCardPlay(screenToWorld(point), { cardIndex: drag.slotIndex });
+      const played = queuePlayerCardPlay(screenToWorld(point), {
+        cardIndex: drag.slotIndex,
+        insideArena: isPointInArenaViewport(point),
+      });
       if (played) {
         appState.statusMessage = `Played ${CARD_LABEL[drag.cardId] ?? drag.cardId}.`;
       }
@@ -1247,7 +1379,7 @@ canvas.addEventListener("click", (event) => {
     return;
   }
 
-  queuePlayerCardPlay(screenToWorld({ x, y }));
+  queuePlayerCardPlay(screenToWorld({ x, y }), { insideArena: isPointInArenaViewport({ x, y }) });
 });
 
 startBtn.addEventListener("click", () => {
