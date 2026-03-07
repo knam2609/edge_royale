@@ -162,3 +162,48 @@ export function runBenchmark({ botA, botB, seed = 1337, rounds = 100 }) {
     winRateA,
   };
 }
+
+export function runBenchmarkMatrix({
+  tiers = ["noob", "mid", "top", "pro", "goat", "god"],
+  seed = 1337,
+  roundsPerPair = 100,
+} = {}) {
+  const normalizedTiers = Array.isArray(tiers)
+    ? tiers.filter((tierId, index) => typeof tierId === "string" && tiers.indexOf(tierId) === index)
+    : [];
+  const rng = createRng(seed);
+  const pairs = [];
+
+  for (let i = 0; i < normalizedTiers.length; i += 1) {
+    for (let j = i + 1; j < normalizedTiers.length; j += 1) {
+      const lower = normalizedTiers[i];
+      const higher = normalizedTiers[j];
+      const pairSeed = 1 + Math.floor(rng() * 2_000_000_000);
+      const benchmark = runBenchmark({
+        botA: higher,
+        botB: lower,
+        seed: pairSeed,
+        rounds: roundsPerPair,
+      });
+
+      pairs.push({
+        higher_tier: higher,
+        lower_tier: lower,
+        seed: pairSeed,
+        rounds: benchmark.rounds,
+        wins_higher: benchmark.winsA,
+        wins_lower: benchmark.winsB,
+        draws: benchmark.draws,
+        resolved: benchmark.resolved,
+        win_rate_higher: benchmark.winRateA,
+      });
+    }
+  }
+
+  return {
+    seed,
+    rounds_per_pair: roundsPerPair,
+    tiers: normalizedTiers,
+    pairs,
+  };
+}
