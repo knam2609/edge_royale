@@ -141,3 +141,27 @@ Original prompt: PLEASE IMPLEMENT THIS PLAN (3x overtime elixir + Fireball knock
 - Notes:
   - Compact mode substantially reduces clipping on small canvases, but portrait mobile still has inherently dense UI due fixed 16:9 arena footprint.
   - Next likely step: split gameplay HUD into toggleable “minimal” and “full” overlays for portrait devices.
+
+- AI bot review + continuation pass (March 7, 2026, follow-up):
+  - Reviewed ladder benchmarks and found a quality gap: stronger tiers were underperforming `noob` in full-match simulations.
+  - Reworked `src/ai/ladderRuntime.js` heuristics:
+    - Added tier strategy weights (tower chip bonus, arrows tower-only penalty, anti-overstack penalty, giant backline setup bonus).
+    - Added tower-aware pressure scoring and capped/penalized lane overstacking.
+    - Added heavy-commit helper for high-elixir windows and tuned noob/mid delay + hesitation/blunder behavior.
+    - Fixed top-tier spell threshold clamp bug (`Math.min(240, ...)`) by using the configured phase threshold directly.
+    - Refined top/pro/goat/god action selection and fallback scoring paths.
+  - Extended benchmarking utilities:
+    - Added `runBenchmarkMatrix(...)` to `src/ai/benchmark.js` for deterministic pairwise ladder snapshots.
+    - Added CLI helper `scripts/bot-benchmark.mjs` and npm script `npm run bot:bench`.
+  - Added regression coverage in `tests/bot-regression.test.js`:
+    - Deterministic matrix generation test.
+    - Baseline strength checks for selected tier pairs (`mid>noob`, `top>noob`, `goat>top`) under fixed seed/round config.
+  - Updated delay-range assertion in `tests/ladder-runtime.test.js` to match new Mid config (`8..20` ticks).
+- Validation:
+  - Full test suite passing: `npm test` (`39/39`).
+  - Bench matrix smoke run: `npm run bot:bench -- --seed 202 --rounds 40`.
+  - Playwright browser validation (escalated due sandbox restrictions) against local server on `http://127.0.0.1:4176`:
+    - Artifacts in `output/web-game-bots-v3/` (`shot-0.png`, `shot-1.png`, `state-0.json`, `state-1.json`).
+    - No `errors.json` generated; visual and text-state outputs remained coherent after bot-logic changes.
+- Remaining AI TODO:
+  - Ladder ordering is improved vs `noob`, but `top/pro` are still inconsistent against `mid` depending on seed batch; next step is targeted tuning for `top/pro` defense-vs-overcommit scenarios and adding stronger matrix acceptance gates per adjacent tier.
