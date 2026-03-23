@@ -6,7 +6,7 @@ import { ElixirTracker } from "./elixir.js";
 import { applyForcedMotion, createTroop } from "./entities.js";
 import { hashState } from "./hash.js";
 import { evaluateMatchResult, getScoreSnapshot, isRegulationTieForOvertime } from "./match.js";
-import { clampToArena, createArena } from "./map.js";
+import { clampToArena, createArena, snapPositionToGrid } from "./map.js";
 import { createRng } from "./random.js";
 import { resolveArrowsImpact, resolveFireballImpact } from "./spells.js";
 
@@ -118,8 +118,9 @@ function cyclePlayedCard(cardState, actor, cardId) {
 }
 
 function isLegalPlacement(arena, actor, card, x, y) {
-  const bounded = clampToArena({ x, y }, arena);
-  if (Math.abs(bounded.x - x) > 1e-9 || Math.abs(bounded.y - y) > 1e-9) {
+  const snapped = snapPositionToGrid({ x, y }, arena);
+  const bounded = clampToArena(snapped, arena);
+  if (Math.abs(bounded.x - snapped.x) > 1e-9 || Math.abs(bounded.y - snapped.y) > 1e-9) {
     return false;
   }
 
@@ -127,11 +128,15 @@ function isLegalPlacement(arena, actor, card, x, y) {
     return true;
   }
 
+  if (arena.river && y >= arena.river.minY && y <= arena.river.maxY) {
+    return false;
+  }
+
   const midY = (arena.minY + arena.maxY) / 2;
   if (actor === "blue") {
-    return y >= midY;
+    return snapped.y > midY;
   }
-  return y <= midY;
+  return snapped.y < midY;
 }
 
 function squaredDistance(a, b) {
@@ -222,19 +227,21 @@ function spawnTroops({ state, actor, card, x, y }) {
 
   for (let i = 0; i < count; i += 1) {
     const slotOffset = (i - (count - 1) / 2) * spread;
-    const spawnPosition = clampToArena({ x: x + slotOffset, y }, state.arena);
+    const spawnPosition = snapPositionToGrid(clampToArena({ x: x + slotOffset, y }, state.arena), state.arena);
     const entityId = `${actor}_${card.id}_${state.spawn_sequence++}`;
+    const troop = createTroop({
+      id: entityId,
+      cardId: card.id,
+      team: actor,
+      x: spawnPosition.x,
+      y: spawnPosition.y,
+      hp: card.hp,
+    });
+    troop.bridge_x = state.arena.bridges?.length
+      ? [...state.arena.bridges].sort((a, b) => Math.abs(a.x - troop.x) - Math.abs(b.x - troop.x))[0]?.x ?? troop.x
+      : troop.x;
 
-    state.entities.push(
-      createTroop({
-        id: entityId,
-        cardId: card.id,
-        team: actor,
-        x: spawnPosition.x,
-        y: spawnPosition.y,
-        hp: card.hp,
-      }),
-    );
+    state.entities.push(troop);
 
     createdEntityIds.push(entityId);
   }
@@ -287,6 +294,8 @@ function resolveScheduledSpell({ state, effect, fireballConfig }) {
       effect_id: effect.effect_id,
       source_spell: "fireball",
       actor: effect.actor,
+      x: effect.x,
+      y: effect.y,
       impacted_entity_ids: impact.impacted_entity_ids,
       knockback_events: impact.knockback_events,
     });
@@ -310,6 +319,8 @@ function resolveScheduledSpell({ state, effect, fireballConfig }) {
       effect_id: effect.effect_id,
       source_spell: "arrows",
       actor: effect.actor,
+      x: effect.x,
+      y: effect.y,
       impacted_entity_ids: impact.impacted_entity_ids,
       knockback_events: [],
     });
@@ -412,7 +423,9 @@ function processPlayCardAction({ state, action, fireballConfig }) {
     return false;
   }
 
-  if (!isLegalPlacement(state.arena, actor, card, action.x, action.y)) {
+  const snappedPosition = snapPositionToGrid({ x: action.x, y: action.y }, state.arena);
+
+  if (!isLegalPlacement(state.arena, actor, card, snappedPosition.x, snappedPosition.y)) {
     return false;
   }
 
@@ -425,8 +438,8 @@ function processPlayCardAction({ state, action, fireballConfig }) {
     state,
     actor,
     card,
-    x: action.x,
-    y: action.y,
+    x: snappedPosition.x,
+    y: snappedPosition.y,
     fireballConfig,
   });
   if (!scheduledEffect) {
@@ -440,8 +453,8 @@ function processPlayCardAction({ state, action, fireballConfig }) {
     tick: state.tick,
     actor,
     card_id: card.id,
-    x: action.x,
-    y: action.y,
+    x: snappedPosition.x,
+    y: snappedPosition.y,
     effect_id: scheduledEffect.effect_id,
     resolve_tick: scheduledEffect.resolve_tick,
     hand_after: [...state.card_state[actor].hand],
@@ -489,6 +502,7 @@ export function createEngine({
     spawn_sequence: 1,
     effect_sequence: 1,
     pending_effects: [],
+    recent_combat_events: [],
     card_state: makeInitialCardState(rng, initialCardState),
     replay: {
       seed,
@@ -538,6 +552,7 @@ export function createEngine({
 
   function step(actionsForTick = []) {
     if (state.match_result) {
+      state.recent_combat_events = [];
       return getMatchPhase({ tick: state.tick, isOvertime: state.isOvertime });
     }
 
@@ -560,7 +575,10 @@ export function createEngine({
 
     processDueEffects({ state, fireballConfig });
 
-    stepCombat({ entities: state.entities, arena });
+    state.recent_combat_events = stepCombat({ entities: state.entities, arena }).map((event) => ({
+      ...event,
+      tick: state.tick,
+    }));
 
     state.entities.sort((a, b) => a.id.localeCompare(b.id));
     for (const entity of state.entities) {
