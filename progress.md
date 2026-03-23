@@ -237,3 +237,30 @@ Original prompt: PLEASE IMPLEMENT THIS PLAN (3x overtime elixir + Fireball knock
     - dormant king towers still inactive until triggered
   - Browser automation note:
     - the Playwright game client produced the first validation artifact reliably, but subsequent repeated iterations stalled in this environment, so the captured artifact above is the clean validation record for this pass
+
+- Portrait Clash Royale measurement rebuild (March 23, 2026, follow-up):
+  - Added pure portrait layout helpers in `src/client/layout.js`:
+    - reference screen size
+    - measured frame rects for top banner, timer, arena, crown rail, bottom tray, hand slots, next card, and elixir bar
+    - shared hit-test + world/screen mapping helpers
+  - Rewired `src/client/webGame.js` to render the battle frame from the portrait layout instead of the previous `info/arena/hand/status` desktop split.
+  - Moved setup controls out of the live battle frame by replacing the old toolbar in `index.html` with an in-shell pre-match overlay that hides during play.
+  - Rebuilt the in-canvas HUD/tray to better match the reference composition:
+    - portrait top banner + timer
+    - level badges
+    - right-side crown rail
+    - portrait card tray with next-card chip and elixir bar
+    - in-canvas close/reset button
+  - Added layout regression tests in `tests/ui-layout.test.js` covering:
+    - portrait anchor preservation
+    - desktop scaling / centering
+    - hand-slot hit testing
+    - arena world/screen round-trip mapping
+  - Validation:
+    - Full suite passing: `npm test` (`47/47`)
+    - Browser validation on local server `http://127.0.0.1:4179`
+    - Latest inspected artifact: `output/playwright/portrait-rebuild/shot-0.png`
+    - Latest state artifact: `output/playwright/portrait-rebuild/state-0.json`
+    - No `errors.json` produced in the Playwright output directory
+  - Environment note:
+    - Starting the local dev server required an escalated run because sandboxed listening failed with `listen EPERM`

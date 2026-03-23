@@ -27,6 +27,13 @@ import {
   summarizeTrainingStore,
   trainSelfModel,
 } from "../ai/training.js";
+import {
+  computePortraitBattleLayout,
+  findHandSlotHit as findHandSlotHitForLayout,
+  pointInRect,
+  viewportToWorld,
+  worldToViewport,
+} from "./layout.js";
 
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
@@ -35,21 +42,24 @@ const resetBtn = document.getElementById("reset-btn");
 const trainBtn = document.getElementById("train-btn");
 const botTierSelect = document.getElementById("bot-tier-select");
 const profileSummary = document.getElementById("profile-summary");
+const setupOverlay = document.getElementById("setup-overlay");
+const setupTitle = document.getElementById("setup-title");
+const setupSubtitle = document.getElementById("setup-subtitle");
 
 const arena = createRoyaleArena({ minX: 0, maxX: 18, minY: 0, maxY: 32 });
+const WORLD_BOUNDS = Object.freeze({
+  minX: arena.minX,
+  maxX: arena.maxX,
+  minY: arena.minY,
+  maxY: arena.maxY,
+});
 
 const MAX_ELIXIR = 10;
 const PROFILE_STORAGE_KEY = "edge_royale_profile_v1";
 const TRAINING_STORAGE_KEY = "edge_royale_training_data_v1";
 const SELF_MODEL_STORAGE_KEY = "edge_royale_self_model_v1";
 const HAND_SLOTS = 4;
-const BASE_HAND_CARD_WIDTH = 140;
-const BASE_HAND_CARD_HEIGHT = 54;
-const BASE_HAND_GAP = 10;
 const DRAG_START_DISTANCE = 8;
-const LAYOUT_PADDING = 12;
-const LAYOUT_GAP = 8;
-const MIN_ARENA_HEIGHT = 140;
 const MAX_TRANSIENT_EFFECTS = 96;
 
 const CARD_LABEL = Object.freeze({
@@ -207,6 +217,17 @@ function refreshProfileSummary() {
   profileSummary.textContent = `Tier: ${getTierLabel(appState.selectedBotTier)} | Matches: ${progress.total_matches} | Training samples: ${training.sample_count} | ${selfStatus} | Model: ${selfReady ? "ready" : "not trained"}`;
 }
 
+function syncSetupOverlay() {
+  const showOverlay = appState.mode !== "playing";
+  setupOverlay.hidden = !showOverlay;
+  setupOverlay.setAttribute("aria-hidden", showOverlay ? "false" : "true");
+  setupTitle.textContent = appState.mode === "game_over" ? "Battle Finished" : "Edge Royale";
+  setupSubtitle.textContent =
+    appState.mode === "game_over"
+      ? appState.statusMessage
+      : "Portrait battle frame calibrated to the Clash Royale arena reference.";
+}
+
 function persistProfile() {
   saveStoredJson(PROFILE_STORAGE_KEY, appState.profile);
 }
@@ -231,114 +252,46 @@ function hydrateAppState() {
   refreshProfileSummary();
 }
 
+let cachedBattleLayoutKey = "";
+let cachedBattleLayout = null;
+
+function getBattleLayout() {
+  const width = getCanvasWidth();
+  const height = getCanvasHeight();
+  const cacheKey = `${width}x${height}`;
+  if (cacheKey !== cachedBattleLayoutKey || !cachedBattleLayout) {
+    cachedBattleLayout = computePortraitBattleLayout(width, height);
+    cachedBattleLayoutKey = cacheKey;
+  }
+  return cachedBattleLayout;
+}
+
 function worldToScreen(position) {
-  const viewport = getArenaViewport();
-  const px =
-    viewport.x + ((position.x - arena.minX) / (arena.maxX - arena.minX)) * viewport.width;
-  const py =
-    viewport.y + ((position.y - arena.minY) / (arena.maxY - arena.minY)) * viewport.height;
-  return { x: px, y: py };
+  return worldToViewport(position, WORLD_BOUNDS, getArenaViewport());
 }
 
 function screenToWorld(position) {
-  const viewport = getArenaViewport();
-  const normalizedX = clamp01((position.x - viewport.x) / viewport.width);
-  const normalizedY = clamp01((position.y - viewport.y) / viewport.height);
-  const x = arena.minX + normalizedX * (arena.maxX - arena.minX);
-  const y = arena.minY + normalizedY * (arena.maxY - arena.minY);
-  return { x: Math.max(arena.minX, Math.min(arena.maxX, x)), y: Math.max(arena.minY, Math.min(arena.maxY, y)) };
+  return viewportToWorld(position, WORLD_BOUNDS, getArenaViewport());
 }
 
 function getUiLayout() {
-  const width = getCanvasWidth();
-  const height = getCanvasHeight();
-  const isCompact = width < 760 || height < 420;
-  const frameX = LAYOUT_PADDING;
-  const frameWidth = Math.max(1, width - LAYOUT_PADDING * 2);
-  const availableHeight = Math.max(1, height - LAYOUT_PADDING * 2);
-
-  const desiredInfoHeight = isCompact ? 58 : 68;
-  const desiredHandHeight = isCompact ? 62 : 74;
-  const desiredStatusHeight = isCompact ? 20 : 24;
-  const minInfoHeight = 42;
-  const minHandHeight = 44;
-  const minStatusHeight = 16;
-
-  let infoHeight = desiredInfoHeight;
-  let handHeight = desiredHandHeight;
-  let statusHeight = desiredStatusHeight;
-
-  const minArenaCap = Math.max(
-    20,
-    availableHeight - (minInfoHeight + minHandHeight + minStatusHeight + LAYOUT_GAP * 3),
-  );
-  const minArenaHeight = Math.min(MIN_ARENA_HEIGHT, minArenaCap);
-
-  let arenaHeight = Math.max(
-    minArenaHeight,
-    availableHeight - (infoHeight + handHeight + statusHeight + LAYOUT_GAP * 3),
-  );
-  let overflow =
-    infoHeight + handHeight + statusHeight + LAYOUT_GAP * 3 + arenaHeight - availableHeight;
-
-  if (overflow > 0) {
-    const infoReduction = Math.min(infoHeight - minInfoHeight, overflow);
-    infoHeight -= infoReduction;
-    overflow -= infoReduction;
-
-    const handReduction = Math.min(handHeight - minHandHeight, overflow);
-    handHeight -= handReduction;
-    overflow -= handReduction;
-
-    const statusReduction = Math.min(statusHeight - minStatusHeight, overflow);
-    statusHeight -= statusReduction;
-  }
-
-  arenaHeight = Math.max(20, availableHeight - (infoHeight + handHeight + statusHeight + LAYOUT_GAP * 3));
-
-  const infoPanel = {
-    x: frameX,
-    y: LAYOUT_PADDING,
-    width: frameWidth,
-    height: infoHeight,
+  const layout = getBattleLayout();
+  return {
+    ...layout,
+    isCompact: layout.scale < 0.72,
   };
-
-  const arenaViewport = {
-    x: frameX,
-    y: Math.min(height - LAYOUT_PADDING - arenaHeight, infoPanel.y + infoPanel.height + LAYOUT_GAP),
-    width: frameWidth,
-    height: arenaHeight,
-  };
-
-  const handPanel = {
-    x: frameX,
-    y: arenaViewport.y + arenaViewport.height + LAYOUT_GAP,
-    width: frameWidth,
-    height: handHeight,
-  };
-
-  const statusPanel = {
-    x: frameX,
-    y: handPanel.y + handPanel.height + LAYOUT_GAP,
-    width: frameWidth,
-    height: statusHeight,
-  };
-
-  return { isCompact, infoPanel, arenaViewport, handPanel, statusPanel };
 }
 
 function getArenaViewport() {
-  return getUiLayout().arenaViewport;
+  return getBattleLayout().arenaViewport;
+}
+
+function getLayoutScale() {
+  return getBattleLayout().scale;
 }
 
 function isPointInArenaViewport(point) {
-  const viewport = getArenaViewport();
-  return (
-    point.x >= viewport.x &&
-    point.x <= viewport.x + viewport.width &&
-    point.y >= viewport.y &&
-    point.y <= viewport.y + viewport.height
-  );
+  return pointInRect(point, getArenaViewport());
 }
 
 function clamp01(value) {
@@ -578,73 +531,33 @@ function syncVisualState() {
 }
 
 function getHandLayout() {
-  const { handPanel } = getUiLayout();
-  const nextCardWidth = Math.max(54, Math.min(76, Math.round(handPanel.width * 0.085)));
-  const nextCardGap = Math.max(8, Math.round(nextCardWidth * 0.18));
-  const availableWidth = Math.max(220, handPanel.width - 24 - nextCardWidth - nextCardGap);
-  const baseTotalWidth = HAND_SLOTS * BASE_HAND_CARD_WIDTH + (HAND_SLOTS - 1) * BASE_HAND_GAP;
-  const baseScale = Math.min(1, availableWidth / baseTotalWidth);
-  const gap = Math.max(4, Math.round(BASE_HAND_GAP * Math.max(0.48, baseScale)));
-  const cardWidth = Math.max(62, Math.floor((availableWidth - (HAND_SLOTS - 1) * gap) / HAND_SLOTS));
-  const cardScale = cardWidth / BASE_HAND_CARD_WIDTH;
-  const preferredCardHeight = Math.max(34, Math.round(BASE_HAND_CARD_HEIGHT * cardScale));
-  const cardHeight = Math.min(preferredCardHeight, Math.max(34, handPanel.height - 16));
-  const titleFont = Math.max(8, Math.round(12 * Math.max(0.55, cardScale)));
-  const auxFont = Math.max(8, Math.round(11 * Math.max(0.55, cardScale)));
+  const layout = getBattleLayout();
+  const firstSlot = layout.handSlots[0];
+  const secondSlot = layout.handSlots[1];
+  const gap = secondSlot.x - firstSlot.x - firstSlot.width;
+  const cardScale = layout.scale;
 
   return {
-    cardWidth,
-    cardHeight,
+    cardWidth: firstSlot.width,
+    cardHeight: firstSlot.height,
     gap,
-    titleFont,
-    auxFont,
-    nextCardWidth,
-    nextCardGap,
+    titleFont: Math.max(11, Math.round(20 * cardScale)),
+    auxFont: Math.max(8, Math.round(13 * cardScale)),
+    nextCardWidth: layout.nextCardRect.width,
+    nextCardGap: firstSlot.x - (layout.nextCardRect.x + layout.nextCardRect.width),
   };
 }
 
 function getNextCardRect() {
-  const { handPanel } = getUiLayout();
-  const layout = getHandLayout();
-  return {
-    x: handPanel.x + 10,
-    y: handPanel.y + (handPanel.height - layout.cardHeight) / 2,
-    width: layout.nextCardWidth,
-    height: layout.cardHeight,
-  };
+  return getBattleLayout().nextCardRect;
 }
 
 function getHandSlotRects() {
-  const { handPanel } = getUiLayout();
-  const layout = getHandLayout();
-  const nextCardRect = getNextCardRect();
-  const totalWidth = HAND_SLOTS * layout.cardWidth + (HAND_SLOTS - 1) * layout.gap;
-  const contentX = nextCardRect.x + nextCardRect.width + layout.nextCardGap;
-  const contentWidth = handPanel.x + handPanel.width - contentX - 10;
-  const startX = contentX + Math.max(0, (contentWidth - totalWidth) / 2);
-  const y = handPanel.y + (handPanel.height - layout.cardHeight) / 2;
-
-  const slots = [];
-  for (let i = 0; i < HAND_SLOTS; i += 1) {
-    slots.push({
-      index: i,
-      x: startX + i * (layout.cardWidth + layout.gap),
-      y,
-      width: layout.cardWidth,
-      height: layout.cardHeight,
-    });
-  }
-
-  return slots;
+  return getBattleLayout().handSlots.map((slot, index) => ({ ...slot, index }));
 }
 
 function findHandSlotHit(x, y) {
-  for (const slot of getHandSlotRects()) {
-    if (x >= slot.x && x <= slot.x + slot.width && y >= slot.y && y <= slot.y + slot.height) {
-      return slot.index;
-    }
-  }
-  return null;
+  return findHandSlotHitForLayout(getBattleLayout(), { x, y });
 }
 
 function createInitialEntities() {
@@ -1024,22 +937,23 @@ function getEntityFacingAngle(entity, entityLookup, animation = null) {
 }
 
 function getTroopScale(cardId) {
+  const layoutScale = getLayoutScale();
   if (cardId === "giant") {
-    return 16;
+    return 16 * layoutScale;
   }
   if (cardId === "mini_pekka") {
-    return 13.5;
+    return 13.5 * layoutScale;
   }
   if (cardId === "knight" || cardId === "musketeer") {
-    return 12;
+    return 12 * layoutScale;
   }
   if (cardId === "archers") {
-    return 10.5;
+    return 10.5 * layoutScale;
   }
   if (cardId === "goblins") {
-    return 9.5;
+    return 9.5 * layoutScale;
   }
-  return 11;
+  return 11 * layoutScale;
 }
 
 function getTroopPalette(entity) {
@@ -1127,13 +1041,16 @@ function drawHealthBar(entity, screen, width) {
 }
 
 function drawTowerHealthBar(entity, screen) {
+  const layoutScale = getLayoutScale();
   const hpRatio = clamp01(entity.hp / entity.maxHp);
-  const width = entity.tower_role === "king" ? 58 : 46;
+  const width = (entity.tower_role === "king" ? 58 : 46) * layoutScale;
   const barX = screen.x - width * 0.5;
-  const barY = screen.y - (entity.tower_role === "king" ? 42 : 34);
-  fillRoundedRect(barX, barY, width, 6, 3, "rgba(14,19,33,0.46)");
-  fillRoundedRect(barX, barY, width * hpRatio, 6, 3, "#7ff29d");
-  strokeRoundedRect(barX, barY, width, 6, 3, "rgba(255,255,255,0.38)");
+  const height = Math.max(4, 6 * layoutScale);
+  const radius = Math.max(3, 3 * layoutScale);
+  const barY = screen.y - (entity.tower_role === "king" ? 42 : 34) * layoutScale;
+  fillRoundedRect(barX, barY, width, height, radius, "rgba(14,19,33,0.46)");
+  fillRoundedRect(barX, barY, width * hpRatio, height, radius, "#7ff29d");
+  strokeRoundedRect(barX, barY, width, height, radius, "rgba(255,255,255,0.38)");
 }
 
 function drawArcTrail(centerX, centerY, radius, fromAngle, toAngle, color, alpha = 1, lineWidth = 3) {
@@ -1149,45 +1066,66 @@ function drawArcTrail(centerX, centerY, radius, fromAngle, toAngle, color, alpha
 }
 
 function drawTowerPadAt(worldX, worldY, team, towerRole = "crown") {
+  const layoutScale = getLayoutScale();
   const screen = worldToScreen({ x: worldX, y: worldY });
-  const padRadius = towerRole === "king" ? 31 : 24;
+  const padRadius = (towerRole === "king" ? 31 : 24) * layoutScale;
   drawShadow(screen, padRadius, 10, 0.15);
   ctx.save();
   ctx.translate(screen.x, screen.y);
   ctx.fillStyle = "rgba(222,229,232,0.9)";
   ctx.beginPath();
-  ctx.arc(0, 0, towerRole === "king" ? 30 : 25, 0, Math.PI * 2);
+  ctx.arc(0, 0, (towerRole === "king" ? 30 : 25) * layoutScale, 0, Math.PI * 2);
   ctx.fill();
   ctx.strokeStyle = "rgba(108,117,128,0.9)";
-  ctx.lineWidth = 2;
+  ctx.lineWidth = Math.max(1.4, 2 * layoutScale);
   ctx.stroke();
 
   ctx.beginPath();
-  ctx.arc(0, 0, towerRole === "king" ? 20 : 17, 0, Math.PI * 2);
+  ctx.arc(0, 0, (towerRole === "king" ? 20 : 17) * layoutScale, 0, Math.PI * 2);
   ctx.fillStyle = team === "blue" ? "rgba(88,140,255,0.2)" : "rgba(255,110,110,0.2)";
   ctx.fill();
   if (towerRole === "king") {
-    drawCrownIcon(0, -1, 12, "rgba(244,212,123,0.95)");
+    drawCrownIcon(0, -1 * layoutScale, 12 * layoutScale, "rgba(244,212,123,0.95)");
   }
   ctx.restore();
 }
 
 function drawArenaBackground() {
-  const { arenaViewport } = getUiLayout();
+  const layout = getBattleLayout();
+  const { frame, arenaViewport, bottomTray } = layout;
   const width = getCanvasWidth();
   const height = getCanvasHeight();
-  const sky = ctx.createLinearGradient(0, 0, 0, height);
-  sky.addColorStop(0, "#dff2ff");
-  sky.addColorStop(0.45, "#b8e1ff");
-  sky.addColorStop(1, "#96c7ff");
-  ctx.fillStyle = sky;
+  const frameRadius = Math.max(24, 30 * layout.scale);
+  const arenaRadius = Math.max(18, 24 * layout.scale);
+  const pageGradient = ctx.createLinearGradient(0, 0, 0, height);
+  pageGradient.addColorStop(0, "#5d7e4b");
+  pageGradient.addColorStop(0.5, "#88ad62");
+  pageGradient.addColorStop(1, "#506d3f");
+  ctx.fillStyle = pageGradient;
   ctx.fillRect(0, 0, width, height);
 
-  fillRoundedRect(arenaViewport.x - 4, arenaViewport.y - 4, arenaViewport.width + 8, arenaViewport.height + 8, 24, "rgba(42,88,46,0.18)");
-  fillRoundedRect(arenaViewport.x, arenaViewport.y, arenaViewport.width, arenaViewport.height, 20, "#7cc85d");
+  ctx.save();
+  ctx.globalAlpha = 0.28;
+  ctx.fillStyle = "#223421";
+  ctx.beginPath();
+  ctx.ellipse(width * 0.5, height * 0.5, frame.width * 0.72, frame.height * 0.58, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  fillRoundedRect(frame.x, frame.y, frame.width, frame.height, frameRadius, "#98bb74");
+  strokeRoundedRect(frame.x, frame.y, frame.width, frame.height, frameRadius, "rgba(255,255,255,0.26)", Math.max(2, 2.5 * layout.scale));
+
+  fillRoundedRect(
+    frame.x + 6 * layout.scale,
+    frame.y + 6 * layout.scale,
+    frame.width - 12 * layout.scale,
+    frame.height - 12 * layout.scale,
+    Math.max(20, 26 * layout.scale),
+    "#a6ca7c",
+  );
 
   ctx.save();
-  pathRoundedRect(arenaViewport.x, arenaViewport.y, arenaViewport.width, arenaViewport.height, 20);
+  pathRoundedRect(arenaViewport.x, arenaViewport.y, arenaViewport.width, arenaViewport.height, arenaRadius);
   ctx.clip();
 
   const grass = ctx.createLinearGradient(0, arenaViewport.y, 0, arenaViewport.y + arenaViewport.height);
@@ -1299,7 +1237,23 @@ function drawArenaBackground() {
 
   ctx.restore();
 
-  strokeRoundedRect(arenaViewport.x, arenaViewport.y, arenaViewport.width, arenaViewport.height, 20, "rgba(255,255,255,0.55)", 2);
+  fillRoundedRect(
+    bottomTray.x - 6 * layout.scale,
+    bottomTray.y - 10 * layout.scale,
+    bottomTray.width + 18 * layout.scale,
+    bottomTray.height + 18 * layout.scale,
+    Math.max(18, 24 * layout.scale),
+    "rgba(39,93,181,0.72)",
+  );
+  strokeRoundedRect(
+    arenaViewport.x,
+    arenaViewport.y,
+    arenaViewport.width,
+    arenaViewport.height,
+    arenaRadius,
+    "rgba(255,255,255,0.42)",
+    Math.max(1.4, 2 * layout.scale),
+  );
 }
 
 function drawCountdownRing(screen, radius, progress, color, alpha = 1) {
@@ -1946,57 +1900,143 @@ function drawPlacementPreview() {
   ctx.fillText(`${cost} elixir`, ghostX + ghostWidth - 8, ghostY + Math.min(16, ghostHeight * 0.45));
 }
 
-function drawElixirPips({ x, y, actor, amount, gemSize = 9, gemGap = 4, labelFont = 10, label = null }) {
-  const color = actor === "blue" ? "#78b2ff" : "#ff8c8c";
-  const step = gemSize + gemGap;
+function drawLevelBadge(rect, text) {
+  const radius = Math.max(8, rect.width * 0.24);
+  fillRoundedRect(rect.x, rect.y, rect.width, rect.height, radius, "#efc553");
+  strokeRoundedRect(rect.x, rect.y, rect.width, rect.height, radius, "#6d4b14", Math.max(1.6, rect.width * 0.08));
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#2e1f06";
+  ctx.font = `${Math.max(13, rect.height * 0.56)}px Trebuchet MS`;
+  ctx.fillText(text, rect.x + rect.width * 0.5, rect.y + rect.height * 0.7);
+}
 
-  ctx.font = `${labelFont}px Avenir Next`;
-  ctx.textAlign = "left";
-  ctx.fillStyle = "#f4f8ff";
-  ctx.fillText(label ?? `${actor.toUpperCase()} ELIXIR`, x, y);
+function drawCrownRail(score, layout) {
+  const rail = layout.crownRail;
+  const radius = Math.max(16, 18 * layout.scale);
+  fillRoundedRect(rail.x, rail.y, rail.width, rail.height, radius, "rgba(24,33,35,0.64)");
+  strokeRoundedRect(rail.x, rail.y, rail.width, rail.height, radius, "rgba(0,0,0,0.74)", Math.max(2, 2.4 * layout.scale));
 
-  for (let index = 0; index < MAX_ELIXIR; index += 1) {
-    const gemX = x + index * step + gemSize * 0.5;
-    const gemY = y + 12;
-    ctx.save();
-    ctx.translate(gemX, gemY);
-    ctx.rotate(Math.PI * 0.25);
-    ctx.fillStyle = index < amount ? color : "rgba(255,255,255,0.18)";
-    ctx.fillRect(-gemSize * 0.5, -gemSize * 0.5, gemSize, gemSize);
-    ctx.strokeStyle = index < amount ? "rgba(255,255,255,0.74)" : "rgba(255,255,255,0.2)";
-    ctx.lineWidth = 1.2;
-    ctx.strokeRect(-gemSize * 0.5, -gemSize * 0.5, gemSize, gemSize);
-    ctx.restore();
+  const badgeHeight = rail.height * 0.35;
+  const badgeWidth = rail.width * 0.82;
+  const badgeX = rail.x + (rail.width - badgeWidth) * 0.5;
+  const redY = rail.y + rail.height * 0.02;
+  const blueY = rail.y + rail.height - badgeHeight - rail.height * 0.02;
+
+  for (const badge of [
+    { actor: "red", count: score.red_crowns, y: redY, fill: "#ec5f5d" },
+    { actor: "blue", count: score.blue_crowns, y: blueY, fill: "#69a5ff" },
+  ]) {
+    fillRoundedRect(badgeX, badge.y, badgeWidth, badgeHeight, radius, badge.fill);
+    strokeRoundedRect(badgeX, badge.y, badgeWidth, badgeHeight, radius, "rgba(35,16,16,0.72)", Math.max(2, 2.4 * layout.scale));
+    drawCrownIcon(
+      badgeX + badgeWidth * 0.5,
+      badge.y + badgeHeight * 0.34,
+      Math.max(14, 18 * layout.scale),
+      badge.actor === "red" ? "#ffe5a4" : "#ffdd8b",
+    );
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#10171c";
+    ctx.font = `${Math.max(22, 34 * layout.scale)}px Trebuchet MS`;
+    ctx.fillText(String(badge.count), badgeX + badgeWidth * 0.5, badge.y + badgeHeight * 0.82);
   }
 }
 
+function drawElixirMeter(layout) {
+  const elixirBar = layout.elixirBar;
+  const amount = appState.engine.state.elixir.blue.elixir;
+  const orbSize = elixirBar.height * 1.28;
+  const orbX = elixirBar.x - orbSize * 0.28;
+  const orbY = elixirBar.y - orbSize * 0.18;
+  const gradient = ctx.createLinearGradient(0, elixirBar.y, 0, elixirBar.y + elixirBar.height);
+  gradient.addColorStop(0, "#f384ff");
+  gradient.addColorStop(1, "#b838de");
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(orbX + orbSize * 0.45, orbY + orbSize * 0.52, orbSize * 0.34, Math.PI * 0.06, Math.PI * 1.94);
+  ctx.fillStyle = "#c545ef";
+  ctx.fill();
+  ctx.restore();
+
+  fillRoundedRect(elixirBar.x, elixirBar.y, elixirBar.width, elixirBar.height, elixirBar.height * 0.24, "rgba(18,27,76,0.92)");
+  strokeRoundedRect(
+    elixirBar.x,
+    elixirBar.y,
+    elixirBar.width,
+    elixirBar.height,
+    elixirBar.height * 0.24,
+    "rgba(0,0,0,0.58)",
+    Math.max(1.4, 2 * layout.scale),
+  );
+
+  const segmentGap = 2 * layout.scale;
+  const segmentWidth = (elixirBar.width - segmentGap * (MAX_ELIXIR - 1)) / MAX_ELIXIR;
+  for (let index = 0; index < MAX_ELIXIR; index += 1) {
+    const segmentX = elixirBar.x + index * (segmentWidth + segmentGap);
+    fillRoundedRect(
+      segmentX,
+      elixirBar.y + 3 * layout.scale,
+      segmentWidth,
+      elixirBar.height - 6 * layout.scale,
+      elixirBar.height * 0.18,
+      index < amount ? gradient : "rgba(255,255,255,0.08)",
+    );
+  }
+
+  ctx.textAlign = "left";
+  ctx.fillStyle = "#f9d7ff";
+  ctx.font = `${Math.max(20, 28 * layout.scale)}px Trebuchet MS`;
+  ctx.fillText(String(amount), elixirBar.x - 10 * layout.scale, elixirBar.y + elixirBar.height * 0.82);
+  ctx.font = `${Math.max(10, 13 * layout.scale)}px Trebuchet MS`;
+  ctx.fillStyle = "#ffd0ff";
+  ctx.fillText("Max: 10", elixirBar.x + 4 * layout.scale, elixirBar.y + elixirBar.height + 12 * layout.scale);
+}
+
 function drawHand() {
-  const { handPanel, isCompact } = getUiLayout();
+  const layout = getBattleLayout();
+  const { bottomTray, closeButton, isCompact, nextCardRect, statusRect } = getUiLayout();
   const hand = appState.engine.getHand("blue");
   const deckQueue = appState.engine.getDeckQueue("blue");
   const slots = getHandSlotRects();
-  const layout = getHandLayout();
-  const nextCardRect = getNextCardRect();
+  const handSizing = getHandLayout();
   const dragIndex = appState.dragState?.slotIndex ?? null;
   const nextCardId = deckQueue[0] ?? null;
   const nextCard = nextCardId ? getCard(nextCardId) : null;
+  const radius = Math.max(16, 18 * layout.scale);
 
-  fillRoundedRect(handPanel.x, handPanel.y, handPanel.width, handPanel.height, 18, "rgba(31,43,78,0.86)");
-  strokeRoundedRect(handPanel.x, handPanel.y, handPanel.width, handPanel.height, 18, "rgba(255,255,255,0.24)", 1.5);
+  fillRoundedRect(bottomTray.x, bottomTray.y, bottomTray.width, bottomTray.height, radius, "#2e7df4");
+  fillRoundedRect(
+    bottomTray.x + 8 * layout.scale,
+    bottomTray.y + 8 * layout.scale,
+    bottomTray.width - 16 * layout.scale,
+    bottomTray.height - 16 * layout.scale,
+    Math.max(14, 16 * layout.scale),
+    "#205cc5",
+  );
+  strokeRoundedRect(bottomTray.x, bottomTray.y, bottomTray.width, bottomTray.height, radius, "rgba(255,255,255,0.26)", Math.max(1.6, 2 * layout.scale));
 
-  fillRoundedRect(nextCardRect.x, nextCardRect.y, nextCardRect.width, nextCardRect.height, 14, "rgba(16,23,44,0.86)");
-  strokeRoundedRect(nextCardRect.x, nextCardRect.y, nextCardRect.width, nextCardRect.height, 14, "rgba(255,255,255,0.2)", 1.2);
-  ctx.fillStyle = "rgba(255,255,255,0.72)";
+  fillRoundedRect(closeButton.x, closeButton.y, closeButton.width, closeButton.height, closeButton.width * 0.18, "#a86a46");
+  strokeRoundedRect(closeButton.x, closeButton.y, closeButton.width, closeButton.height, closeButton.width * 0.18, "#5c301a", Math.max(2, 2.4 * layout.scale));
   ctx.textAlign = "center";
-  ctx.font = `${Math.max(8, layout.auxFont)}px Avenir Next`;
-  ctx.fillText("NEXT", nextCardRect.x + nextCardRect.width * 0.5, nextCardRect.y + 14);
+  ctx.fillStyle = "#fff5eb";
+  ctx.font = `${Math.max(26, 34 * layout.scale)}px Trebuchet MS`;
+  ctx.fillText("×", closeButton.x + closeButton.width * 0.5, closeButton.y + closeButton.height * 0.72);
+
+  ctx.textAlign = "left";
+  ctx.fillStyle = "rgba(255,255,255,0.92)";
+  ctx.font = `${Math.max(16, 22 * layout.scale)}px Trebuchet MS`;
+  ctx.fillText("Next:", closeButton.x - 2 * layout.scale, nextCardRect.y - 12 * layout.scale);
+
+  fillRoundedRect(nextCardRect.x, nextCardRect.y, nextCardRect.width, nextCardRect.height, 12 * layout.scale, "rgba(19,27,55,0.88)");
+  strokeRoundedRect(nextCardRect.x, nextCardRect.y, nextCardRect.width, nextCardRect.height, 12 * layout.scale, "rgba(255,255,255,0.24)", Math.max(1.3, 1.7 * layout.scale));
   if (nextCard) {
     ctx.fillStyle = "#ffffff";
-    ctx.font = `${Math.max(11, layout.titleFont + 3)}px Avenir Next`;
+    ctx.textAlign = "center";
+    ctx.font = `${Math.max(15, handSizing.titleFont + 5)}px Trebuchet MS`;
     ctx.fillText(getCardMonogram(nextCardId), nextCardRect.x + nextCardRect.width * 0.5, nextCardRect.y + nextCardRect.height * 0.55);
-    ctx.font = `${Math.max(8, layout.auxFont)}px Avenir Next`;
-    ctx.fillStyle = "#f7d165";
-    ctx.fillText(String(nextCard.cost), nextCardRect.x + nextCardRect.width * 0.5, nextCardRect.y + nextCardRect.height - 10);
+    ctx.font = `${Math.max(11, handSizing.auxFont + 1)}px Trebuchet MS`;
+    ctx.fillStyle = "#ff6ef1";
+    ctx.fillText(String(nextCard.cost), nextCardRect.x + nextCardRect.width * 0.5, nextCardRect.y + nextCardRect.height - 8 * layout.scale);
   }
 
   for (const slot of slots) {
@@ -2006,45 +2046,74 @@ function drawHand() {
     const affordable = card ? appState.engine.state.elixir.blue.elixir >= card.cost : false;
     const isDraggingCard = appState.dragState?.isDragging && dragIndex === slot.index;
     const accent = getCardAccent(cardId);
-    const lift = isSelected ? 6 : 0;
+    const lift = isSelected ? 10 * layout.scale : 0;
 
     ctx.save();
     ctx.globalAlpha = isDraggingCard ? 0.45 : 1;
-    fillRoundedRect(slot.x, slot.y - lift, slot.width, slot.height, 14, isSelected ? "rgba(255,255,255,0.22)" : "rgba(16,23,44,0.8)");
-    fillRoundedRect(slot.x, slot.y - lift, slot.width, 8, 14, accent, affordable ? 1 : 0.55);
-    strokeRoundedRect(slot.x, slot.y - lift, slot.width, slot.height, 14, isSelected ? "#fff3c2" : "rgba(255,255,255,0.24)", isSelected ? 2.2 : 1.4);
+    fillRoundedRect(slot.x, slot.y - lift, slot.width, slot.height, 14 * layout.scale, isSelected ? "rgba(255,255,255,0.24)" : "rgba(12,19,44,0.78)");
+    fillRoundedRect(slot.x, slot.y - lift, slot.width, Math.max(8, 10 * layout.scale), 14 * layout.scale, accent, affordable ? 1 : 0.55);
+    fillRoundedRect(
+      slot.x + 4 * layout.scale,
+      slot.y + 10 * layout.scale - lift,
+      slot.width - 8 * layout.scale,
+      slot.height - 32 * layout.scale,
+      12 * layout.scale,
+      "rgba(255,255,255,0.12)",
+    );
+    strokeRoundedRect(
+      slot.x,
+      slot.y - lift,
+      slot.width,
+      slot.height,
+      14 * layout.scale,
+      isSelected ? "#fff3c2" : "rgba(255,255,255,0.26)",
+      isSelected ? Math.max(2, 2.4 * layout.scale) : Math.max(1.2, 1.5 * layout.scale),
+    );
     ctx.restore();
 
     if (!card) {
       continue;
     }
 
-    const narrowCard = slot.width < 96;
     const title = fitTextToWidth(CARD_LABEL[cardId] ?? cardId, slot.width - 20);
-    const glyphY = slot.y - lift + slot.height * (isCompact ? 0.52 : 0.5);
+    const glyphY = slot.y - lift + slot.height * (isCompact ? 0.44 : 0.46);
     ctx.fillStyle = affordable ? "#ffffff" : "#bcc8dc";
     ctx.textAlign = "center";
-    ctx.font = `${Math.max(14, layout.titleFont + 6)}px Avenir Next`;
+    ctx.font = `${Math.max(17, handSizing.titleFont + 8)}px Trebuchet MS`;
     ctx.fillText(getCardMonogram(cardId), slot.x + slot.width * 0.5, glyphY);
 
-    ctx.font = `${layout.titleFont}px Avenir Next`;
-    ctx.fillText(title, slot.x + slot.width * 0.5, slot.y - lift + slot.height - 14);
+    ctx.font = `${handSizing.titleFont}px Trebuchet MS`;
+    ctx.fillText(title, slot.x + slot.width * 0.5, slot.y - lift + slot.height - 12 * layout.scale);
 
-    fillRoundedRect(slot.x + 6, slot.y - lift + 6, 22, 18, 9, "rgba(13,20,38,0.8)");
-    strokeRoundedRect(slot.x + 6, slot.y - lift + 6, 22, 18, 9, "rgba(255,255,255,0.2)", 1);
-    ctx.fillStyle = "#f7d165";
-    ctx.font = `${Math.max(10, layout.auxFont)}px Avenir Next`;
-    ctx.fillText(String(card.cost), slot.x + 17, slot.y - lift + 19);
-
-    if (!narrowCard) {
-      ctx.fillStyle = "rgba(255,255,255,0.7)";
-      ctx.font = `${layout.auxFont}px Avenir Next`;
-      ctx.fillText(String(slot.index + 1), slot.x + slot.width - 12, slot.y - lift + 19);
-    }
+    const costRadius = Math.max(12, 17 * layout.scale);
+    const costCenterX = slot.x + slot.width * 0.5;
+    const costCenterY = slot.y - lift + slot.height - 8 * layout.scale;
+    ctx.beginPath();
+    ctx.arc(costCenterX, costCenterY, costRadius, 0, Math.PI * 2);
+    ctx.fillStyle = "#d63bdf";
+    ctx.fill();
+    ctx.strokeStyle = "#5f1c68";
+    ctx.lineWidth = Math.max(1.2, 1.8 * layout.scale);
+    ctx.stroke();
+    ctx.fillStyle = "#ffffff";
+    ctx.font = `${Math.max(12, handSizing.titleFont)}px Trebuchet MS`;
+    ctx.fillText(String(card.cost), costCenterX, costCenterY + costRadius * 0.34);
   }
+
+  ctx.textAlign = "left";
+  const hideIdleStatus =
+    appState.statusMessage.startsWith("Battle started vs") || appState.statusMessage.startsWith("Ready.");
+  if (!hideIdleStatus) {
+    ctx.fillStyle = "#edf1ff";
+    ctx.font = `${Math.max(9, 12 * layout.scale)}px Trebuchet MS`;
+    const status = fitTextToWidth(appState.statusMessage, statusRect.width);
+    ctx.fillText(status, statusRect.x, statusRect.y + statusRect.height * 0.72);
+  }
+  drawElixirMeter(layout);
 }
 
 function drawHud() {
+  const layout = getBattleLayout();
   const tick = appState.engine.state.tick;
   const phase = getMatchPhase({ tick, isOvertime: appState.engine.state.isOvertime });
   const regulationRemaining = Math.max(0, MATCH_CONFIG.regulation_ticks - Math.min(tick, MATCH_CONFIG.regulation_ticks));
@@ -2052,89 +2121,48 @@ function drawHud() {
   const overtimeRemaining = Math.max(0, MATCH_CONFIG.overtime_ticks - overtimeElapsed);
   const activeClock = phase === "overtime" ? overtimeRemaining / TICK_RATE : regulationRemaining / TICK_RATE;
   const score = appState.engine.getScore();
-  const { infoPanel, statusPanel, isCompact } = getUiLayout();
-  const pipSize = isCompact ? 6 : 7;
-  const pipGap = isCompact ? 2 : 3;
-  const labelFont = isCompact ? 7 : 8;
   const clockText = formatBattleClock(activeClock);
-  const centerWidth = Math.min(176, infoPanel.width * 0.22);
-  const leftWidth = Math.min(190, infoPanel.width * 0.28);
-  const rightWidth = leftWidth;
+  const topBanner = layout.topBanner;
+  const timerBox = layout.timerBox;
+  const opponentName = fitTextToWidth(getTierLabel(appState.selectedBotTier), topBanner.width - 88 * layout.scale);
 
-  fillRoundedRect(infoPanel.x, infoPanel.y, infoPanel.width, infoPanel.height, 18, "rgba(20,31,58,0.84)");
-  strokeRoundedRect(infoPanel.x, infoPanel.y, infoPanel.width, infoPanel.height, 18, "rgba(255,255,255,0.24)", 1.2);
+  fillRoundedRect(topBanner.x, topBanner.y, topBanner.width, topBanner.height, 18 * layout.scale, "rgba(84,122,44,0.14)");
+  fillRoundedRect(topBanner.x + 4 * layout.scale, topBanner.y + 10 * layout.scale, 50 * layout.scale, 56 * layout.scale, 14 * layout.scale, "#6f4d37");
+  strokeRoundedRect(topBanner.x + 4 * layout.scale, topBanner.y + 10 * layout.scale, 50 * layout.scale, 56 * layout.scale, 14 * layout.scale, "#2d2019", Math.max(2, 2.2 * layout.scale));
+  drawCrownIcon(topBanner.x + 29 * layout.scale, topBanner.y + 39 * layout.scale, 15 * layout.scale, "#84c8ff");
 
-  fillRoundedRect(infoPanel.x + 8, infoPanel.y + 7, leftWidth, infoPanel.height - 14, 14, "rgba(62,118,225,0.9)");
-  fillRoundedRect(infoPanel.x + infoPanel.width - rightWidth - 8, infoPanel.y + 7, rightWidth, infoPanel.height - 14, 14, "rgba(223,90,90,0.9)");
-  fillRoundedRect(infoPanel.x + (infoPanel.width - centerWidth) * 0.5, infoPanel.y + 6, centerWidth, infoPanel.height - 12, 14, "rgba(14,21,40,0.94)");
-
-  ctx.fillStyle = "#ffffff";
   ctx.textAlign = "left";
-  ctx.font = `${isCompact ? 10 : 11}px Avenir Next`;
-  ctx.fillText("YOU", infoPanel.x + 18, infoPanel.y + 22);
-  ctx.font = `${isCompact ? 9 : 10}px Avenir Next`;
-  ctx.fillText(getTierLabel(appState.selectedBotTier), infoPanel.x + infoPanel.width - rightWidth + 10, infoPanel.y + 22);
+  ctx.fillStyle = "#ff4f8a";
+  ctx.font = `${Math.max(18, 26 * layout.scale)}px Trebuchet MS`;
+  ctx.fillText(opponentName, topBanner.x + 62 * layout.scale, topBanner.y + 30 * layout.scale);
+  ctx.fillStyle = "#fff3d8";
+  ctx.font = `${Math.max(14, 18 * layout.scale)}px Trebuchet MS`;
+  ctx.fillText("Royale Trainers", topBanner.x + 62 * layout.scale, topBanner.y + 60 * layout.scale);
 
-  for (let index = 0; index < 3; index += 1) {
-    drawCrownIcon(
-      infoPanel.x + 22 + index * 16,
-      infoPanel.y + infoPanel.height * 0.58,
-      10,
-      index < score.blue_crowns ? "#ffe181" : "rgba(255,255,255,0.28)",
-    );
-    drawCrownIcon(
-      infoPanel.x + infoPanel.width - rightWidth + 18 + index * 16,
-      infoPanel.y + infoPanel.height * 0.58,
-      10,
-      index < score.red_crowns ? "#ffe181" : "rgba(255,255,255,0.28)",
-    );
-  }
-
+  fillRoundedRect(timerBox.x, timerBox.y, timerBox.width, timerBox.height, 14 * layout.scale, "rgba(12,16,21,0.9)");
+  strokeRoundedRect(timerBox.x, timerBox.y, timerBox.width, timerBox.height, 14 * layout.scale, "rgba(0,0,0,0.78)", Math.max(2, 2.2 * layout.scale));
   ctx.textAlign = "center";
-  ctx.font = `${isCompact ? 13 : 16}px Avenir Next`;
-  ctx.fillText(clockText, infoPanel.x + infoPanel.width * 0.5, infoPanel.y + 22);
-  ctx.font = `${isCompact ? 8 : 10}px Avenir Next`;
-  ctx.fillStyle = "#dbe6ff";
-  ctx.fillText(phase === "overtime" ? "OVERTIME" : "BATTLE", infoPanel.x + infoPanel.width * 0.5, infoPanel.y + infoPanel.height * 0.65);
+  ctx.fillStyle = "#fff4cb";
+  ctx.font = `${Math.max(13, 18 * layout.scale)}px Trebuchet MS`;
+  ctx.fillText("Time left:", timerBox.x + timerBox.width * 0.5, timerBox.y + 22 * layout.scale);
+  ctx.font = `${Math.max(30, 46 * layout.scale)}px Trebuchet MS`;
+  ctx.fillStyle = "#ffffff";
+  ctx.fillText(clockText, timerBox.x + timerBox.width * 0.5, timerBox.y + timerBox.height * 0.72);
 
   if (phase === "overtime") {
-    fillRoundedRect(infoPanel.x + infoPanel.width * 0.5 - 40, infoPanel.y + infoPanel.height - 22, 80, 16, 8, "rgba(255,204,117,0.2)");
-    ctx.fillStyle = "#ffe4a7";
-    ctx.fillText("3x ELIXIR", infoPanel.x + infoPanel.width * 0.5, infoPanel.y + infoPanel.height - 10);
+    fillRoundedRect(timerBox.x, timerBox.y + timerBox.height + 6 * layout.scale, timerBox.width, 18 * layout.scale, 9 * layout.scale, "rgba(255,167,73,0.72)");
+    ctx.fillStyle = "#fff4cb";
+    ctx.font = `${Math.max(10, 13 * layout.scale)}px Trebuchet MS`;
+    ctx.fillText("3x ELIXIR", timerBox.x + timerBox.width * 0.5, timerBox.y + timerBox.height + 20 * layout.scale);
   }
 
-  drawElixirPips({
-    x: infoPanel.x + 18,
-    y: infoPanel.y + infoPanel.height - 22,
-    actor: "blue",
-    amount: appState.engine.state.elixir.blue.elixir,
-    gemSize: pipSize,
-    gemGap: pipGap,
-    labelFont,
-    label: "ELIXIR",
-  });
-  drawElixirPips({
-    x: infoPanel.x + infoPanel.width - rightWidth + 10,
-    y: infoPanel.y + infoPanel.height - 22,
-    actor: "red",
-    amount: appState.engine.state.elixir.red.elixir,
-    gemSize: pipSize,
-    gemGap: pipGap,
-    labelFont,
-    label: "ELIXIR",
-  });
-
-  fillRoundedRect(statusPanel.x, statusPanel.y, statusPanel.width, statusPanel.height, 12, "rgba(18,27,52,0.75)");
-  strokeRoundedRect(statusPanel.x, statusPanel.y, statusPanel.width, statusPanel.height, 12, "rgba(255,255,255,0.24)", 1);
-  ctx.textAlign = "left";
-  ctx.fillStyle = "#f6f9ff";
-  ctx.font = `${isCompact ? 9 : 11}px Avenir Next`;
-  const controlHint = isCompact ? "Tap or drag to deploy" : "Drag or tap a card to place on your side";
-  const status = fitTextToWidth(`${controlHint} | ${appState.statusMessage}`, statusPanel.width - 16);
-  ctx.fillText(status, statusPanel.x + 8, statusPanel.y + Math.round(statusPanel.height * 0.68));
+  drawLevelBadge(layout.topLevelBadge, "12");
+  drawLevelBadge(layout.bottomLevelBadge, "12");
+  drawCrownRail(score, layout);
 }
 
 function render() {
+  syncSetupOverlay();
   drawArenaBackground();
 
   const arenaViewport = getArenaViewport();
@@ -2300,6 +2328,10 @@ canvas.addEventListener("click", (event) => {
   }
 
   const { x, y } = getCanvasPointFromEvent(event);
+  if (pointInRect({ x, y }, getBattleLayout().closeButton)) {
+    resetGame();
+    return;
+  }
 
   const slotHit = findHandSlotHit(x, y);
   if (slotHit !== null) {
