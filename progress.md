@@ -218,6 +218,30 @@ Original prompt: PLEASE IMPLEMENT THIS PLAN (3x overtime elixir + Fireball knock
   - Rebuilt the in-canvas layout to give the arena more room, compress the battle chrome, and add a left-docked next-card preview chip beside the four-card hand.
   - Restyled the battlefield rendering to show subtle tile seams, six tower pads, and bridge-only crossings; `render_game_to_text` now includes next-card and tower-role/activation details.
   - Added regression coverage in `tests/royale-arena.test.js` for:
+
+- HUD/card readability pass (March 24, 2026):
+  - Removed both level-12 badge anchors/rendering and stripped tower text markers (`CT`, sleeping `zzz`) while keeping the king crown icon.
+  - Added numeric HP labels above tower health bars in `src/client/webGame.js`.
+  - Reworked hand cards and next-card preview to use code-drawn portrait art with top-left elixir badges instead of acronym/name text.
+  - Updated troop visuals so Archers, Goblins, Knight, and Musketeer have more distinct palettes/headgear/props at arena scale.
+  - Changed Goblins to 4 units in `src/sim/cards.js` and replaced spawn spread logic with explicit formation offsets in `src/sim/engine.js`.
+  - Added deploy regression coverage in `tests/royale-arena.test.js` for Archer pair spacing and 4-Goblin spacing around snapped base placement.
+  - Local validation so far:
+    - `node --check src/client/webGame.js`
+    - `node --check src/client/layout.js`
+    - `node --check src/sim/engine.js`
+    - `node --check src/sim/cards.js`
+    - `node --test tests/action-timing.test.js`
+    - `node --test tests/royale-arena.test.js`
+    - `node --test tests/ui-layout.test.js`
+  - Next step: run full test suite and Playwright screenshot/state validation on the updated UI to catch portrait/layout issues.
+  - Browser validation completed against a local dev server on `http://127.0.0.1:4179`:
+    - `output/web-game-ui-readability/shot-0.png`, `shot-1.png` confirm the portrait-based hand/next-card UI and numeric tower HP labels render in-game.
+    - `output/web-game-ui-goblins-2/shot-0.png` and `state-0.json` confirm Goblins now cycle into hand correctly, deploy as a multi-unit card, and pressure the red right tower.
+    - No `errors-*.json` artifacts were produced in the validation output directories.
+  - Final validation:
+    - `npm test` passing (`49/49`)
+    - `node --check src/client/webGame.js`
     - tile-snapped placement
     - bridge-only crossing
     - king activation after damage

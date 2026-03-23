@@ -20,6 +20,19 @@ function makeCardState({ blueHand, blueQueue }) {
   };
 }
 
+function getEntitiesByIds(engine, ids) {
+  return ids
+    .map((id) => engine.state.entities.find((entity) => entity.id === id))
+    .filter(Boolean);
+}
+
+function assertWithin(actual, expected, tolerance, label) {
+  assert.ok(
+    Math.abs(actual - expected) <= tolerance,
+    `${label}: expected ${actual} within ${tolerance} of ${expected}`,
+  );
+}
+
 test("royale arena PLAY_CARD snaps troop placement to tile centers", () => {
   const arena = createRoyaleArena({ minX: 0, maxX: 18, minY: 0, maxY: 32 });
   const engine = createEngine({
@@ -52,6 +65,96 @@ test("royale arena PLAY_CARD snaps troop placement to tile centers", () => {
   assert.ok(deployEvent);
   assert.equal(deployEvent.x, 4.5);
   assert.equal(deployEvent.y, 20.5);
+});
+
+test("archers deploy as a visible pair around the snapped placement", () => {
+  const arena = createRoyaleArena({ minX: 0, maxX: 18, minY: 0, maxY: 32 });
+  const engine = createEngine({
+    seed: 304,
+    arena,
+    fireballConfig: FIREBALL_CONFIG,
+    initialEntities: [],
+    initialCardState: makeCardState({
+      blueHand: ["archers", "giant", "arrows", "fireball"],
+      blueQueue: ["knight", "musketeer", "goblins", "mini_pekka"],
+    }),
+  });
+
+  engine.step([
+    {
+      tick: 1,
+      type: "PLAY_CARD",
+      actor: "blue",
+      cardId: "archers",
+      x: 9.2,
+      y: 20.1,
+    },
+  ]);
+
+  while (engine.state.tick < 21) {
+    engine.step([]);
+  }
+
+  const deployEvent = engine.state.replay.events.find((event) => event.type === "troop_deployed" && event.card_id === "archers");
+  assert.ok(deployEvent);
+  assert.equal(deployEvent.x, 9.5);
+  assert.equal(deployEvent.y, 20.5);
+  assert.equal(deployEvent.entity_ids.length, 2);
+
+  const archers = getEntitiesByIds(engine, deployEvent.entity_ids).sort((a, b) => a.x - b.x);
+  assert.equal(archers.length, 2);
+  assert.ok(archers[0].x < deployEvent.x);
+  assert.ok(archers[1].x > deployEvent.x);
+  assert.ok(archers[1].x - archers[0].x > 0.55);
+  assertWithin((archers[0].x + archers[1].x) * 0.5, deployEvent.x, 0.05, "archer midpoint x");
+  assertWithin(archers[0].y, deployEvent.y, 0.08, "left archer y");
+  assertWithin(archers[1].y, deployEvent.y, 0.08, "right archer y");
+});
+
+test("goblins deploy as four distinct units around the snapped placement", () => {
+  const arena = createRoyaleArena({ minX: 0, maxX: 18, minY: 0, maxY: 32 });
+  const engine = createEngine({
+    seed: 305,
+    arena,
+    fireballConfig: FIREBALL_CONFIG,
+    initialEntities: [],
+    initialCardState: makeCardState({
+      blueHand: ["goblins", "giant", "arrows", "fireball"],
+      blueQueue: ["knight", "musketeer", "archers", "mini_pekka"],
+    }),
+  });
+
+  engine.step([
+    {
+      tick: 1,
+      type: "PLAY_CARD",
+      actor: "blue",
+      cardId: "goblins",
+      x: 9.4,
+      y: 20.2,
+    },
+  ]);
+
+  while (engine.state.tick < 21) {
+    engine.step([]);
+  }
+
+  const deployEvent = engine.state.replay.events.find((event) => event.type === "troop_deployed" && event.card_id === "goblins");
+  assert.ok(deployEvent);
+  assert.equal(deployEvent.x, 9.5);
+  assert.equal(deployEvent.y, 20.5);
+  assert.equal(deployEvent.entity_ids.length, 4);
+
+  const goblins = getEntitiesByIds(engine, deployEvent.entity_ids);
+  assert.equal(goblins.length, 4);
+  assert.equal(new Set(goblins.map((entity) => `${entity.x},${entity.y}`)).size, 4);
+  const xs = goblins.map((entity) => entity.x).sort((a, b) => a - b);
+  const ys = goblins.map((entity) => entity.y).sort((a, b) => a - b);
+  assert.ok(xs[0] < deployEvent.x - 0.2);
+  assert.ok(xs[3] > deployEvent.x + 0.2);
+  assert.ok(ys[1] < deployEvent.y);
+  assert.ok(ys[2] > deployEvent.y);
+  assertWithin(goblins.reduce((total, entity) => total + entity.x, 0) / goblins.length, deployEvent.x, 0.08, "goblin midpoint x");
 });
 
 test("troops cross the royale river only on bridge tiles", () => {

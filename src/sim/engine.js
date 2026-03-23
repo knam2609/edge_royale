@@ -221,13 +221,23 @@ function enqueueScheduledEffect({ state, effect }) {
 }
 
 function spawnTroops({ state, actor, card, x, y }) {
-  const count = card.spawn_count ?? 1;
-  const spread = card.spread ?? 0;
+  const basePosition = clampToArena({ x, y }, state.arena);
+  const formation = Array.isArray(card.spawn_offsets) && card.spawn_offsets.length > 0
+    ? card.spawn_offsets
+    : [{ x: 0, y: 0 }];
+  const count = formation.length;
+  const yDirection = actor === "blue" ? 1 : -1;
   const createdEntityIds = [];
 
   for (let i = 0; i < count; i += 1) {
-    const slotOffset = (i - (count - 1) / 2) * spread;
-    const spawnPosition = snapPositionToGrid(clampToArena({ x: x + slotOffset, y }, state.arena), state.arena);
+    const offset = formation[i] ?? { x: 0, y: 0 };
+    const spawnPosition = clampToArena(
+      {
+        x: basePosition.x + (offset.x ?? 0),
+        y: basePosition.y + (offset.y ?? 0) * yDirection,
+      },
+      state.arena,
+    );
     const entityId = `${actor}_${card.id}_${state.spawn_sequence++}`;
     const troop = createTroop({
       id: entityId,
