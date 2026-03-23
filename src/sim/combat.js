@@ -1,5 +1,10 @@
 import { TICK_RATE } from "./config.js";
-import { clampPositionToArenaAndPathable } from "./map.js";
+import {
+  clampPositionToArenaAndPathable,
+  getArenaMidY,
+  getArenaSide,
+  getNearestBridge,
+} from "./map.js";
 
 const EPSILON = 1e-9;
 
@@ -23,6 +28,9 @@ function isTargetable(attacker, target) {
   }
 
   if (attacker.entity_type === "tower") {
+    if (attacker.is_active === false) {
+      return false;
+    }
     return target.entity_type === "troop";
   }
 
@@ -59,13 +67,26 @@ function isInRange(attacker, target) {
   return squaredDistance(attacker, target) <= reach * reach;
 }
 
-function applyAttack(attacker, target) {
+function applyAttack(attacker, target, attackEvents) {
   if (attacker.attack_cooldown_ticks_remaining > 0) {
     return false;
   }
 
   target.hp = Math.max(0, target.hp - attacker.attack_damage);
   attacker.attack_cooldown_ticks_remaining = attacker.attack_cooldown_ticks;
+  attackEvents.push({
+    attacker_id: attacker.id,
+    attacker_card_id: attacker.cardId,
+    attacker_team: attacker.team,
+    attacker_entity_type: attacker.entity_type,
+    attacker_x: roundCoord(attacker.x),
+    attacker_y: roundCoord(attacker.y),
+    target_id: target.id,
+    target_card_id: target.cardId,
+    target_x: roundCoord(target.x),
+    target_y: roundCoord(target.y),
+    damage: attacker.attack_damage,
+  });
   return true;
 }
 
@@ -78,10 +99,67 @@ function normalizeVector(x, y) {
   return { x: x / length, y: y / length };
 }
 
-function getForwardDirection(entity) {
-  const laneBiasX = (9 - entity.x) * 0.15;
+function getForwardDirection(entity, arena) {
+  const bridge = getNearestBridge(arena, entity.x);
+  const laneBiasX = bridge ? (bridge.x - entity.x) * 0.18 : ((arena.minX + arena.maxX) * 0.5 - entity.x) * 0.15;
   const laneBiasY = entity.team === "blue" ? -1 : 1;
   return normalizeVector(laneBiasX, laneBiasY);
+}
+
+function getBridgeWaypoint(entity, goal, arena) {
+  if (!arena.river || !arena.bridges?.length) {
+    return goal;
+  }
+
+  const entitySide = getArenaSide(arena, entity.y);
+  const goalSide = getArenaSide(arena, goal.y);
+
+  if (entitySide === "river" || goalSide === "river" || entitySide === goalSide) {
+    return goal;
+  }
+
+  const bridge = getNearestBridge(arena, entity.bridge_x ?? entity.x);
+  if (!bridge) {
+    return goal;
+  }
+
+  return {
+    x: bridge.x,
+    y: arena.river.centerY,
+  };
+}
+
+function activateKingTowers(entities) {
+  const crownsByTeam = new Map();
+  const kings = [];
+
+  for (const entity of entities) {
+    if (entity.entity_type !== "tower") {
+      continue;
+    }
+
+    if (entity.tower_role === "king") {
+      kings.push(entity);
+      continue;
+    }
+
+    const list = crownsByTeam.get(entity.team) ?? [];
+    list.push(entity);
+    crownsByTeam.set(entity.team, list);
+  }
+
+  for (const king of kings) {
+    if (king.is_active) {
+      continue;
+    }
+
+    const friendlyCrowns = crownsByTeam.get(king.team) ?? [];
+    const crownDestroyed = friendlyCrowns.some((tower) => tower.hp <= 0);
+    const kingDamaged = king.hp < king.maxHp;
+    if (crownDestroyed || kingDamaged) {
+      king.is_active = true;
+    }
+  }
 }
 
 function moveTroop(entity, target, arena) {
@@ -91,9 +169,20 @@ function moveTroop(entity, target, arena) {
     return;
   }
 
-  const direction = target
-    ? normalizeVector(target.x - entity.x, target.y - entity.y)
-    : getForwardDirection(entity);
+  const movementGoal = target
+    ? getBridgeWaypoint(entity, target, arena)
+    : getBridgeWaypoint(
+        entity,
+        {
+          x: entity.x,
+          y: entity.team === "blue" ? arena.minY : arena.maxY,
+        },
+        arena,
+      );
+  const direction =
+    target || movementGoal !== null
+      ? normalizeVector(movementGoal.x - entity.x, movementGoal.y - entity.y)
+      : getForwardDirection(entity, arena);
 
   const desiredPosition = {
     x: entity.x + direction.x * speedPerTick,
@@ -117,6 +206,7 @@ function tickCooldown(entity) {
 
 export function stepCombat({ entities, arena }) {
   const ordered = [...entities].sort((a, b) => a.id.localeCompare(b.id));
+  const attackEvents = [];
 
   for (const entity of ordered) {
     if (!isAlive(entity)) {
@@ -126,6 +216,7 @@ export function stepCombat({ entities, arena }) {
     }
 
     tickCooldown(entity);
+    activateKingTowers(ordered);
 
     if (entity.entity_type !== "troop" && entity.entity_type !== "tower") {
       continue;
@@ -154,7 +245,7 @@ export function stepCombat({ entities, arena }) {
 
     if (isInRange(entity, target)) {
       entity.velocity = { x: 0, y: 0 };
-      applyAttack(entity, target);
+      applyAttack(entity, target, attackEvents);
       continue;
     }
 
@@ -164,4 +255,6 @@ export function stepCombat({ entities, arena }) {
       entity.velocity = { x: 0, y: 0 };
     }
   }
+
+  return attackEvents;
 }

@@ -4,13 +4,30 @@ function towersByTeam(entities, team) {
   return entities.filter((entity) => entity.entity_type === "tower" && entity.team === team);
 }
 
+function isKingTower(tower) {
+  return tower.tower_role === "king";
+}
+
+function isCrownTower(tower) {
+  return !isKingTower(tower);
+}
+
+function crownsFromDestroyedTowers(enemyTowers) {
+  const deadKing = enemyTowers.find((tower) => isKingTower(tower) && tower.hp <= 0);
+  if (deadKing) {
+    return 3;
+  }
+
+  return enemyTowers.filter((tower) => isCrownTower(tower) && tower.hp <= 0).length;
+}
+
 export function getScoreSnapshot(entities) {
   const blueTowers = towersByTeam(entities, "blue");
   const redTowers = towersByTeam(entities, "red");
 
   return {
-    blue_crowns: redTowers.filter((tower) => tower.hp <= 0).length,
-    red_crowns: blueTowers.filter((tower) => tower.hp <= 0).length,
+    blue_crowns: crownsFromDestroyedTowers(redTowers),
+    red_crowns: crownsFromDestroyedTowers(blueTowers),
     blue_tower_hp: blueTowers.reduce((sum, tower) => sum + Math.max(0, tower.hp), 0),
     red_tower_hp: redTowers.reduce((sum, tower) => sum + Math.max(0, tower.hp), 0),
   };
@@ -51,6 +68,15 @@ function hpWinner(score) {
 
 export function evaluateMatchResult({ tick, isOvertime, entities, overtimeStartTick = null }) {
   const score = getScoreSnapshot(entities);
+  if (score.blue_crowns === 3 || score.red_crowns === 3) {
+    return finalizeResult({
+      tick,
+      winner: score.blue_crowns === 3 ? "blue" : "red",
+      reason: "king_tower_destroyed",
+      score,
+    });
+  }
+
   const crownsLead = crownsWinner(score);
 
   if (crownsLead) {

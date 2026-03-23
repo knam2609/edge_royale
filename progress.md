@@ -184,3 +184,56 @@ Original prompt: PLEASE IMPLEMENT THIS PLAN (3x overtime elixir + Fireball knock
     - No `errors.json` generated; visual and text-state outputs remained coherent after bot-logic changes.
 - Remaining AI TODO:
   - Ladder ordering is improved vs `noob`, but `top/pro` are still inconsistent against `mid` depending on seed batch; next step is targeted tuning for `top/pro` defense-vs-overcommit scenarios and adding stronger matrix acceptance gates per adjacent tier.
+
+- Clash Royale-inspired 2D UI refresh pass (March 23, 2026):
+  - Reworked canvas presentation in `src/client/webGame.js` into a brighter battlefield with grass lanes, river, bridges, tower pads, a simplified battle bar, and a cleaner hand strip.
+  - Replaced abstract troop circles with procedural 2D silhouettes and card-specific combat poses:
+    - Giant punch
+    - Knight / Mini P.E.K.K.A sword swings
+    - Archer bow fire + projectile
+    - Musketeer shotgun-style recoil / muzzle blast
+    - Goblin knife stab
+  - Added deterministic client-side visual state for attack animations and transient VFX, plus a minimal internal combat event feed from sim (`src/sim/combat.js`, `src/sim/engine.js`) to trigger them reliably without changing gameplay rules.
+  - Restyled spell telegraphs:
+    - `Arrows` now renders as a rain-of-arrows telegraph / burst
+    - `Fireball` keeps existing gameplay but uses a more stylized travel + impact treatment
+  - Updated outer shell styling in `index.html` to better match the refreshed canvas presentation.
+  - Fixed a post-pass UI regression by removing the overlapping “Next” badge from the hand strip.
+- Validation for the UI refresh:
+  - Syntax check: `node --check src/client/webGame.js`
+  - Full test suite: `npm test` passing (`39/39`)
+  - Browser validation used the Playwright skill on a local dev server at `http://127.0.0.1:4177`
+  - Visual artifact inspected: `.playwright-cli/page-2026-03-23T03-48-32-680Z.png`
+  - Browser console issue observed was only the expected missing `favicon.ico` 404 from the static dev server
+  - Note: Playwright session startup/interaction overhead let live matches advance farther than ideal before capture, so the inspected artifact is a useful late-battle sanity check rather than a perfect per-unit showcase
+
+- Clash Royale arena rebuild pass (March 23, 2026, follow-up):
+  - Replaced the single-tower arena with a six-tower layout in `src/client/webGame.js` and sim state: two crown towers plus one king tower per side.
+  - Switched the browser client to a Royale-specific arena definition with tile-snapped placement, a real river/bridge pathability model, and bridge-routed troop movement.
+  - Added king-tower metadata/behavior in sim (`src/sim/entities.js`, `src/sim/combat.js`, `src/sim/match.js`, `src/sim/engine.js`):
+    - `tower_role` (`crown` / `king`)
+    - dormant king towers that activate when hit or when a friendly crown tower falls
+    - 3-crown scoring when a king tower is destroyed
+  - Updated AI placement generation in `src/ai/ladderRuntime.js` so troop drop candidates and spell targets stay coherent with the tiled arena.
+  - Rebuilt the in-canvas layout to give the arena more room, compress the battle chrome, and add a left-docked next-card preview chip beside the four-card hand.
+  - Restyled the battlefield rendering to show subtle tile seams, six tower pads, and bridge-only crossings; `render_game_to_text` now includes next-card and tower-role/activation details.
+  - Added regression coverage in `tests/royale-arena.test.js` for:
+    - tile-snapped placement
+    - bridge-only crossing
+    - king activation after damage
+    - 1-crown vs 3-crown score behavior
+- Validation for the arena rebuild:
+  - Syntax checks: `node --check src/client/webGame.js`, `node --check src/sim/engine.js`, `node --check src/sim/combat.js`, `node --check src/sim/map.js`
+  - Full suite passing: `npm test` (`43/43`)
+  - Browser validation on local server `http://127.0.0.1:4178` produced `output/playwright/royale-rebuild/shot-0.png` and `state-0.json`
+  - Visual inspection of `shot-0.png` confirms:
+    - next-card preview is visible on the left of the hand
+    - six towers are rendered in Royale-style formation
+    - arena occupies substantially more of the canvas
+    - visible enemy units are approaching/crossing via the bridge lane rather than walking on open water
+  - Text-state inspection of `state-0.json` confirms:
+    - separate `blue_next_card`
+    - crown/king tower roles for all six towers
+    - dormant king towers still inactive until triggered
+  - Browser automation note:
+    - the Playwright game client produced the first validation artifact reliably, but subsequent repeated iterations stalled in this environment, so the captured artifact above is the clean validation record for this pass

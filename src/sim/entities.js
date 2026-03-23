@@ -47,11 +47,20 @@ const TROOP_STATS = Object.freeze({
 });
 
 const TOWER_STATS = Object.freeze({
-  move_speed: 0,
-  attack_damage: 120,
-  attack_range: 6.2,
-  hit_speed_seconds: 1.0,
-  targeting_mode: "troops",
+  crown: Object.freeze({
+    move_speed: 0,
+    attack_damage: 120,
+    attack_range: 6.2,
+    hit_speed_seconds: 1.0,
+    targeting_mode: "troops",
+  }),
+  king: Object.freeze({
+    move_speed: 0,
+    attack_damage: 140,
+    attack_range: 6.5,
+    hit_speed_seconds: 0.95,
+    targeting_mode: "troops",
+  }),
 });
 
 function toCooldownTicks(seconds) {
@@ -88,23 +97,26 @@ export function createTroop({ id, cardId, team, x, y, hp }) {
   };
 }
 
-export function createTower({ id, team, x, y, hp }) {
+export function createTower({ id, team, x, y, hp, tower_role = "crown", is_active = true }) {
+  const stats = TOWER_STATS[tower_role] ?? TOWER_STATS.crown;
   return {
     id,
     cardId: "tower",
     team,
     entity_type: "tower",
+    tower_role,
+    is_active,
     x,
     y,
     hp,
     maxHp: hp,
-    radius: 0.75,
-    move_speed: TOWER_STATS.move_speed,
-    attack_damage: TOWER_STATS.attack_damage,
-    attack_range: TOWER_STATS.attack_range,
-    attack_cooldown_ticks: toCooldownTicks(TOWER_STATS.hit_speed_seconds),
+    radius: tower_role === "king" ? 0.95 : 0.75,
+    move_speed: stats.move_speed,
+    attack_damage: stats.attack_damage,
+    attack_range: stats.attack_range,
+    attack_cooldown_ticks: toCooldownTicks(stats.hit_speed_seconds),
     attack_cooldown_ticks_remaining: 0,
-    targeting_mode: TOWER_STATS.targeting_mode,
+    targeting_mode: stats.targeting_mode,
     target_entity_id: null,
     velocity: { x: 0, y: 0 },
     forced_motion_vector: { x: 0, y: 0 },

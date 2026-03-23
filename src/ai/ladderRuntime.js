@@ -1,5 +1,6 @@
 import { ARROWS_CONFIG, FIREBALL_CONFIG, getMatchPhase } from "../sim/config.js";
 import { getCard } from "../sim/cards.js";
+import { snapPositionToGrid } from "../sim/map.js";
 import { selectCardFromModel } from "./training.js";
 
 const BOT_TIER_CONFIG = Object.freeze({
@@ -177,24 +178,24 @@ function isOnOwnSide(actor, y, arena) {
 }
 
 function buildTroopPlacements(arena, actor) {
-  const centerX = (arena.minX + arena.maxX) / 2;
-  const width = arena.maxX - arena.minX;
   const midY = getMidY(arena);
-
-  const leftX = clamp(centerX - width * 0.18, arena.minX, arena.maxX);
-  const rightX = clamp(centerX + width * 0.18, arena.minX, arena.maxX);
-
-  const frontY = actor === "blue" ? clamp(midY + 1.2, arena.minY, arena.maxY) : clamp(midY - 1.2, arena.minY, arena.maxY);
-  const backY = actor === "blue" ? clamp(arena.maxY - 4.0, arena.minY, arena.maxY) : clamp(arena.minY + 4.0, arena.minY, arena.maxY);
-
-  return [
-    { x: leftX, y: frontY },
+  const frontY = actor === "blue" ? midY + 2.5 : midY - 2.5;
+  const backY = actor === "blue" ? arena.maxY - 5.5 : arena.minY + 5.5;
+  const laneXs = arena.bridges?.length ? arena.bridges.map((bridge) => bridge.x) : [5, 9, 13];
+  const centerX = (arena.minX + arena.maxX) / 2;
+  const positions = [
+    { x: laneXs[0] ?? centerX - 4, y: frontY },
     { x: centerX, y: frontY },
-    { x: rightX, y: frontY },
-    { x: leftX, y: backY },
+    { x: laneXs[1] ?? centerX + 4, y: frontY },
+    { x: laneXs[0] ?? centerX - 4, y: backY },
     { x: centerX, y: backY },
-    { x: rightX, y: backY },
-  ].map((position) => ({ x: roundPlacement(position.x), y: roundPlacement(position.y) }));
+    { x: laneXs[1] ?? centerX + 4, y: backY },
+  ];
+
+  return positions.map((position) => {
+    const snapped = snapPositionToGrid(position, arena);
+    return { x: roundPlacement(snapped.x), y: roundPlacement(snapped.y) };
+  });
 }
 
 function buildSpellTargets(state, actor) {
@@ -235,8 +236,15 @@ function buildSpellTargets(state, actor) {
   const deduped = new Set();
   const result = [];
   for (const position of targetPositions) {
-    const x = roundPlacement(clamp(position.x, state.arena.minX, state.arena.maxX));
-    const y = roundPlacement(clamp(position.y, state.arena.minY, state.arena.maxY));
+    const snapped = snapPositionToGrid(
+      {
+        x: clamp(position.x, state.arena.minX, state.arena.maxX),
+        y: clamp(position.y, state.arena.minY, state.arena.maxY),
+      },
+      state.arena,
+    );
+    const x = roundPlacement(snapped.x);
+    const y = roundPlacement(snapped.y);
     const key = `${x.toFixed(2)}|${y.toFixed(2)}`;
     if (deduped.has(key)) {
       continue;
