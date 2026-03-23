@@ -81,7 +81,7 @@ Values are intentionally approximate and should be tuned with simulation data.
 
 - Type: Ground swarm.
 - Cost: 2 elixir.
-- Count: 3.
+- Count: 4.
 - HP each: 220.
 - Damage each: 95.
 - Hit speed: 1.0s.

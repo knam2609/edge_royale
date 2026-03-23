@@ -893,6 +893,273 @@ function drawCrownIcon(x, y, size, color, alpha = 1) {
   ctx.restore();
 }
 
+function drawOutlinedText(
+  text,
+  x,
+  y,
+  {
+    font = "12px Trebuchet MS",
+    fillStyle = "#ffffff",
+    strokeStyle = "rgba(11,16,29,0.9)",
+    lineWidth = 3,
+    textAlign = "center",
+  } = {},
+) {
+  ctx.save();
+  ctx.font = font;
+  ctx.textAlign = textAlign;
+  ctx.lineJoin = "round";
+  ctx.strokeStyle = strokeStyle;
+  ctx.lineWidth = lineWidth;
+  ctx.strokeText(text, x, y);
+  ctx.fillStyle = fillStyle;
+  ctx.fillText(text, x, y);
+  ctx.restore();
+}
+
+function drawCardCostBadge(centerX, centerY, radius, cost, alpha = 1) {
+  const gradient = ctx.createLinearGradient(centerX, centerY - radius, centerX, centerY + radius);
+  gradient.addColorStop(0, "#f56dff");
+  gradient.addColorStop(1, "#9d22c9");
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.beginPath();
+  ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+  ctx.fillStyle = gradient;
+  ctx.fill();
+  ctx.strokeStyle = "#4f0f67";
+  ctx.lineWidth = Math.max(1.2, radius * 0.18);
+  ctx.stroke();
+  drawOutlinedText(String(cost), centerX, centerY + radius * 0.3, {
+    font: `${Math.max(10, radius * 1.04)}px Trebuchet MS`,
+    fillStyle: "#ffffff",
+    strokeStyle: "rgba(67,13,83,0.95)",
+    lineWidth: Math.max(1.6, radius * 0.2),
+  });
+  ctx.restore();
+}
+
+function drawCardPortrait(cardId, rect, { affordable = true, alpha = 1 } = {}) {
+  if (!cardId) {
+    return;
+  }
+
+  const accent = getCardAccent(cardId);
+  const radius = Math.min(rect.width, rect.height) * 0.18;
+  const centerX = rect.x + rect.width * 0.5;
+  const centerY = rect.y + rect.height * 0.6;
+  const unit = Math.min(rect.width, rect.height) * 0.16;
+  const background = ctx.createLinearGradient(rect.x, rect.y, rect.x, rect.y + rect.height);
+  background.addColorStop(0, "rgba(255,255,255,0.92)");
+  background.addColorStop(1, "rgba(185,203,232,0.9)");
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  pathRoundedRect(rect.x, rect.y, rect.width, rect.height, radius);
+  ctx.clip();
+  ctx.fillStyle = background;
+  ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
+
+  const glow = ctx.createRadialGradient(centerX, centerY - unit * 0.4, unit * 0.3, centerX, centerY, unit * 3);
+  glow.addColorStop(0, `${accent}dd`);
+  glow.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = glow;
+  ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
+
+  ctx.fillStyle = "rgba(255,255,255,0.32)";
+  ctx.beginPath();
+  ctx.ellipse(centerX - unit * 1.4, rect.y + unit * 0.8, unit * 1.8, unit * 0.9, -0.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.translate(centerX, centerY);
+
+  if (cardId === "giant") {
+    ctx.fillStyle = "#8c5a34";
+    ctx.beginPath();
+    ctx.ellipse(0, unit * 0.6, unit * 1.9, unit * 1.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#efc49d";
+    ctx.beginPath();
+    ctx.arc(0, -unit * 0.25, unit * 1.05, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#a05a2c";
+    ctx.beginPath();
+    ctx.moveTo(-unit * 1.05, unit * 0.05);
+    ctx.lineTo(0, unit * 1.35);
+    ctx.lineTo(unit * 1.05, unit * 0.05);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = "#4f2d1a";
+    ctx.lineWidth = Math.max(1.5, unit * 0.12);
+    ctx.beginPath();
+    ctx.moveTo(-unit * 0.55, -unit * 0.45);
+    ctx.lineTo(-unit * 0.1, -unit * 0.55);
+    ctx.moveTo(unit * 0.55, -unit * 0.45);
+    ctx.lineTo(unit * 0.1, -unit * 0.55);
+    ctx.stroke();
+  } else if (cardId === "knight") {
+    ctx.fillStyle = "#6e8fb5";
+    ctx.beginPath();
+    ctx.ellipse(0, unit * 0.72, unit * 1.6, unit * 1.3, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#dfe8f2";
+    ctx.beginPath();
+    ctx.arc(0, -unit * 0.15, unit * 1.08, Math.PI, 0);
+    ctx.lineTo(unit * 1.02, unit * 0.54);
+    ctx.lineTo(-unit * 1.02, unit * 0.54);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "#29405f";
+    ctx.fillRect(-unit * 0.36, unit * 0.05, unit * 0.72, unit * 0.22);
+    ctx.fillStyle = "#f1cf6d";
+    ctx.beginPath();
+    ctx.moveTo(0, -unit * 1.25);
+    ctx.lineTo(unit * 0.2, -unit * 0.68);
+    ctx.lineTo(-unit * 0.2, -unit * 0.68);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = "#dfe8f2";
+    ctx.lineWidth = Math.max(1.8, unit * 0.14);
+    ctx.beginPath();
+    ctx.moveTo(unit * 0.9, -unit * 0.15);
+    ctx.lineTo(unit * 1.55, -unit * 0.95);
+    ctx.stroke();
+  } else if (cardId === "archers") {
+    for (const offsetX of [-unit * 0.7, unit * 0.7]) {
+      ctx.fillStyle = "#78b05c";
+      ctx.beginPath();
+      ctx.ellipse(offsetX, unit * 0.62, unit * 0.92, unit * 1.08, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#f2d3b4";
+      ctx.beginPath();
+      ctx.arc(offsetX, -unit * 0.05, unit * 0.58, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#dd8aa9";
+      ctx.beginPath();
+      ctx.arc(offsetX - unit * 0.28, -unit * 0.1, unit * 0.2, 0, Math.PI * 2);
+      ctx.arc(offsetX + unit * 0.28, -unit * 0.1, unit * 0.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.strokeStyle = "#8b5f32";
+    ctx.lineWidth = Math.max(1.5, unit * 0.12);
+    ctx.beginPath();
+    ctx.arc(-unit * 0.15, unit * 0.05, unit * 1.05, Math.PI * 1.14, Math.PI * 1.9);
+    ctx.stroke();
+    drawArrowGlyph(unit * 0.72, -unit * 0.12, 0, unit * 1.4, "#fff1bf", 1);
+  } else if (cardId === "mini_pekka") {
+    ctx.fillStyle = "#72c8df";
+    ctx.beginPath();
+    ctx.ellipse(0, unit * 0.62, unit * 1.65, unit * 1.3, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#dce9ef";
+    ctx.beginPath();
+    ctx.arc(0, -unit * 0.1, unit * 1.02, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#1d5b74";
+    ctx.fillRect(-unit * 0.55, -unit * 0.18, unit * 1.1, unit * 0.22);
+    ctx.beginPath();
+    ctx.moveTo(-unit * 0.7, -unit * 1.05);
+    ctx.lineTo(-unit * 0.18, -unit * 1.48);
+    ctx.lineTo(0, -unit * 0.88);
+    ctx.closePath();
+    ctx.moveTo(unit * 0.7, -unit * 1.05);
+    ctx.lineTo(unit * 0.18, -unit * 1.48);
+    ctx.lineTo(0, -unit * 0.88);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = "#f4f8fb";
+    ctx.lineWidth = Math.max(2.2, unit * 0.16);
+    ctx.beginPath();
+    ctx.moveTo(unit * 0.86, unit * 0.12);
+    ctx.lineTo(unit * 1.6, -unit * 1.1);
+    ctx.stroke();
+  } else if (cardId === "musketeer") {
+    ctx.fillStyle = "#597cb7";
+    ctx.beginPath();
+    ctx.ellipse(0, unit * 0.72, unit * 1.65, unit * 1.25, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#f2d4bc";
+    ctx.beginPath();
+    ctx.arc(0, -unit * 0.08, unit * 0.8, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#29405f";
+    ctx.beginPath();
+    ctx.ellipse(0, -unit * 0.78, unit * 1.42, unit * 0.42, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillRect(-unit * 0.95, -unit * 0.82, unit * 1.9, unit * 0.26);
+    ctx.fillStyle = "#f5d37b";
+    ctx.fillRect(-unit * 0.25, -unit * 1.48, unit * 0.5, unit * 0.72);
+    ctx.strokeStyle = "#d8c3a2";
+    ctx.lineWidth = Math.max(2.2, unit * 0.16);
+    ctx.beginPath();
+    ctx.moveTo(unit * 0.45, unit * 0.12);
+    ctx.lineTo(unit * 1.95, -unit * 0.22);
+    ctx.stroke();
+  } else if (cardId === "goblins") {
+    for (const { x, y } of [
+      { x: -unit * 0.95, y: unit * 0.08 },
+      { x: unit * 0.95, y: unit * 0.08 },
+      { x: -unit * 0.5, y: unit * 0.92 },
+      { x: unit * 0.5, y: unit * 0.92 },
+    ]) {
+      ctx.fillStyle = "#7ad85f";
+      ctx.beginPath();
+      ctx.arc(x, y, unit * 0.52, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#376225";
+      ctx.beginPath();
+      ctx.moveTo(x - unit * 0.56, y - unit * 0.12);
+      ctx.lineTo(x - unit * 1.02, y - unit * 0.38);
+      ctx.lineTo(x - unit * 0.72, y + unit * 0.06);
+      ctx.closePath();
+      ctx.moveTo(x + unit * 0.56, y - unit * 0.12);
+      ctx.lineTo(x + unit * 1.02, y - unit * 0.38);
+      ctx.lineTo(x + unit * 0.72, y + unit * 0.06);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.strokeStyle = "#f2ede4";
+    ctx.lineWidth = Math.max(1.6, unit * 0.12);
+    ctx.beginPath();
+    ctx.moveTo(unit * 1.1, unit * 0.22);
+    ctx.lineTo(unit * 1.45, -unit * 0.75);
+    ctx.stroke();
+  } else if (cardId === "arrows") {
+    ctx.strokeStyle = "#c6982f";
+    ctx.lineWidth = Math.max(1.8, unit * 0.14);
+    ctx.beginPath();
+    ctx.arc(0, unit * 0.18, unit * 1.45, 0, Math.PI * 2);
+    ctx.stroke();
+    for (const [index, angle] of [-0.35, 0, 0.35].entries()) {
+      drawArrowGlyph(-unit * 0.75 + index * unit * 0.72, unit * 0.05, -Math.PI * 0.25 + angle * 0.1, unit * 1.55, "#ffefb4", 1);
+    }
+  } else if (cardId === "fireball") {
+    const flame = ctx.createRadialGradient(0, 0, unit * 0.12, 0, 0, unit * 1.75);
+    flame.addColorStop(0, "#fff2d2");
+    flame.addColorStop(0.45, "#ff9c4f");
+    flame.addColorStop(1, "#d6521f");
+    ctx.beginPath();
+    ctx.arc(0, 0, unit * 1.28, 0, Math.PI * 2);
+    ctx.fillStyle = flame;
+    ctx.fill();
+    ctx.fillStyle = "rgba(255,134,70,0.76)";
+    ctx.beginPath();
+    ctx.moveTo(-unit * 1.7, unit * 0.45);
+    ctx.lineTo(-unit * 0.5, -unit * 0.22);
+    ctx.lineTo(-unit * 0.25, unit * 1.02);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  if (!affordable) {
+    ctx.fillStyle = "rgba(10,14,27,0.34)";
+    ctx.fillRect(rect.x - centerX, rect.y - centerY, rect.width, rect.height);
+  }
+
+  ctx.restore();
+}
+
 function formatBattleClock(seconds) {
   const clamped = Math.max(0, Math.ceil(seconds));
   const minutes = Math.floor(clamped / 60);
@@ -948,10 +1215,10 @@ function getTroopScale(cardId) {
     return 12 * layoutScale;
   }
   if (cardId === "archers") {
-    return 10.5 * layoutScale;
+    return 11.4 * layoutScale;
   }
   if (cardId === "goblins") {
-    return 9.5 * layoutScale;
+    return 10.5 * layoutScale;
   }
   return 11 * layoutScale;
 }
@@ -1000,11 +1267,11 @@ function getTroopPalette(entity) {
     return {
       teamStroke,
       teamFill,
-      body: "#78b05c",
-      accent: "#ddf0b6",
+      body: "#5f9a4f",
+      accent: "#d884a7",
       skin: "#f2d3b4",
       weapon: "#8b5f32",
-      trim: "#45642e",
+      trim: "#385124",
     };
   }
 
@@ -1023,10 +1290,10 @@ function getTroopPalette(entity) {
   return {
     teamStroke,
     teamFill,
-    body: "#6ec857",
-    accent: "#def5ba",
-    skin: "#8fe16f",
-    weapon: "#f2ede4",
+    body: "#4ea93b",
+    accent: "#dff6b2",
+    skin: "#98ee70",
+    weapon: "#fff7df",
     trim: "#376225",
   };
 }
@@ -1043,6 +1310,7 @@ function drawHealthBar(entity, screen, width) {
 function drawTowerHealthBar(entity, screen) {
   const layoutScale = getLayoutScale();
   const hpRatio = clamp01(entity.hp / entity.maxHp);
+  const teamPalette = getTeamPalette(entity.team);
   const width = (entity.tower_role === "king" ? 58 : 46) * layoutScale;
   const barX = screen.x - width * 0.5;
   const height = Math.max(4, 6 * layoutScale);
@@ -1051,6 +1319,12 @@ function drawTowerHealthBar(entity, screen) {
   fillRoundedRect(barX, barY, width, height, radius, "rgba(14,19,33,0.46)");
   fillRoundedRect(barX, barY, width * hpRatio, height, radius, "#7ff29d");
   strokeRoundedRect(barX, barY, width, height, radius, "rgba(255,255,255,0.38)");
+  drawOutlinedText(String(Math.max(0, Math.ceil(entity.hp))), screen.x, barY - 4 * layoutScale, {
+    font: `${Math.max(9, 11 * layoutScale)}px Trebuchet MS`,
+    fillStyle: teamPalette.text,
+    strokeStyle: "rgba(10,15,27,0.96)",
+    lineWidth: Math.max(2, 2.6 * layoutScale),
+  });
 }
 
 function drawArcTrail(centerX, centerY, radius, fromAngle, toAngle, color, alpha = 1, lineWidth = 3) {
@@ -1673,6 +1947,22 @@ function drawTroop(entity, entityLookup) {
     ctx.arc(-scale * 0.46, 0, scale * 0.2, 0, Math.PI * 2);
     ctx.fillStyle = palette.accent;
     ctx.fill();
+    ctx.fillStyle = palette.weapon;
+    ctx.beginPath();
+    ctx.arc(0, -scale * 0.72, scale * 0.42, Math.PI, 0);
+    ctx.lineTo(scale * 0.42, -scale * 0.18);
+    ctx.lineTo(-scale * 0.42, -scale * 0.18);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = palette.trim;
+    ctx.fillRect(-scale * 0.2, -scale * 0.54, scale * 0.4, scale * 0.12);
+    ctx.fillStyle = palette.accent;
+    ctx.beginPath();
+    ctx.moveTo(0, -scale * 1.14);
+    ctx.lineTo(scale * 0.16, -scale * 0.86);
+    ctx.lineTo(-scale * 0.16, -scale * 0.86);
+    ctx.closePath();
+    ctx.fill();
   } else if (entity.cardId === "mini_pekka") {
     const handleX = scale * 0.34;
     const handleY = -scale * 0.08;
@@ -1702,6 +1992,18 @@ function drawTroop(entity, entityLookup) {
     ctx.fill();
   } else if (entity.cardId === "archers") {
     const handPull = reach * scale * 0.34;
+    ctx.fillStyle = palette.accent;
+    ctx.beginPath();
+    ctx.arc(-scale * 0.28, -scale * 0.7, scale * 0.14, 0, Math.PI * 2);
+    ctx.arc(scale * 0.28, -scale * 0.7, scale * 0.14, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = palette.body;
+    ctx.beginPath();
+    ctx.moveTo(-scale * 0.42, -scale * 0.98);
+    ctx.lineTo(0, -scale * 1.24);
+    ctx.lineTo(scale * 0.42, -scale * 0.98);
+    ctx.closePath();
+    ctx.fill();
     ctx.strokeStyle = palette.weapon;
     ctx.lineWidth = 3;
     ctx.beginPath();
@@ -1719,9 +2021,23 @@ function drawTroop(entity, entityLookup) {
     ctx.stroke();
     ctx.fillStyle = palette.accent;
     ctx.fillRect(-scale * 0.42, -scale * 0.96, scale * 0.84, scale * 0.18);
+    ctx.fillStyle = palette.trim;
+    ctx.fillRect(scale * 0.3, -scale * 0.2, scale * 0.12, scale * 0.56);
   } else if (entity.cardId === "musketeer") {
     const recoil = reach * scale * 0.22;
     ctx.translate(0, recoil);
+    ctx.fillStyle = palette.trim;
+    ctx.beginPath();
+    ctx.ellipse(0, -scale * 0.96, scale * 0.62, scale * 0.16, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillRect(-scale * 0.42, -scale * 1.06, scale * 0.84, scale * 0.18);
+    ctx.fillStyle = palette.accent;
+    ctx.beginPath();
+    ctx.moveTo(scale * 0.14, -scale * 1.18);
+    ctx.lineTo(scale * 0.54, -scale * 1.34);
+    ctx.lineTo(scale * 0.28, -scale * 0.92);
+    ctx.closePath();
+    ctx.fill();
     ctx.strokeStyle = palette.weapon;
     ctx.lineWidth = 5;
     ctx.lineCap = "round";
@@ -1733,6 +2049,17 @@ function drawTroop(entity, entityLookup) {
     ctx.fillRect(-scale * 0.54, -scale * 1.04, scale * 1.08, scale * 0.2);
   } else if (entity.cardId === "goblins") {
     const knifeY = -scale * (0.2 + reach * 0.92);
+    ctx.fillStyle = palette.trim;
+    ctx.beginPath();
+    ctx.moveTo(-scale * 0.44, -scale * 0.74);
+    ctx.lineTo(-scale * 0.82, -scale * 0.9);
+    ctx.lineTo(-scale * 0.52, -scale * 0.48);
+    ctx.closePath();
+    ctx.moveTo(scale * 0.44, -scale * 0.74);
+    ctx.lineTo(scale * 0.82, -scale * 0.9);
+    ctx.lineTo(scale * 0.52, -scale * 0.48);
+    ctx.closePath();
+    ctx.fill();
     ctx.strokeStyle = palette.weapon;
     ctx.lineWidth = 3;
     ctx.lineCap = "round";
@@ -1749,6 +2076,10 @@ function drawTroop(entity, entityLookup) {
     ctx.arc(scale * 0.18, -scale * 0.88, scale * 0.11, 0, Math.PI * 2);
     ctx.fillStyle = palette.trim;
     ctx.fill();
+    ctx.fillStyle = palette.weapon;
+    ctx.beginPath();
+    ctx.arc(0, -scale * 0.58, scale * 0.09, 0, Math.PI * 2);
+    ctx.fill();
   }
 
   ctx.strokeStyle = palette.teamStroke;
@@ -1763,7 +2094,6 @@ function drawTroop(entity, entityLookup) {
 
 function drawTower(entity, entityLookup) {
   const screen = worldToScreen(entity);
-  const teamPalette = getTeamPalette(entity.team);
   const target = entityLookup.get(entity.target_entity_id) ?? null;
   const angle = target ? Math.atan2(target.y - entity.y, target.x - entity.x) : (entity.team === "blue" ? -Math.PI * 0.5 : Math.PI * 0.5);
   const isKing = entity.tower_role === "king";
@@ -1787,17 +2117,6 @@ function drawTower(entity, entityLookup) {
 
   if (isKing) {
     drawCrownIcon(0, -towerHeight * 0.12, 10, "#f6dd84", entity.is_active === false ? 0.65 : 1);
-  } else {
-    ctx.fillStyle = "#ffffff";
-    ctx.font = "10px Avenir Next";
-    ctx.textAlign = "center";
-    ctx.fillText("CT", 0, 4);
-  }
-
-  if (isKing && entity.is_active === false) {
-    ctx.fillStyle = "rgba(255,255,255,0.8)";
-    ctx.font = "10px Avenir Next";
-    ctx.fillText("zzz", 0, 16);
   }
   ctx.restore();
 
@@ -1900,16 +2219,6 @@ function drawPlacementPreview() {
   ctx.fillText(`${cost} elixir`, ghostX + ghostWidth - 8, ghostY + Math.min(16, ghostHeight * 0.45));
 }
 
-function drawLevelBadge(rect, text) {
-  const radius = Math.max(8, rect.width * 0.24);
-  fillRoundedRect(rect.x, rect.y, rect.width, rect.height, radius, "#efc553");
-  strokeRoundedRect(rect.x, rect.y, rect.width, rect.height, radius, "#6d4b14", Math.max(1.6, rect.width * 0.08));
-  ctx.textAlign = "center";
-  ctx.fillStyle = "#2e1f06";
-  ctx.font = `${Math.max(13, rect.height * 0.56)}px Trebuchet MS`;
-  ctx.fillText(text, rect.x + rect.width * 0.5, rect.y + rect.height * 0.7);
-}
-
 function drawCrownRail(score, layout) {
   const rail = layout.crownRail;
   const radius = Math.max(16, 18 * layout.scale);
@@ -1994,7 +2303,7 @@ function drawElixirMeter(layout) {
 
 function drawHand() {
   const layout = getBattleLayout();
-  const { bottomTray, closeButton, isCompact, nextCardRect, statusRect } = getUiLayout();
+  const { bottomTray, closeButton, nextCardRect, statusRect } = getUiLayout();
   const hand = appState.engine.getHand("blue");
   const deckQueue = appState.engine.getDeckQueue("blue");
   const slots = getHandSlotRects();
@@ -2030,13 +2339,22 @@ function drawHand() {
   fillRoundedRect(nextCardRect.x, nextCardRect.y, nextCardRect.width, nextCardRect.height, 12 * layout.scale, "rgba(19,27,55,0.88)");
   strokeRoundedRect(nextCardRect.x, nextCardRect.y, nextCardRect.width, nextCardRect.height, 12 * layout.scale, "rgba(255,255,255,0.24)", Math.max(1.3, 1.7 * layout.scale));
   if (nextCard) {
-    ctx.fillStyle = "#ffffff";
-    ctx.textAlign = "center";
-    ctx.font = `${Math.max(15, handSizing.titleFont + 5)}px Trebuchet MS`;
-    ctx.fillText(getCardMonogram(nextCardId), nextCardRect.x + nextCardRect.width * 0.5, nextCardRect.y + nextCardRect.height * 0.55);
-    ctx.font = `${Math.max(11, handSizing.auxFont + 1)}px Trebuchet MS`;
-    ctx.fillStyle = "#ff6ef1";
-    ctx.fillText(String(nextCard.cost), nextCardRect.x + nextCardRect.width * 0.5, nextCardRect.y + nextCardRect.height - 8 * layout.scale);
+    drawCardPortrait(
+      nextCardId,
+      {
+        x: nextCardRect.x + 5 * layout.scale,
+        y: nextCardRect.y + 6 * layout.scale,
+        width: nextCardRect.width - 10 * layout.scale,
+        height: nextCardRect.height - 12 * layout.scale,
+      },
+      { affordable: true },
+    );
+    drawCardCostBadge(
+      nextCardRect.x + 15 * layout.scale,
+      nextCardRect.y + 16 * layout.scale,
+      Math.max(9, 10.5 * layout.scale),
+      nextCard.cost,
+    );
   }
 
   for (const slot of slots) {
@@ -2047,18 +2365,24 @@ function drawHand() {
     const isDraggingCard = appState.dragState?.isDragging && dragIndex === slot.index;
     const accent = getCardAccent(cardId);
     const lift = isSelected ? 10 * layout.scale : 0;
+    const portraitRect = {
+      x: slot.x + 8 * layout.scale,
+      y: slot.y + 16 * layout.scale - lift,
+      width: slot.width - 16 * layout.scale,
+      height: slot.height - 28 * layout.scale,
+    };
 
     ctx.save();
     ctx.globalAlpha = isDraggingCard ? 0.45 : 1;
     fillRoundedRect(slot.x, slot.y - lift, slot.width, slot.height, 14 * layout.scale, isSelected ? "rgba(255,255,255,0.24)" : "rgba(12,19,44,0.78)");
     fillRoundedRect(slot.x, slot.y - lift, slot.width, Math.max(8, 10 * layout.scale), 14 * layout.scale, accent, affordable ? 1 : 0.55);
     fillRoundedRect(
-      slot.x + 4 * layout.scale,
-      slot.y + 10 * layout.scale - lift,
-      slot.width - 8 * layout.scale,
-      slot.height - 32 * layout.scale,
+      portraitRect.x,
+      portraitRect.y,
+      portraitRect.width,
+      portraitRect.height,
       12 * layout.scale,
-      "rgba(255,255,255,0.12)",
+      "rgba(255,255,255,0.08)",
     );
     strokeRoundedRect(
       slot.x,
@@ -2075,29 +2399,17 @@ function drawHand() {
       continue;
     }
 
-    const title = fitTextToWidth(CARD_LABEL[cardId] ?? cardId, slot.width - 20);
-    const glyphY = slot.y - lift + slot.height * (isCompact ? 0.44 : 0.46);
-    ctx.fillStyle = affordable ? "#ffffff" : "#bcc8dc";
-    ctx.textAlign = "center";
-    ctx.font = `${Math.max(17, handSizing.titleFont + 8)}px Trebuchet MS`;
-    ctx.fillText(getCardMonogram(cardId), slot.x + slot.width * 0.5, glyphY);
-
-    ctx.font = `${handSizing.titleFont}px Trebuchet MS`;
-    ctx.fillText(title, slot.x + slot.width * 0.5, slot.y - lift + slot.height - 12 * layout.scale);
-
-    const costRadius = Math.max(12, 17 * layout.scale);
-    const costCenterX = slot.x + slot.width * 0.5;
-    const costCenterY = slot.y - lift + slot.height - 8 * layout.scale;
-    ctx.beginPath();
-    ctx.arc(costCenterX, costCenterY, costRadius, 0, Math.PI * 2);
-    ctx.fillStyle = "#d63bdf";
-    ctx.fill();
-    ctx.strokeStyle = "#5f1c68";
-    ctx.lineWidth = Math.max(1.2, 1.8 * layout.scale);
-    ctx.stroke();
-    ctx.fillStyle = "#ffffff";
-    ctx.font = `${Math.max(12, handSizing.titleFont)}px Trebuchet MS`;
-    ctx.fillText(String(card.cost), costCenterX, costCenterY + costRadius * 0.34);
+    drawCardPortrait(cardId, portraitRect, {
+      affordable,
+      alpha: isDraggingCard ? 0.45 : 1,
+    });
+    drawCardCostBadge(
+      slot.x + 18 * layout.scale,
+      slot.y + 19 * layout.scale - lift,
+      Math.max(11, 13 * layout.scale),
+      card.cost,
+      affordable ? 1 : 0.88,
+    );
   }
 
   ctx.textAlign = "left";
@@ -2156,8 +2468,6 @@ function drawHud() {
     ctx.fillText("3x ELIXIR", timerBox.x + timerBox.width * 0.5, timerBox.y + timerBox.height + 20 * layout.scale);
   }
 
-  drawLevelBadge(layout.topLevelBadge, "12");
-  drawLevelBadge(layout.bottomLevelBadge, "12");
   drawCrownRail(score, layout);
 }
 

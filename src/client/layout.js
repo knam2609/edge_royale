@@ -6,8 +6,6 @@ export const REFERENCE_SCREEN = Object.freeze({
 const REFERENCE_RECTS = Object.freeze({
   topBanner: Object.freeze({ x: 8, y: 8, width: 476, height: 82 }),
   timerBox: Object.freeze({ x: 618, y: 6, width: 126, height: 82 }),
-  topLevelBadge: Object.freeze({ x: 356, y: 24, width: 38, height: 58 }),
-  bottomLevelBadge: Object.freeze({ x: 356, y: 1018, width: 38, height: 58 }),
   arenaViewport: Object.freeze({ x: 0, y: 86, width: 750, height: 1006 }),
   crownRail: Object.freeze({ x: 690, y: 372, width: 60, height: 384 }),
   bottomTray: Object.freeze({ x: 126, y: 1088, width: 624, height: 246 }),
@@ -53,8 +51,6 @@ export function computePortraitBattleLayout(width, height) {
     frame,
     topBanner: scaleRect(frame, REFERENCE_RECTS.topBanner),
     timerBox: scaleRect(frame, REFERENCE_RECTS.timerBox),
-    topLevelBadge: scaleRect(frame, REFERENCE_RECTS.topLevelBadge),
-    bottomLevelBadge: scaleRect(frame, REFERENCE_RECTS.bottomLevelBadge),
     arenaViewport: scaleRect(frame, REFERENCE_RECTS.arenaViewport),
     crownRail: scaleRect(frame, REFERENCE_RECTS.crownRail),
     bottomTray: scaleRect(frame, REFERENCE_RECTS.bottomTray),
