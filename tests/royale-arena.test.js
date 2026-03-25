@@ -103,6 +103,7 @@ test("archers deploy as a visible pair around the snapped placement", () => {
 
   const archers = getEntitiesByIds(engine, deployEvent.entity_ids).sort((a, b) => a.x - b.x);
   assert.equal(archers.length, 2);
+  assert.deepEqual(archers.map((entity) => entity.bridge_x), [5, 13]);
   assert.ok(archers[0].x < deployEvent.x);
   assert.ok(archers[1].x > deployEvent.x);
   assert.ok(archers[1].x - archers[0].x > 0.55);
@@ -148,6 +149,7 @@ test("goblins deploy as four distinct units around the snapped placement", () =>
   const goblins = getEntitiesByIds(engine, deployEvent.entity_ids);
   assert.equal(goblins.length, 4);
   assert.equal(new Set(goblins.map((entity) => `${entity.x},${entity.y}`)).size, 4);
+  assert.deepEqual(goblins.map((entity) => entity.bridge_x).sort((a, b) => a - b), [5, 5, 13, 13]);
   const xs = goblins.map((entity) => entity.x).sort((a, b) => a - b);
   const ys = goblins.map((entity) => entity.y).sort((a, b) => a - b);
   assert.ok(xs[0] < deployEvent.x - 0.2);
@@ -155,6 +157,74 @@ test("goblins deploy as four distinct units around the snapped placement", () =>
   assert.ok(ys[1] < deployEvent.y);
   assert.ok(ys[2] > deployEvent.y);
   assertWithin(goblins.reduce((total, entity) => total + entity.x, 0) / goblins.length, deployEvent.x, 0.08, "goblin midpoint x");
+});
+
+test("off-center multi-unit deployments stay on one lane", () => {
+  const arena = createRoyaleArena({ minX: 0, maxX: 18, minY: 0, maxY: 32 });
+
+  const archersEngine = createEngine({
+    seed: 306,
+    arena,
+    fireballConfig: FIREBALL_CONFIG,
+    initialEntities: [],
+    initialCardState: makeCardState({
+      blueHand: ["archers", "giant", "arrows", "fireball"],
+      blueQueue: ["knight", "musketeer", "goblins", "mini_pekka"],
+    }),
+  });
+
+  archersEngine.step([
+    {
+      tick: 1,
+      type: "PLAY_CARD",
+      actor: "blue",
+      cardId: "archers",
+      x: 10.2,
+      y: 20.1,
+    },
+  ]);
+
+  while (archersEngine.state.tick < 21) {
+    archersEngine.step([]);
+  }
+
+  const archersDeploy = archersEngine.state.replay.events.find(
+    (event) => event.type === "troop_deployed" && event.card_id === "archers",
+  );
+  const archers = getEntitiesByIds(archersEngine, archersDeploy.entity_ids);
+  assert.deepEqual(archers.map((entity) => entity.bridge_x), [13, 13]);
+
+  const goblinsEngine = createEngine({
+    seed: 307,
+    arena,
+    fireballConfig: FIREBALL_CONFIG,
+    initialEntities: [],
+    initialCardState: makeCardState({
+      blueHand: ["goblins", "giant", "arrows", "fireball"],
+      blueQueue: ["knight", "musketeer", "archers", "mini_pekka"],
+    }),
+  });
+
+  goblinsEngine.step([
+    {
+      tick: 1,
+      type: "PLAY_CARD",
+      actor: "blue",
+      cardId: "goblins",
+      x: 7.2,
+      y: 20.1,
+    },
+  ]);
+
+  while (goblinsEngine.state.tick < 21) {
+    goblinsEngine.step([]);
+  }
+
+  const goblinsDeploy = goblinsEngine.state.replay.events.find(
+    (event) => event.type === "troop_deployed" && event.card_id === "goblins",
+  );
+  const goblins = getEntitiesByIds(goblinsEngine, goblinsDeploy.entity_ids);
+  assert.deepEqual(goblins.map((entity) => entity.bridge_x), [5, 5, 5, 5]);
 });
 
 test("troops cross the royale river only on bridge tiles", () => {

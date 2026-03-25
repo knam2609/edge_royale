@@ -43,6 +43,7 @@
 
 - Ground troops can only be dropped on own side of arena.
 - Spells can target valid map coordinates on either side.
+- Multi-unit troops dropped on the center-most deploy columns split lane commitment evenly across the left and right bridges.
 - A deployment request is invalid if:
   - Card not in current hand.
   - Insufficient elixir.
@@ -54,10 +55,12 @@
 - Units have:
   - Hit points.
   - Movement speed.
+  - Sight range.
   - Attack range.
   - Attack cooldown.
   - Damage per hit.
   - Targeting rules (ground-only or air+ground; MVP only uses ground targets).
+- Troops only acquire targets that are inside sight range; attack range still determines when attacks can fire.
 - Target selection priority:
   - Closest valid enemy by path distance.
   - If tie: lower HP first, then lower entity id.
