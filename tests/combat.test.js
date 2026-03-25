@@ -5,6 +5,7 @@ import { FIREBALL_CONFIG } from "../src/sim/config.js";
 import { createEngine } from "../src/sim/engine.js";
 import { createTroop, createTower } from "../src/sim/entities.js";
 import { createArena } from "../src/sim/map.js";
+import { getTowerStats } from "../src/sim/stats.js";
 
 test("troops advance toward enemy side when out of range", () => {
   const arena = createArena({ minX: 0, maxX: 18, minY: 0, maxY: 32 });
@@ -27,6 +28,26 @@ test("troops advance toward enemy side when out of range", () => {
   assert.ok(red.y > 6);
   assert.ok(Math.abs(blue.velocity.y) > 0);
   assert.ok(Math.abs(red.velocity.y) > 0);
+});
+
+test("towers use level-11 crown and king baseline combat stats by default", () => {
+  const crown = createTower({ id: "crown", team: "blue", x: 9, y: 29 });
+  const king = createTower({ id: "king", team: "blue", x: 9, y: 30, tower_role: "king", is_active: false });
+
+  const crownStats = getTowerStats("crown");
+  const kingStats = getTowerStats("king");
+
+  assert.equal(crown.hp, crownStats.hp);
+  assert.equal(crown.maxHp, crownStats.hp);
+  assert.equal(crown.attack_damage, crownStats.attack_damage);
+  assert.equal(crown.attack_range, crownStats.attack_range);
+  assert.equal(crown.attack_cooldown_ticks, 16);
+
+  assert.equal(king.hp, kingStats.hp);
+  assert.equal(king.maxHp, kingStats.hp);
+  assert.equal(king.attack_damage, kingStats.attack_damage);
+  assert.equal(king.attack_range, kingStats.attack_range);
+  assert.equal(king.attack_cooldown_ticks, 20);
 });
 
 test("tower auto-attacks enemy troops in range", () => {

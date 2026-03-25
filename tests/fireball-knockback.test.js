@@ -34,7 +34,8 @@ test("fireball knocks back troops except giant and does not move towers", () => 
     fireballConfig: {
       ...FIREBALL_CONFIG,
       radius_tiles: 2.5,
-      damage: 100,
+      troop_damage: 100,
+      tower_damage: 100,
     },
   });
 
@@ -86,7 +87,8 @@ test("fireball knockback displacement is clamped to map bounds and pathable spac
       sourceSpell: "fireball",
       fireballConfig: {
         ...FIREBALL_CONFIG,
-        damage: 1,
+        troop_damage: 1,
+        tower_damage: 1,
       },
     });
 

@@ -1,15 +1,16 @@
-# Edge Royale Game Rules (MVP v0.1)
+# Edge Royale Game Rules (Level 11 Tournament Baseline)
 
 ## 1) Match Format
 
 - Mode: 1v1, player vs bot.
 - Arena: single lane map with two king towers and two princess towers (one side per player).
+- Stat baseline: current level 11 tournament-standard values for the supported deck and towers.
 - Match duration: 180 seconds regulation.
 - Overtime: 120 seconds sudden death if tied.
 - Result priority:
   - Player/bot with more destroyed towers wins.
   - If still tied after overtime, higher total remaining tower HP wins.
-  - If still tied, draw (allowed for MVP).
+  - If still tied, draw.
 
 ## 2) Simulation Timing
 
@@ -37,7 +38,7 @@
   - Initial hand is first 4 cards of shuffled deck (random).
   - After playing one card, next deck card fills hand slot.
   - Played card cycles to back of deck queue.
-- Duplicate cards in hand are not possible in MVP.
+- Duplicate cards in hand are not possible.
 
 ## 5) Deployment Rules
 
@@ -59,7 +60,7 @@
   - Attack range.
   - Attack cooldown.
   - Damage per hit.
-  - Targeting rules (ground-only or air+ground; MVP only uses ground targets).
+  - Targeting rules.
 - Troops only acquire targets that are inside sight range; attack range still determines when attacks can fire.
 - Target selection priority:
   - Closest valid enemy by path distance.
@@ -74,7 +75,9 @@
 
 - Princess towers target nearest valid enemy in range.
 - King tower activation:
-  - Active at match start (MVP simplification).
+  - Starts dormant.
+  - Activates immediately once damaged or when a friendly crown tower falls.
+  - No warm-up delay is modeled in this simplified engine.
 - Tower destruction:
   - Destroyed tower is removed from targeting/attack system.
 - Win by crown:
@@ -85,7 +88,7 @@
 - Troops follow shortest lane path toward opposing towers.
 - Collision handling:
   - Soft separation to avoid exact overlap.
-  - No advanced body-block simulation in MVP.
+  - No advanced body-block simulation.
 - Repathing:
   - Recompute target path if target is destroyed.
 
@@ -93,23 +96,25 @@
 
 - Arrows:
   - Area-of-effect instant damage after cast delay.
-  - Damages all enemy units in radius.
+  - Damages all enemy troops and towers in radius.
+  - Uses explicit 366 troop damage and 93 tower damage.
 - Fireball:
   - Projectile with travel time.
-  - Area-of-effect damage + short knockback.
+  - Area-of-effect damage plus short knockback.
+  - Uses explicit 688 troop damage and 207 tower damage.
   - Knockback applies to troops only.
-  - Giant is immune to Fireball knockback (still takes Fireball damage).
+  - Giant is immune to Fireball knockback but still takes Fireball damage.
 
 ## 10) Determinism Contract
 
 - Inputs are timestamped actions: `tick`, `cardId`, `x`, `y`, `actor`.
-- Engine output hash must match for same seed + same input stream.
+- Engine output hash must match for same seed and same input stream.
 - All floating-point operations should be fixed-point or rounded consistently.
 
-## 11) Out-of-Scope for MVP
+## 11) Out-of-Scope Simplifications
 
 - Online multiplayer.
 - Multiple arenas.
 - Additional cards/decks.
 - Emotes/clans/economy systems.
-- Full Clash Royale parity (this is inspiration, not clone parity).
+- Full Clash Royale parity such as air interactions, Arrows multi-wave timing, and real king-tower wake-up delay.

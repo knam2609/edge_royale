@@ -1,3 +1,5 @@
+import { getSpellStats } from "./stats.js";
+
 export const TICK_RATE = 20;
 
 export const ELIXIR_REGEN_TICKS = Object.freeze({
@@ -17,23 +19,28 @@ export const MATCH_CONFIG = Object.freeze({
   overtime_ticks: 120 * TICK_RATE,
 });
 
-export const FIREBALL_CONFIG = Object.freeze({
-  cost: 4,
-  radius_tiles: 2.5,
-  damage: 520,
-  cast_delay_ticks: 6,
-  travel_speed_tiles_per_second: 10,
-  knockback_distance_tiles: 0.75,
-  knockback_duration_ticks: 5,
-  knockback_immune_card_ids: Object.freeze(["giant"]),
-});
+function createSpellConfig(cardId) {
+  const spell = getSpellStats(cardId);
+  if (!spell) {
+    return Object.freeze({});
+  }
 
-export const ARROWS_CONFIG = Object.freeze({
-  cost: 3,
-  radius_tiles: 3.0,
-  damage: 350,
-  cast_delay_ticks: 16,
-});
+  return Object.freeze({
+    cost: spell.cost,
+    radius_tiles: spell.radius_tiles,
+    troop_damage: spell.troop_damage,
+    tower_damage: spell.tower_damage,
+    cast_delay_ticks: spell.cast_delay_ticks,
+    travel_speed_tiles_per_second: spell.travel_speed_tiles_per_second,
+    knockback_distance_tiles: spell.knockback_distance_tiles,
+    knockback_duration_ticks: spell.knockback_duration_ticks,
+    knockback_immune_card_ids: spell.knockback_immune_card_ids,
+  });
+}
+
+export const FIREBALL_CONFIG = createSpellConfig("fireball");
+
+export const ARROWS_CONFIG = createSpellConfig("arrows");
 
 export function getMatchPhase({ tick, isOvertime }) {
   if (isOvertime) {

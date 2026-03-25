@@ -5,6 +5,7 @@ import { ARROWS_CONFIG, FIREBALL_CONFIG } from "../src/sim/config.js";
 import { createEngine } from "../src/sim/engine.js";
 import { createTower, createTroop } from "../src/sim/entities.js";
 import { createArena } from "../src/sim/map.js";
+import { getTowerStats, getTroopStats } from "../src/sim/stats.js";
 
 function makeCardState({ blueHand, blueQueue }) {
   const redHand = ["giant", "knight", "archers", "mini_pekka"];
@@ -82,9 +83,12 @@ test("troop PLAY_CARD resolves only after deploy delay", () => {
   assert.equal(cardPlayed.effect_id, troopDeployed.effect_id);
 });
 
-test("arrows PLAY_CARD applies damage only after cast delay", () => {
+test("arrows PLAY_CARD applies troop and tower damage only after cast delay", () => {
   const arena = createArena({ minX: 0, maxX: 10, minY: 0, maxY: 10 });
-  const enemy = createTroop({ id: "enemy", cardId: "knight", team: "red", x: 5, y: 5, hp: 1400 });
+  const knightStats = getTroopStats("knight");
+  const crownStats = getTowerStats("crown");
+  const enemy = createTroop({ id: "enemy", cardId: "knight", team: "red", x: 5, y: 5, hp: knightStats.hp });
+  const enemyTower = createTower({ id: "tower_red", team: "red", x: 5, y: 4, hp: crownStats.hp });
   const initialCardState = makeCardState({
     blueHand: ["arrows", "knight", "fireball", "giant"],
     blueQueue: ["archers", "musketeer", "goblins", "mini_pekka"],
@@ -94,7 +98,7 @@ test("arrows PLAY_CARD applies damage only after cast delay", () => {
     seed: 72,
     arena,
     fireballConfig: FIREBALL_CONFIG,
-    initialEntities: [enemy],
+    initialEntities: [enemy, enemyTower],
     initialCardState,
   });
 
@@ -112,11 +116,13 @@ test("arrows PLAY_CARD applies damage only after cast delay", () => {
   while (engine.state.tick < 16) {
     engine.step([]);
   }
-  assert.equal(getEntityHp(engine, "enemy"), 1400);
+  assert.equal(getEntityHp(engine, "enemy"), knightStats.hp);
+  assert.equal(getEntityHp(engine, "tower_red"), crownStats.hp);
 
   engine.step([]);
   assert.equal(engine.state.tick, 17);
-  assert.equal(getEntityHp(engine, "enemy"), 1400 - ARROWS_CONFIG.damage);
+  assert.equal(getEntityHp(engine, "enemy"), knightStats.hp - ARROWS_CONFIG.troop_damage);
+  assert.equal(getEntityHp(engine, "tower_red"), crownStats.hp - ARROWS_CONFIG.tower_damage);
 
   const impact = engine.state.replay.events.find(
     (event) => event.type === "spell_impact" && event.source_spell === "arrows",
@@ -125,9 +131,12 @@ test("arrows PLAY_CARD applies damage only after cast delay", () => {
   assert.equal(impact.tick, 17);
 });
 
-test("fireball PLAY_CARD resolves after cast plus travel delay", () => {
+test("fireball PLAY_CARD resolves troop and tower damage after cast plus travel delay", () => {
   const arena = createArena({ minX: 0, maxX: 10, minY: 0, maxY: 10 });
-  const enemyTower = createTower({ id: "tower_red", team: "red", x: 5, y: 4, hp: 3800 });
+  const knightStats = getTroopStats("knight");
+  const crownStats = getTowerStats("crown");
+  const enemyTower = createTower({ id: "tower_red", team: "red", x: 5, y: 4, hp: crownStats.hp });
+  const enemyTroop = createTroop({ id: "enemy", cardId: "knight", team: "red", x: 5, y: 5, hp: knightStats.hp });
   const initialCardState = makeCardState({
     blueHand: ["fireball", "knight", "arrows", "giant"],
     blueQueue: ["archers", "musketeer", "goblins", "mini_pekka"],
@@ -137,7 +146,7 @@ test("fireball PLAY_CARD resolves after cast plus travel delay", () => {
     seed: 73,
     arena,
     fireballConfig: FIREBALL_CONFIG,
-    initialEntities: [enemyTower],
+    initialEntities: [enemyTower, enemyTroop],
     initialCardState,
   });
 
@@ -155,11 +164,13 @@ test("fireball PLAY_CARD resolves after cast plus travel delay", () => {
   while (engine.state.tick < 18) {
     engine.step([]);
   }
-  assert.equal(getEntityHp(engine, "tower_red"), 3800);
+  assert.equal(getEntityHp(engine, "tower_red"), crownStats.hp);
+  assert.equal(getEntityHp(engine, "enemy"), knightStats.hp);
 
   engine.step([]);
   assert.equal(engine.state.tick, 19);
-  assert.equal(getEntityHp(engine, "tower_red"), 3800 - FIREBALL_CONFIG.damage);
+  assert.equal(getEntityHp(engine, "tower_red"), crownStats.hp - FIREBALL_CONFIG.tower_damage);
+  assert.equal(getEntityHp(engine, "enemy"), knightStats.hp - FIREBALL_CONFIG.troop_damage);
 
   const scheduled = engine.state.replay.events.find(
     (event) => event.type === "effect_scheduled" && event.card_id === "fireball",

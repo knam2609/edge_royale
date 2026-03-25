@@ -32,6 +32,10 @@ function isEligibleForFireballKnockback(entity, immuneIds) {
   return !immuneIds.includes(entity.cardId);
 }
 
+function getSpellDamage(config, entity) {
+  return entity.entity_type === "tower" ? config.tower_damage : config.troop_damage;
+}
+
 function normalizeVector(x, y) {
   const length = Math.hypot(x, y);
   if (length === 0) {
@@ -63,7 +67,7 @@ export function resolveFireballImpact({
 
   // 2) Damage
   for (const entity of impacted) {
-    entity.hp = Math.max(0, entity.hp - fireballConfig.damage);
+    entity.hp = Math.max(0, entity.hp - getSpellDamage(fireballConfig, entity));
   }
 
   // 3) Knockback eligibility filter + 4) Displacement assignment
@@ -121,9 +125,6 @@ export function resolveArrowsImpact({
   const impacted = [];
 
   for (const entity of entities) {
-    if (entity.entity_type !== "troop") {
-      continue;
-    }
     if (!isEnemyEntity(entity, actorTeam)) {
       continue;
     }
@@ -133,7 +134,7 @@ export function resolveArrowsImpact({
   }
 
   for (const entity of impacted) {
-    entity.hp = Math.max(0, entity.hp - arrowsConfig.damage);
+    entity.hp = Math.max(0, entity.hp - getSpellDamage(arrowsConfig, entity));
   }
 
   return {

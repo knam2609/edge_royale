@@ -1,12 +1,12 @@
-# Card Specs (MVP v0.1)
+# Card Specs (Level 11 Tournament Baseline)
 
-This file defines initial balancing values for the fixed 8-card deck.
-Values are intentionally approximate and should be tuned with simulation data.
+This file defines the current level 11 tournament-standard baseline for the fixed 8-card deck.
+Engine-specific simplifications remain in place for mechanics we do not model yet.
 
 ## Global Conventions
 
 - `deploy_time_s`: delay from placement to spawn/effect.
-- `move_speed`: tiles per second.
+- `move_speed`: tiles per second after normalizing Clash Royale speed classes into engine values.
 - `hit_speed_s`: seconds between attacks.
 - `range_tiles`: target range.
 - `sight_range_tiles`: aggro/vision radius used for target acquisition.
@@ -16,11 +16,11 @@ Values are intentionally approximate and should be tuned with simulation data.
 
 - Type: Ground troop, win condition.
 - Cost: 5 elixir.
-- HP: 2500.
-- Damage: 90.
+- HP: 4090.
+- Damage: 253.
 - Hit speed: 1.5s.
-- DPS: 60.
-- Move speed: 1.0.
+- DPS: 169.
+- Move speed: 1.0 (`Slow`).
 - Range: 1.2 tiles.
 - Sight range: 7.5 tiles.
 - Targets: Buildings only.
@@ -30,11 +30,11 @@ Values are intentionally approximate and should be tuned with simulation data.
 
 - Type: Ground troop, mini-tank.
 - Cost: 3 elixir.
-- HP: 1400.
-- Damage: 160.
+- HP: 1766.
+- Damage: 202.
 - Hit speed: 1.2s.
-- DPS: 133.
-- Move speed: 1.2.
+- DPS: 168.
+- Move speed: 1.2 (`Medium`).
 - Range: 1.2 tiles.
 - Sight range: 5.5 tiles.
 - Targets: Ground units/buildings.
@@ -45,11 +45,11 @@ Values are intentionally approximate and should be tuned with simulation data.
 - Type: Ranged ground troop pair.
 - Cost: 3 elixir.
 - Count: 2.
-- HP each: 300.
-- Damage each: 95.
-- Hit speed: 1.1s.
-- DPS each: 86.
-- Move speed: 1.2.
+- HP each: 304.
+- Damage each: 112.
+- Hit speed: 0.9s.
+- DPS each: 124.
+- Move speed: 1.2 (`Medium`).
 - Range: 5.0 tiles.
 - Sight range: 5.5 tiles.
 - Targets: Ground units/buildings.
@@ -59,12 +59,12 @@ Values are intentionally approximate and should be tuned with simulation data.
 
 - Type: Ground troop, high single-target DPS.
 - Cost: 4 elixir.
-- HP: 1200.
-- Damage: 420.
+- HP: 1433.
+- Damage: 755.
 - Hit speed: 1.6s.
-- DPS: 262.
-- Move speed: 1.3.
-- Range: 1.2 tiles.
+- DPS: 472.
+- Move speed: 1.8 (`Fast`).
+- Range: 0.8 tiles.
 - Sight range: 5.5 tiles.
 - Targets: Ground units/buildings.
 - Deploy time: 1.0s.
@@ -73,11 +73,11 @@ Values are intentionally approximate and should be tuned with simulation data.
 
 - Type: Ranged support troop.
 - Cost: 4 elixir.
-- HP: 700.
-- Damage: 190.
-- Hit speed: 1.1s.
-- DPS: 172.
-- Move speed: 1.1.
+- HP: 721.
+- Damage: 217.
+- Hit speed: 1.0s.
+- DPS: 217.
+- Move speed: 1.2 (`Medium`).
 - Range: 6.0 tiles.
 - Sight range: 6.0 tiles.
 - Targets: Ground units/buildings.
@@ -88,12 +88,12 @@ Values are intentionally approximate and should be tuned with simulation data.
 - Type: Ground swarm.
 - Cost: 2 elixir.
 - Count: 4.
-- HP each: 220.
-- Damage each: 95.
-- Hit speed: 1.0s.
-- DPS each: 95.
-- Move speed: 1.8.
-- Range: 1.0 tiles.
+- HP each: 202.
+- Damage each: 120.
+- Hit speed: 1.1s.
+- DPS each: 109.
+- Move speed: 2.4 (`Very Fast`).
+- Range: 0.5 tiles.
 - Sight range: 5.5 tiles.
 - Targets: Ground units/buildings.
 - Deploy time: 1.0s.
@@ -102,32 +102,42 @@ Values are intentionally approximate and should be tuned with simulation data.
 
 - Type: Instant spell.
 - Cost: 3 elixir.
-- Radius: 3.0 tiles.
-- Damage: 350.
+- Radius: 3.5 tiles.
+- Troop damage: 366.
+- Tower damage: 93.
 - Cast delay: 0.8s.
-- Targets: Enemy ground units only (MVP).
+- Targets: Enemy ground units and towers.
 
 ## 8) Fireball
 
 - Type: Projectile spell.
 - Cost: 4 elixir.
 - Radius: 2.5 tiles.
-- Damage: 520.
+- Troop damage: 688.
+- Tower damage: 207.
 - Cast delay: 0.3s.
 - Travel speed: 10.0 tiles/s.
 - Targets: Enemy ground units/buildings.
 - Knockback:
   - `distance_tiles=0.75`
   - `duration_ticks=5` (250ms at 20 TPS)
-  - `immune_card_ids=[\"giant\"]`
+  - `immune_card_ids=["giant"]`
 
-## Balancing Rules
+## Tower Baseline
 
-- Cost efficiency target:
-  - Same-cost direct counters should be close to neutral outcomes.
-  - Swarm cards should lose value sharply against spells.
-- Benchmark scenarios:
-  - Giant + support push against defensive placements.
-  - Equal-elixir bridge fights for each troop pair.
-  - Spell value test with clustered units.
-- Adjust max +/- 10% per tuning pass unless fixing broken interactions.
+- Crown tower:
+  - HP: 3052.
+  - Damage: 109.
+  - Hit speed: 0.8s.
+  - Range: 7.5 tiles.
+- King tower:
+  - HP: 4824.
+  - Damage: 109.
+  - Hit speed: 1.0s.
+  - Range: 7.0 tiles.
+
+## Notes
+
+- Sight range remains an engine-level approximation unless we already have a sourced live value.
+- Spell tower damage is explicit per spell instead of being derived from a shared chip percentage.
+- Keep this sheet aligned to the level 11 tournament baseline unless the project explicitly introduces a custom balance layer.

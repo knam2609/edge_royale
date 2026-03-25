@@ -1,12 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { enumerateLegalCardActions, rollDecisionDelayTicks, selectBotAction } from "../src/ai/ladderRuntime.js";
+import { enumerateLegalCardActions, evaluateSpellAction, rollDecisionDelayTicks, selectBotAction } from "../src/ai/ladderRuntime.js";
 import { trainSelfModel } from "../src/ai/training.js";
 import { FIREBALL_CONFIG } from "../src/sim/config.js";
 import { createEngine } from "../src/sim/engine.js";
 import { createArena } from "../src/sim/map.js";
 import { createTower, createTroop } from "../src/sim/entities.js";
+import { getTowerStats } from "../src/sim/stats.js";
 
 function makeCardState(redHand) {
   return {
@@ -23,13 +24,14 @@ function makeCardState(redHand) {
 
 function makeEngine(redHand) {
   const arena = createArena({ minX: 0, maxX: 18, minY: 0, maxY: 32 });
+  const crownHp = getTowerStats("crown").hp;
   return createEngine({
     seed: 901,
     arena,
     fireballConfig: FIREBALL_CONFIG,
     initialEntities: [
-      createTower({ id: "blue_tower", team: "blue", x: 9, y: 29, hp: 3800 }),
-      createTower({ id: "red_tower", team: "red", x: 9, y: 3, hp: 3800 }),
+      createTower({ id: "blue_tower", team: "blue", x: 9, y: 29, hp: crownHp }),
+      createTower({ id: "red_tower", team: "red", x: 9, y: 3, hp: crownHp }),
       createTroop({ id: "blue_knight", cardId: "knight", team: "blue", x: 9, y: 23, hp: 1400 }),
     ],
     initialCardState: makeCardState(redHand),
@@ -143,4 +145,36 @@ test("decision delay for tier is always within configured bounds", () => {
 
   assert.ok(tiny >= 8 && tiny <= 20);
   assert.ok(huge >= 8 && huge <= 20);
+});
+
+test("spell evaluation uses explicit tower chip values for arrows and fireball", () => {
+  const arena = createArena({ minX: 0, maxX: 18, minY: 0, maxY: 32 });
+  const tower = createTower({ id: "red_tower", team: "red", x: 9, y: 3 });
+  const state = {
+    arena,
+    entities: [tower],
+  };
+
+  const fireballScore = evaluateSpellAction(
+    { type: "PLAY_CARD", cardId: "fireball", x: 9, y: 3 },
+    state,
+    "blue",
+    "normal",
+    "mid",
+  );
+  const arrowsScore = evaluateSpellAction(
+    { type: "PLAY_CARD", cardId: "arrows", x: 9, y: 3 },
+    state,
+    "blue",
+    "normal",
+    "mid",
+  );
+
+  assert.equal(fireballScore.score, 237);
+  assert.equal(fireballScore.towerHits, 1);
+  assert.equal(fireballScore.troopHits, 0);
+
+  assert.equal(arrowsScore.score, -37);
+  assert.equal(arrowsScore.towerHits, 1);
+  assert.equal(arrowsScore.troopHits, 0);
 });

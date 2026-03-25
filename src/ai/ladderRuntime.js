@@ -2,6 +2,7 @@ import { ARROWS_CONFIG, FIREBALL_CONFIG, getMatchPhase } from "../sim/config.js"
 import { getCard } from "../sim/cards.js";
 import { snapPositionToGrid } from "../sim/map.js";
 import { selectCardFromModel } from "./training.js";
+import { getSpellDamageAgainstTarget } from "./spellHeuristics.js";
 
 const BOT_TIER_CONFIG = Object.freeze({
   noob: Object.freeze({
@@ -310,7 +311,7 @@ function getEnemiesInRadius(state, actor, x, y, radius) {
   });
 }
 
-function evaluateSpellAction(action, state, actor, phase, tierId) {
+export function evaluateSpellAction(action, state, actor, phase, tierId) {
   const strategy = getTierStrategy(tierId);
   const cardId = action.cardId;
   const config = cardId === "fireball" ? FIREBALL_CONFIG : ARROWS_CONFIG;
@@ -329,18 +330,22 @@ function evaluateSpellAction(action, state, actor, phase, tierId) {
   let towerHits = 0;
 
   for (const entity of impacted) {
-    const dealt = Math.min(entity.hp, config.damage);
+    const damage = getSpellDamageAgainstTarget(entity, {
+      troopDamage: config.troop_damage,
+      towerDamage: config.tower_damage,
+    });
+    const dealt = Math.min(entity.hp, damage);
 
     if (entity.entity_type === "tower") {
       towerHits += 1;
       score += dealt;
-      if (entity.hp <= config.damage) {
+      if (entity.hp <= damage) {
         score += 900;
       }
     } else {
       troopHits += 1;
       score += dealt;
-      if (entity.hp <= config.damage) {
+      if (entity.hp <= damage) {
         score += 140;
       }
     }

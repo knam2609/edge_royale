@@ -20,6 +20,7 @@ Once they play enough games for us to gather their gameplay data, we will unlock
 Gameplay will be the same as Clash Royale. Link to game details: https://clashroyale.fandom.com/wiki/Basics_of_Battle 
 
 We only gonna use one basic deck: Giant, Knight, Archers, Mini Pekka, Musketeer, Goblins, Arrows and Fireball to make sure we focus on building the algorithm for bots.
+The sim currently uses a level 11 tournament-standard stat baseline with simplified mechanics where the engine intentionally diverges from full Clash Royale parity.
 
 Learn how to implement UI here: https://github.com/Noisyboy-9/clash_royale_game
 

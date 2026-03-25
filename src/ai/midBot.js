@@ -16,7 +16,8 @@ export const midBot = {
 
     const value = evaluateFireballValue({
       targets: state.targets,
-      damage: state.fireball.damage,
+      troopDamage: state.fireball.troop_damage,
+      towerDamage: state.fireball.tower_damage,
       knockbackDistanceTiles: state.fireball.knockback_distance_tiles,
       impactY: state.fireball.impactY,
     });
