@@ -15,10 +15,10 @@ function makeArena() {
 
 function makeInitialEntities() {
   return [
-    createTower({ id: "blue_tower", team: "blue", x: 9, y: 29, hp: 3800 }),
-    createTower({ id: "red_tower", team: "red", x: 9, y: 3, hp: 3800 }),
-    createTroop({ id: "blue_knight_start", cardId: "knight", team: "blue", x: 8.4, y: 24, hp: 1400 }),
-    createTroop({ id: "red_knight_start", cardId: "knight", team: "red", x: 9.6, y: 8, hp: 1400 }),
+    createTower({ id: "blue_tower", team: "blue", x: 9, y: 29 }),
+    createTower({ id: "red_tower", team: "red", x: 9, y: 3 }),
+    createTroop({ id: "blue_knight_start", cardId: "knight", team: "blue", x: 8.4, y: 24 }),
+    createTroop({ id: "red_knight_start", cardId: "knight", team: "red", x: 9.6, y: 8 }),
   ];
 }
 

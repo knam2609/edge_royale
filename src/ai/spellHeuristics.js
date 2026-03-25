@@ -1,5 +1,12 @@
-export function computeDamageScore(targets, damage) {
-  return targets.reduce((sum, target) => sum + Math.min(target.hp, damage), 0);
+export function getSpellDamageAgainstTarget(target, { troopDamage, towerDamage }) {
+  return target.entity_type === "tower" ? towerDamage : troopDamage;
+}
+
+export function computeDamageScore(targets, { troopDamage, towerDamage }) {
+  return targets.reduce((sum, target) => {
+    const damage = getSpellDamageAgainstTarget(target, { troopDamage, towerDamage });
+    return sum + Math.min(target.hp, damage);
+  }, 0);
 }
 
 export function computeKnockbackScore({ targets, knockbackDistanceTiles, impactY }) {
@@ -14,8 +21,8 @@ export function computeKnockbackScore({ targets, knockbackDistanceTiles, impactY
   }, 0);
 }
 
-export function evaluateFireballValue({ targets, damage, knockbackDistanceTiles, impactY }) {
-  const damageScore = computeDamageScore(targets, damage);
+export function evaluateFireballValue({ targets, troopDamage, towerDamage, knockbackDistanceTiles, impactY }) {
+  const damageScore = computeDamageScore(targets, { troopDamage, towerDamage });
   const knockbackScore = computeKnockbackScore({ targets, knockbackDistanceTiles, impactY });
   return damageScore + knockbackScore;
 }

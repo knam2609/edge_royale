@@ -1,84 +1,14 @@
 import { clampPositionToArenaAndPathable } from "./map.js";
 import { TICK_RATE } from "./config.js";
-
-const TROOP_STATS = Object.freeze({
-  giant: Object.freeze({
-    move_speed: 1.0,
-    attack_damage: 90,
-    attack_range: 1.2,
-    sight_range: 7.5,
-    hit_speed_seconds: 1.5,
-    targeting_mode: "buildings",
-  }),
-  knight: Object.freeze({
-    move_speed: 1.2,
-    attack_damage: 160,
-    attack_range: 1.2,
-    sight_range: 5.5,
-    hit_speed_seconds: 1.2,
-    targeting_mode: "any",
-  }),
-  goblins: Object.freeze({
-    move_speed: 1.8,
-    attack_damage: 95,
-    attack_range: 1.0,
-    sight_range: 5.5,
-    hit_speed_seconds: 1.0,
-    targeting_mode: "any",
-  }),
-  archers: Object.freeze({
-    move_speed: 1.2,
-    attack_damage: 95,
-    attack_range: 5.0,
-    sight_range: 5.5,
-    hit_speed_seconds: 1.1,
-    targeting_mode: "any",
-  }),
-  musketeer: Object.freeze({
-    move_speed: 1.1,
-    attack_damage: 190,
-    attack_range: 6.0,
-    sight_range: 6.0,
-    hit_speed_seconds: 1.1,
-    targeting_mode: "any",
-  }),
-  "mini_pekka": Object.freeze({
-    move_speed: 1.3,
-    attack_damage: 420,
-    attack_range: 1.2,
-    sight_range: 5.5,
-    hit_speed_seconds: 1.6,
-    targeting_mode: "any",
-  }),
-});
-
-const TOWER_STATS = Object.freeze({
-  crown: Object.freeze({
-    move_speed: 0,
-    attack_damage: 120,
-    attack_range: 6.2,
-    hit_speed_seconds: 1.0,
-    targeting_mode: "troops",
-  }),
-  king: Object.freeze({
-    move_speed: 0,
-    attack_damage: 140,
-    attack_range: 6.5,
-    hit_speed_seconds: 0.95,
-    targeting_mode: "troops",
-  }),
-});
+import { getTowerStats, getTroopStats } from "./stats.js";
 
 function toCooldownTicks(seconds) {
   return Math.max(1, Math.round(seconds * TICK_RATE));
 }
 
-function getTroopStats(cardId) {
-  return TROOP_STATS[cardId] ?? TROOP_STATS.knight;
-}
-
-export function createTroop({ id, cardId, team, x, y, hp }) {
+export function createTroop({ id, cardId, team, x, y, hp = null }) {
   const stats = getTroopStats(cardId);
+  const resolvedHp = hp ?? stats.hp;
 
   return {
     id,
@@ -87,8 +17,8 @@ export function createTroop({ id, cardId, team, x, y, hp }) {
     entity_type: "troop",
     x,
     y,
-    hp,
-    maxHp: hp,
+    hp: resolvedHp,
+    maxHp: resolvedHp,
     radius: 0.45,
     move_speed: stats.move_speed,
     attack_damage: stats.attack_damage,
@@ -104,8 +34,9 @@ export function createTroop({ id, cardId, team, x, y, hp }) {
   };
 }
 
-export function createTower({ id, team, x, y, hp, tower_role = "crown", is_active = true }) {
-  const stats = TOWER_STATS[tower_role] ?? TOWER_STATS.crown;
+export function createTower({ id, team, x, y, hp = null, tower_role = "crown", is_active = true }) {
+  const stats = getTowerStats(tower_role);
+  const resolvedHp = hp ?? stats.hp;
   return {
     id,
     cardId: "tower",
@@ -115,8 +46,8 @@ export function createTower({ id, team, x, y, hp, tower_role = "crown", is_activ
     is_active,
     x,
     y,
-    hp,
-    maxHp: hp,
+    hp: resolvedHp,
+    maxHp: resolvedHp,
     radius: tower_role === "king" ? 0.95 : 0.75,
     move_speed: stats.move_speed,
     attack_damage: stats.attack_damage,

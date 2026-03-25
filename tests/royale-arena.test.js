@@ -6,6 +6,7 @@ import { createEngine } from "../src/sim/engine.js";
 import { createTower, createTroop } from "../src/sim/entities.js";
 import { getScoreSnapshot } from "../src/sim/match.js";
 import { createArena, createRoyaleArena } from "../src/sim/map.js";
+import { getTroopStats } from "../src/sim/stats.js";
 
 function makeCardState({ blueHand, blueQueue }) {
   return {
@@ -102,8 +103,11 @@ test("archers deploy as a visible pair around the snapped placement", () => {
   assert.equal(deployEvent.entity_ids.length, 2);
 
   const archers = getEntitiesByIds(engine, deployEvent.entity_ids).sort((a, b) => a.x - b.x);
+  const archerStats = getTroopStats("archers");
   assert.equal(archers.length, 2);
   assert.deepEqual(archers.map((entity) => entity.bridge_x), [5, 13]);
+  assert.ok(archers.every((entity) => entity.hp === archerStats.hp));
+  assert.ok(archers.every((entity) => entity.attack_damage === archerStats.attack_damage));
   assert.ok(archers[0].x < deployEvent.x);
   assert.ok(archers[1].x > deployEvent.x);
   assert.ok(archers[1].x - archers[0].x > 0.55);
@@ -147,9 +151,12 @@ test("goblins deploy as four distinct units around the snapped placement", () =>
   assert.equal(deployEvent.entity_ids.length, 4);
 
   const goblins = getEntitiesByIds(engine, deployEvent.entity_ids);
+  const goblinStats = getTroopStats("goblins");
   assert.equal(goblins.length, 4);
   assert.equal(new Set(goblins.map((entity) => `${entity.x},${entity.y}`)).size, 4);
   assert.deepEqual(goblins.map((entity) => entity.bridge_x).sort((a, b) => a - b), [5, 5, 13, 13]);
+  assert.ok(goblins.every((entity) => entity.hp === goblinStats.hp));
+  assert.ok(goblins.every((entity) => entity.attack_damage === goblinStats.attack_damage));
   const xs = goblins.map((entity) => entity.x).sort((a, b) => a - b);
   const ys = goblins.map((entity) => entity.y).sort((a, b) => a - b);
   assert.ok(xs[0] < deployEvent.x - 0.2);
