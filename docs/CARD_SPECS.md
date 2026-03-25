@@ -9,6 +9,7 @@ Values are intentionally approximate and should be tuned with simulation data.
 - `move_speed`: tiles per second.
 - `hit_speed_s`: seconds between attacks.
 - `range_tiles`: target range.
+- `sight_range_tiles`: aggro/vision radius used for target acquisition.
 - `dps`: derived value for balancing checks only.
 
 ## 1) Giant
@@ -21,6 +22,7 @@ Values are intentionally approximate and should be tuned with simulation data.
 - DPS: 60.
 - Move speed: 1.0.
 - Range: 1.2 tiles.
+- Sight range: 7.5 tiles.
 - Targets: Buildings only.
 - Deploy time: 1.0s.
 
@@ -34,6 +36,7 @@ Values are intentionally approximate and should be tuned with simulation data.
 - DPS: 133.
 - Move speed: 1.2.
 - Range: 1.2 tiles.
+- Sight range: 5.5 tiles.
 - Targets: Ground units/buildings.
 - Deploy time: 1.0s.
 
@@ -48,6 +51,7 @@ Values are intentionally approximate and should be tuned with simulation data.
 - DPS each: 86.
 - Move speed: 1.2.
 - Range: 5.0 tiles.
+- Sight range: 5.5 tiles.
 - Targets: Ground units/buildings.
 - Deploy time: 1.0s.
 
@@ -61,6 +65,7 @@ Values are intentionally approximate and should be tuned with simulation data.
 - DPS: 262.
 - Move speed: 1.3.
 - Range: 1.2 tiles.
+- Sight range: 5.5 tiles.
 - Targets: Ground units/buildings.
 - Deploy time: 1.0s.
 
@@ -74,6 +79,7 @@ Values are intentionally approximate and should be tuned with simulation data.
 - DPS: 172.
 - Move speed: 1.1.
 - Range: 6.0 tiles.
+- Sight range: 6.0 tiles.
 - Targets: Ground units/buildings.
 - Deploy time: 1.0s.
 
@@ -88,6 +94,7 @@ Values are intentionally approximate and should be tuned with simulation data.
 - DPS each: 95.
 - Move speed: 1.8.
 - Range: 1.0 tiles.
+- Sight range: 5.5 tiles.
 - Targets: Ground units/buildings.
 - Deploy time: 1.0s.
 

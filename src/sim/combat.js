@@ -42,7 +42,7 @@ function isTargetable(attacker, target) {
 }
 
 function chooseTarget(attacker, entities) {
-  const candidates = entities.filter((candidate) => isTargetable(attacker, candidate));
+  const candidates = entities.filter((candidate) => isTargetable(attacker, candidate) && isWithinSight(attacker, candidate));
   if (candidates.length === 0) {
     return null;
   }
@@ -60,6 +60,15 @@ function chooseTarget(attacker, entities) {
   });
 
   return candidates[0];
+}
+
+function isWithinSight(attacker, target) {
+  if (attacker.entity_type !== "troop" || attacker.sight_range == null) {
+    return true;
+  }
+
+  const sightReach = attacker.sight_range + target.radius;
+  return squaredDistance(attacker, target) <= sightReach * sightReach;
 }
 
 function isInRange(attacker, target) {

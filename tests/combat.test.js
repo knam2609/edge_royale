@@ -67,3 +67,51 @@ test("giant does not attack enemy troops when no building target exists", () => 
   assert.equal(red.hp, 1400);
   assert.ok(blue.hp < 2500, "Red knight should still be able to damage giant");
 });
+
+test("troops ignore enemies outside sight range", () => {
+  const arena = createArena({ minX: 0, maxX: 10, minY: 0, maxY: 10 });
+  const blueKnight = createTroop({ id: "blue_k", cardId: "knight", team: "blue", x: 5, y: 9, hp: 1400 });
+  const redKnight = createTroop({ id: "red_k", cardId: "knight", team: "red", x: 5, y: 1, hp: 1400 });
+
+  const engine = createEngine({
+    seed: 103,
+    arena,
+    fireballConfig: FIREBALL_CONFIG,
+    initialEntities: [blueKnight, redKnight],
+  });
+
+  engine.step([]);
+
+  const blue = engine.state.entities.find((entity) => entity.id === "blue_k");
+  const red = engine.state.entities.find((entity) => entity.id === "red_k");
+
+  assert.equal(blue.target_entity_id, null);
+  assert.equal(red.target_entity_id, null);
+  assert.ok(blue.y < 9);
+  assert.ok(red.y > 1);
+});
+
+test("troops acquire enemies inside sight range before they are in attack range", () => {
+  const arena = createArena({ minX: 0, maxX: 10, minY: 0, maxY: 10 });
+  const blueKnight = createTroop({ id: "blue_k", cardId: "knight", team: "blue", x: 5, y: 9, hp: 1400 });
+  const redKnight = createTroop({ id: "red_k", cardId: "knight", team: "red", x: 5, y: 4.2, hp: 1400 });
+
+  const engine = createEngine({
+    seed: 104,
+    arena,
+    fireballConfig: FIREBALL_CONFIG,
+    initialEntities: [blueKnight, redKnight],
+  });
+
+  engine.step([]);
+
+  const blue = engine.state.entities.find((entity) => entity.id === "blue_k");
+  const red = engine.state.entities.find((entity) => entity.id === "red_k");
+
+  assert.equal(blue.target_entity_id, "red_k");
+  assert.equal(red.target_entity_id, "blue_k");
+  assert.equal(blue.hp, 1400);
+  assert.equal(red.hp, 1400);
+  assert.ok(blue.y < 9);
+  assert.ok(red.y > 4.2);
+});

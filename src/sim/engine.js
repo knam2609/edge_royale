@@ -6,9 +6,11 @@ import { ElixirTracker } from "./elixir.js";
 import { applyForcedMotion, createTroop } from "./entities.js";
 import { hashState } from "./hash.js";
 import { evaluateMatchResult, getScoreSnapshot, isRegulationTieForOvertime } from "./match.js";
-import { clampToArena, createArena, snapPositionToGrid } from "./map.js";
+import { clampToArena, createArena, getNearestBridge, snapPositionToGrid } from "./map.js";
 import { createRng } from "./random.js";
 import { resolveArrowsImpact, resolveFireballImpact } from "./spells.js";
+
+const POSITION_EPSILON = 1e-9;
 
 function cloneEntity(entity) {
   return {
@@ -152,6 +154,83 @@ function getDefaultLaunchPosition(arena, actor) {
   };
 }
 
+function roundCoord(value) {
+  return Math.round(value * 10000) / 10000;
+}
+
+function getCenterDeploymentColumns(arena) {
+  const centerX = (arena.minX + arena.maxX) * 0.5;
+  if (!arena.grid) {
+    return [roundCoord(centerX)];
+  }
+
+  const { step, offsetX } = arena.grid;
+  const minSnap = arena.minX + offsetX;
+  const maxSnap = arena.maxX - (step - offsetX);
+  const columns = [];
+
+  for (let x = minSnap; x <= maxSnap + POSITION_EPSILON; x += step) {
+    columns.push(roundCoord(x));
+  }
+
+  let minDistance = Number.POSITIVE_INFINITY;
+  const closest = [];
+  for (const column of columns) {
+    const distance = Math.abs(column - centerX);
+    if (distance + POSITION_EPSILON < minDistance) {
+      minDistance = distance;
+      closest.length = 0;
+      closest.push(column);
+      continue;
+    }
+
+    if (Math.abs(distance - minDistance) <= POSITION_EPSILON) {
+      closest.push(column);
+    }
+  }
+
+  return closest;
+}
+
+function isCenterSplitDeploy(arena, x) {
+  return getCenterDeploymentColumns(arena).some((column) => Math.abs(column - x) <= POSITION_EPSILON);
+}
+
+function getSpawnBridgeAssignments(arena, baseX, formation) {
+  const count = formation.length;
+  if (!arena.bridges?.length || count === 0) {
+    return [];
+  }
+
+  const nearestBridgeX = getNearestBridge(arena, baseX)?.x ?? baseX;
+  if (count < 2 || arena.bridges.length < 2 || !isCenterSplitDeploy(arena, baseX)) {
+    return Array(count).fill(nearestBridgeX);
+  }
+
+  const orderedBridges = [...arena.bridges].sort((a, b) => a.x - b.x);
+  const leftBridgeX = orderedBridges[0]?.x ?? nearestBridgeX;
+  const rightBridgeX = orderedBridges[orderedBridges.length - 1]?.x ?? nearestBridgeX;
+  const bridgeAssignments = Array(count).fill(rightBridgeX);
+  const leftCount = Math.floor(count * 0.5);
+  const orderedIndices = formation
+    .map((offset, index) => ({ index, x: offset.x ?? 0, y: offset.y ?? 0 }))
+    .sort((a, b) => {
+      if (a.x !== b.x) {
+        return a.x - b.x;
+      }
+      if (a.y !== b.y) {
+        return a.y - b.y;
+      }
+      return a.index - b.index;
+    });
+
+  for (let i = 0; i < leftCount; i += 1) {
+    bridgeAssignments[orderedIndices[i].index] = leftBridgeX;
+  }
+
+  return bridgeAssignments;
+}
+
 function getFireballLaunchPosition(state, actor, impactX, impactY) {
   const towers = state.entities.filter(
     (entity) => entity.team === actor && entity.entity_type === "tower" && entity.hp > 0,
@@ -228,6 +307,7 @@ function spawnTroops({ state, actor, card, x, y }) {
   const count = formation.length;
   const yDirection = actor === "blue" ? 1 : -1;
   const createdEntityIds = [];
+  const bridgeAssignments = getSpawnBridgeAssignments(state.arena, basePosition.x, formation);
 
   for (let i = 0; i < count; i += 1) {
     const offset = formation[i] ?? { x: 0, y: 0 };
@@ -247,9 +327,7 @@ function spawnTroops({ state, actor, card, x, y }) {
       y: spawnPosition.y,
       hp: card.hp,
     });
-    troop.bridge_x = state.arena.bridges?.length
-      ? [...state.arena.bridges].sort((a, b) => Math.abs(a.x - troop.x) - Math.abs(b.x - troop.x))[0]?.x ?? troop.x
-      : troop.x;
+    troop.bridge_x = bridgeAssignments[i] ?? troop.x;
 
     state.entities.push(troop);
 
