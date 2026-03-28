@@ -3,13 +3,13 @@
 ## 1) Match Format
 
 - Mode: 1v1, player vs bot.
-- Arena: single lane map with two king towers and two princess towers (one side per player).
+- Arena: Royale-style two-bridge map; crown-tower and bridge lanes sit three tiles from the side edges.
 - Stat baseline: current level 11 tournament-standard values for the supported deck and towers.
 - Match duration: 180 seconds regulation.
 - Overtime: 120 seconds sudden death if tied.
 - Result priority:
   - Player/bot with more destroyed towers wins.
-  - If still tied after overtime, higher total remaining tower HP wins.
+  - If still tied after overtime, higher weakest surviving tower HP wins.
   - If still tied, draw.
 
 ## 2) Simulation Timing
