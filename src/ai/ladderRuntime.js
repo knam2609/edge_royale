@@ -182,8 +182,8 @@ function buildTroopPlacements(arena, actor) {
   const midY = getMidY(arena);
   const frontY = actor === "blue" ? midY + 2.5 : midY - 2.5;
   const backY = actor === "blue" ? arena.maxY - 5.5 : arena.minY + 5.5;
-  const laneXs = arena.bridges?.length ? arena.bridges.map((bridge) => bridge.x) : [5, 9, 13];
   const centerX = (arena.minX + arena.maxX) / 2;
+  const laneXs = arena.bridges?.length ? arena.bridges.map((bridge) => bridge.x) : [centerX - 4, centerX, centerX + 4];
   const positions = [
     { x: laneXs[0] ?? centerX - 4, y: frontY },
     { x: centerX, y: frontY },

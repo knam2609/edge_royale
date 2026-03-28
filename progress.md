@@ -111,6 +111,24 @@ Original prompt: PLEASE IMPLEMENT THIS PLAN (3x overtime elixir + Fireball knock
   - Visual check confirms tier label and training status render in HUD; text-state includes `bot_tier`, `unlocked_tiers`, and `training` payload.
   - No console/page errors were emitted during the Playwright run.
 
+- Side-offset + match-resolution pass completed (March 29, 2026):
+  - Moved Royale lane anchors from `x=5/13` to `x=3/15` in shared arena geometry (`src/sim/map.js`) and updated the browser tower layout (`src/client/webGame.js`) to consume the shared values while keeping existing tower depths.
+  - Updated Royale bridge corridors to `2..4` and `14..16`, keeping bridges 3 tiles wide and kings centered at `x=9`.
+  - Kept non-Royale fallback bot placements centered for generic arenas while preserving the new shared bridge anchors for Royale arenas (`src/ai/ladderRuntime.js`).
+  - Reworked match evaluation (`src/sim/match.js`) so:
+    - king tower destruction still wins immediately
+    - regulation only resolves tower advantage at the clock
+    - overtime ends immediately once tower counts become unequal after a tick
+    - overtime expiry uses weakest surviving tower HP instead of summed tower HP
+    - exact weakest-HP ties remain draws
+  - Updated rules docs (`docs/GAME_RULES.md`) and expanded regression coverage in `tests/match.test.js` + `tests/royale-arena.test.js`.
+- Validation for this pass:
+  - Full suite passed: `npm test` (`57/57`).
+  - Browser validation run completed against `http://127.0.0.1:4176` with Playwright skill client.
+  - Captured artifacts in `output/web-game-side-offsets/`.
+  - `state-0.json` confirms crown towers now spawn at `x=3` and `x=15`, with king towers at `x=9`.
+  - `shot-0.png` visually confirms bridges and crown towers are wider toward the side edges, with no console/page error artifact emitted.
+
 - Continued bot work (March 7, 2026):
   - Expanded ladder tiers in runtime to include post-MVP tiers: `pro`, `goat`, `god` in `src/ai/ladderRuntime.js`.
   - Refined tier action selection logic and delay/error characteristics; kept all tiers on legal `PLAY_CARD` action path.

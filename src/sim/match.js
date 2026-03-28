@@ -56,11 +56,21 @@ function crownsWinner(score) {
   return null;
 }
 
-function hpWinner(score) {
-  if (score.blue_tower_hp > score.red_tower_hp) {
+function weakestSurvivingTowerHp(towers) {
+  const surviving = towers.filter((tower) => tower.hp > 0);
+  if (surviving.length === 0) {
+    return 0;
+  }
+  return surviving.reduce((lowest, tower) => Math.min(lowest, tower.hp), Number.POSITIVE_INFINITY);
+}
+
+function weakestTowerHpWinner(entities) {
+  const blueWeakest = weakestSurvivingTowerHp(towersByTeam(entities, "blue"));
+  const redWeakest = weakestSurvivingTowerHp(towersByTeam(entities, "red"));
+  if (blueWeakest > redWeakest) {
     return "blue";
   }
-  if (score.red_tower_hp > score.blue_tower_hp) {
+  if (redWeakest > blueWeakest) {
     return "red";
   }
   return null;
@@ -77,17 +87,28 @@ export function evaluateMatchResult({ tick, isOvertime, entities, overtimeStartT
     });
   }
 
-  const crownsLead = crownsWinner(score);
+  if (!isOvertime) {
+    if (tick < MATCH_CONFIG.regulation_ticks) {
+      return null;
+    }
 
-  if (crownsLead) {
-    const reason = isOvertime ? "tower_advantage_overtime" : "tower_advantage_regulation";
-    return finalizeResult({ tick, winner: crownsLead, reason, score });
+    const regulationLead = crownsWinner(score);
+    if (regulationLead) {
+      return finalizeResult({ tick, winner: regulationLead, reason: "tower_advantage_regulation", score });
+    }
+
+    return null;
+  }
+
+  const overtimeLead = crownsWinner(score);
+  if (overtimeLead) {
+    return finalizeResult({ tick, winner: overtimeLead, reason: "tower_advantage_overtime", score });
   }
 
   const overtimeBaseTick = overtimeStartTick ?? MATCH_CONFIG.regulation_ticks;
   const overtimeEndTick = overtimeBaseTick + MATCH_CONFIG.overtime_ticks;
   if (isOvertime && tick >= overtimeEndTick) {
-    const hpLead = hpWinner(score);
+    const hpLead = weakestTowerHpWinner(entities);
     if (hpLead) {
       return finalizeResult({ tick, winner: hpLead, reason: "tower_hp_overtime", score });
     }

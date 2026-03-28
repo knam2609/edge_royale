@@ -2,7 +2,7 @@ import { getCard } from "../sim/cards.js";
 import { ARROWS_CONFIG, FIREBALL_CONFIG, MATCH_CONFIG, TICK_RATE, getMatchPhase } from "../sim/config.js";
 import { createEngine } from "../sim/engine.js";
 import { createTower } from "../sim/entities.js";
-import { createRoyaleArena, snapPositionToGrid } from "../sim/map.js";
+import { ROYALE_LANE_X, createRoyaleArena, snapPositionToGrid } from "../sim/map.js";
 import { createRng } from "../sim/random.js";
 import { getTowerStats } from "../sim/stats.js";
 import {
@@ -87,14 +87,14 @@ const CARD_MONOGRAM = Object.freeze({
 
 const TOWER_LAYOUT = Object.freeze({
   blue: Object.freeze([
-    Object.freeze({ id: "blue_crown_left", team: "blue", tower_role: "crown", x: 5, y: 26, hp: getTowerStats("crown").hp }),
-    Object.freeze({ id: "blue_crown_right", team: "blue", tower_role: "crown", x: 13, y: 26, hp: getTowerStats("crown").hp }),
-    Object.freeze({ id: "blue_king", team: "blue", tower_role: "king", x: 9, y: 30, hp: getTowerStats("king").hp, is_active: false }),
+    Object.freeze({ id: "blue_crown_left", team: "blue", tower_role: "crown", x: ROYALE_LANE_X.left, y: 26, hp: getTowerStats("crown").hp }),
+    Object.freeze({ id: "blue_crown_right", team: "blue", tower_role: "crown", x: ROYALE_LANE_X.right, y: 26, hp: getTowerStats("crown").hp }),
+    Object.freeze({ id: "blue_king", team: "blue", tower_role: "king", x: ROYALE_LANE_X.center, y: 30, hp: getTowerStats("king").hp, is_active: false }),
   ]),
   red: Object.freeze([
-    Object.freeze({ id: "red_crown_left", team: "red", tower_role: "crown", x: 5, y: 6, hp: getTowerStats("crown").hp }),
-    Object.freeze({ id: "red_crown_right", team: "red", tower_role: "crown", x: 13, y: 6, hp: getTowerStats("crown").hp }),
-    Object.freeze({ id: "red_king", team: "red", tower_role: "king", x: 9, y: 2, hp: getTowerStats("king").hp, is_active: false }),
+    Object.freeze({ id: "red_crown_left", team: "red", tower_role: "crown", x: ROYALE_LANE_X.left, y: 6, hp: getTowerStats("crown").hp }),
+    Object.freeze({ id: "red_crown_right", team: "red", tower_role: "crown", x: ROYALE_LANE_X.right, y: 6, hp: getTowerStats("crown").hp }),
+    Object.freeze({ id: "red_king", team: "red", tower_role: "king", x: ROYALE_LANE_X.center, y: 2, hp: getTowerStats("king").hp, is_active: false }),
   ]),
 });
 
