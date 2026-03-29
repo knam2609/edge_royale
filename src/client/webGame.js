@@ -3,6 +3,7 @@ import { ARROWS_CONFIG, FIREBALL_CONFIG, MATCH_CONFIG, TICK_RATE, getMatchPhase 
 import { createEngine } from "../sim/engine.js";
 import { createTower } from "../sim/entities.js";
 import { ROYALE_LANE_X, createRoyaleArena, snapPositionToGrid } from "../sim/map.js";
+import { getTroopDeployRegions, getTroopPlacementStatus } from "../sim/placement.js";
 import { createRng } from "../sim/random.js";
 import { getTowerStats } from "../sim/stats.js";
 import {
@@ -624,15 +625,13 @@ function getPlacementStatus(cardId, worldPosition, actor = "blue") {
   }
 
   if (card.type === "troop") {
-    if (!arena.isPathable(snappedPosition.x, snappedPosition.y)) {
-      return { ok: false, reason: "Troops need a land tile.", card, position: snappedPosition };
-    }
-    if (actor === "blue" && snappedPosition.y <= arena.river.maxY) {
-      return { ok: false, reason: "Troops must be played on your side.", card, position: snappedPosition };
-    }
-    if (actor === "red" && snappedPosition.y >= arena.river.minY) {
-      return { ok: false, reason: "Troops must be played on your side.", card, position: snappedPosition };
-    }
+    const troopStatus = getTroopPlacementStatus({
+      arena,
+      entities: appState.engine?.state?.entities ?? [],
+      actor,
+      position: snappedPosition,
+    });
+    return { ...troopStatus, card, position: troopStatus.position };
   }
 
   return { ok: true, reason: null, card, position: snappedPosition };
@@ -1491,21 +1490,36 @@ function drawArenaBackground() {
 
   const placementCardId = getActivePlacementCardId();
   const placementCard = placementCardId ? getCard(placementCardId) : null;
-  if (placementCard?.type === "troop") {
-    const splitTop = worldToScreen({ x: arena.minX, y: arena.river.minY }).y;
-    const splitBottom = worldToScreen({ x: arena.minX, y: arena.river.maxY }).y;
-    ctx.fillStyle = "rgba(98,165,255,0.08)";
-    ctx.fillRect(arenaViewport.x, splitBottom, arenaViewport.width, arenaViewport.y + arenaViewport.height - splitBottom);
-    ctx.fillStyle = "rgba(255,105,105,0.08)";
-    ctx.fillRect(arenaViewport.x, arenaViewport.y, arenaViewport.width, splitTop - arenaViewport.y);
+  if (placementCard?.type === "troop" && appState.engine) {
+    const deployRegions = getTroopDeployRegions({
+      arena,
+      entities: appState.engine.state.entities,
+      actor: "blue",
+    });
+    ctx.fillStyle = "rgba(98,165,255,0.1)";
+    for (const region of deployRegions) {
+      const topLeft = worldToScreen({ x: region.minX, y: region.minY });
+      const bottomRight = worldToScreen({ x: region.maxX, y: region.maxY });
+      const rectX = Math.min(topLeft.x, bottomRight.x);
+      const rectY = Math.min(topLeft.y, bottomRight.y);
+      const rectWidth = Math.abs(bottomRight.x - topLeft.x);
+      const rectHeight = Math.abs(bottomRight.y - topLeft.y);
+      ctx.fillRect(rectX, rectY, rectWidth, rectHeight);
+    }
+
     ctx.setLineDash([12, 7]);
     ctx.strokeStyle = "rgba(255,244,198,0.86)";
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(arenaViewport.x, splitTop);
-    ctx.lineTo(arenaViewport.x + arenaViewport.width, splitTop);
-    ctx.moveTo(arenaViewport.x, splitBottom);
-    ctx.lineTo(arenaViewport.x + arenaViewport.width, splitBottom);
+    for (const region of deployRegions) {
+      const topLeft = worldToScreen({ x: region.minX, y: region.minY });
+      const bottomRight = worldToScreen({ x: region.maxX, y: region.maxY });
+      const rectX = Math.min(topLeft.x, bottomRight.x);
+      const rectY = Math.min(topLeft.y, bottomRight.y);
+      const rectWidth = Math.abs(bottomRight.x - topLeft.x);
+      const rectHeight = Math.abs(bottomRight.y - topLeft.y);
+      ctx.rect(rectX, rectY, rectWidth, rectHeight);
+    }
     ctx.stroke();
     ctx.setLineDash([]);
   }

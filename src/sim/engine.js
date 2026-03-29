@@ -7,6 +7,7 @@ import { applyForcedMotion, createTroop } from "./entities.js";
 import { hashState } from "./hash.js";
 import { evaluateMatchResult, getScoreSnapshot, isRegulationTieForOvertime } from "./match.js";
 import { clampToArena, createArena, getNearestBridge, snapPositionToGrid } from "./map.js";
+import { getTroopPlacementStatus } from "./placement.js";
 import { createRng } from "./random.js";
 import { resolveArrowsImpact, resolveFireballImpact } from "./spells.js";
 
@@ -119,7 +120,7 @@ function cyclePlayedCard(cardState, actor, cardId) {
   return true;
 }
 
-function isLegalPlacement(arena, actor, card, x, y) {
+function isLegalPlacement(arena, entities, actor, card, x, y) {
   const snapped = snapPositionToGrid({ x, y }, arena);
   const bounded = clampToArena(snapped, arena);
   if (Math.abs(bounded.x - snapped.x) > 1e-9 || Math.abs(bounded.y - snapped.y) > 1e-9) {
@@ -129,16 +130,7 @@ function isLegalPlacement(arena, actor, card, x, y) {
   if (card.type !== "troop") {
     return true;
   }
-
-  if (arena.river && y >= arena.river.minY && y <= arena.river.maxY) {
-    return false;
-  }
-
-  const midY = (arena.minY + arena.maxY) / 2;
-  if (actor === "blue") {
-    return snapped.y > midY;
-  }
-  return snapped.y < midY;
+  return getTroopPlacementStatus({ arena, entities, actor, position: snapped }).ok;
 }
 
 function squaredDistance(a, b) {
@@ -513,7 +505,7 @@ function processPlayCardAction({ state, action, fireballConfig }) {
 
   const snappedPosition = snapPositionToGrid({ x: action.x, y: action.y }, state.arena);
 
-  if (!isLegalPlacement(state.arena, actor, card, snappedPosition.x, snappedPosition.y)) {
+  if (!isLegalPlacement(state.arena, state.entities, actor, card, snappedPosition.x, snappedPosition.y)) {
     return false;
   }
 

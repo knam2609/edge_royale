@@ -42,7 +42,9 @@
 
 ## 5) Deployment Rules
 
-- Ground troops can only be dropped on own side of arena.
+- Ground troops can be dropped on own side of arena.
+- Destroying one enemy crown tower unlocks that lane's pocket across the river up to the enemy crown-tower row, including the shared center deploy column.
+- Destroying both enemy crown towers unlocks the full pocket width across the river up to the enemy crown-tower row.
 - Spells can target valid map coordinates on either side.
 - Multi-unit troops dropped on the center-most deploy columns split lane commitment evenly across the left and right bridges.
 - A deployment request is invalid if:
