@@ -43,7 +43,7 @@ Open `http://127.0.0.1:5173`.
 
 Controls:
 - Click a card slot (or press `1-4`) to select a hand card
-- Click arena to play the selected card (troops on your side only)
+- Click arena to play the selected card (troops on your side unless you have unlocked a pocket by destroying a crown tower)
 - Drag a card from hand to arena to play on release
 - `Space` pause/resume
 - `R` reset

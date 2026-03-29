@@ -5,7 +5,7 @@ import { enumerateLegalCardActions, evaluateSpellAction, rollDecisionDelayTicks,
 import { trainSelfModel } from "../src/ai/training.js";
 import { FIREBALL_CONFIG } from "../src/sim/config.js";
 import { createEngine } from "../src/sim/engine.js";
-import { createArena } from "../src/sim/map.js";
+import { ROYALE_LANE_X, createArena, createRoyaleArena } from "../src/sim/map.js";
 import { createTower, createTroop } from "../src/sim/entities.js";
 import { getTowerStats } from "../src/sim/stats.js";
 
@@ -38,6 +38,26 @@ function makeEngine(redHand) {
   });
 }
 
+function makeRoyaleEngine(redHand, { blueLeftHp = getTowerStats("crown").hp, blueRightHp = getTowerStats("crown").hp } = {}) {
+  const arena = createRoyaleArena({ minX: 0, maxX: 18, minY: 0, maxY: 32 });
+  const crownHp = getTowerStats("crown").hp;
+  return createEngine({
+    seed: 902,
+    arena,
+    fireballConfig: FIREBALL_CONFIG,
+    initialEntities: [
+      createTower({ id: "blue_left", team: "blue", x: ROYALE_LANE_X.left, y: 26, hp: blueLeftHp, tower_role: "crown" }),
+      createTower({ id: "blue_right", team: "blue", x: ROYALE_LANE_X.right, y: 26, hp: blueRightHp, tower_role: "crown" }),
+      createTower({ id: "blue_king", team: "blue", x: ROYALE_LANE_X.center, y: 30, tower_role: "king", is_active: false }),
+      createTower({ id: "red_left", team: "red", x: ROYALE_LANE_X.left, y: 6, hp: crownHp, tower_role: "crown" }),
+      createTower({ id: "red_right", team: "red", x: ROYALE_LANE_X.right, y: 6, hp: crownHp, tower_role: "crown" }),
+      createTower({ id: "red_king", team: "red", x: ROYALE_LANE_X.center, y: 2, tower_role: "king", is_active: false }),
+      createTroop({ id: "blue_knight", cardId: "knight", team: "blue", x: 9, y: 23, hp: 1400 }),
+    ],
+    initialCardState: makeCardState(redHand),
+  });
+}
+
 test("enumerateLegalCardActions respects side placement for troops", () => {
   const engine = makeEngine(["giant", "fireball", "knight", "arrows"]);
   const actions = enumerateLegalCardActions({ engine, actor: "red" });
@@ -51,6 +71,26 @@ test("enumerateLegalCardActions respects side placement for troops", () => {
   for (const action of troopActions) {
     assert.ok(action.y <= 16, `red troop action crossed river: y=${action.y}`);
   }
+});
+
+test("enumerateLegalCardActions unlocks only the captured pocket for red troops", () => {
+  const engine = makeRoyaleEngine(["giant", "fireball", "knight", "arrows"], { blueLeftHp: 0 });
+  const actions = enumerateLegalCardActions({ engine, actor: "red" });
+  const troopActions = actions.filter((action) => action.cardId === "giant" || action.cardId === "knight");
+  const pocketActions = troopActions.filter((action) => action.y >= 18.5);
+
+  assert.ok(pocketActions.length > 0);
+  assert.ok(pocketActions.some((action) => action.x === 3.5 || action.x === 9.5));
+  assert.ok(!pocketActions.some((action) => action.x === 15.5));
+});
+
+test("enumerateLegalCardActions unlocks the full pocket after both crowns fall", () => {
+  const engine = makeRoyaleEngine(["giant", "fireball", "knight", "arrows"], { blueLeftHp: 0, blueRightHp: 0 });
+  const actions = enumerateLegalCardActions({ engine, actor: "red" });
+  const troopActions = actions.filter((action) => action.cardId === "giant" || action.cardId === "knight");
+  const pocketActions = troopActions.filter((action) => action.y >= 18.5);
+
+  assert.ok(pocketActions.some((action) => action.x === 15.5));
 });
 
 test("noob bot returns a legal action when not passing", () => {

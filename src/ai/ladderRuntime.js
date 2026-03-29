@@ -1,6 +1,7 @@
 import { ARROWS_CONFIG, FIREBALL_CONFIG, getMatchPhase } from "../sim/config.js";
 import { getCard } from "../sim/cards.js";
 import { snapPositionToGrid } from "../sim/map.js";
+import { buildTroopPlacementCandidates, getTroopPlacementStatus } from "../sim/placement.js";
 import { selectCardFromModel } from "./training.js";
 import { getSpellDamageAgainstTarget } from "./spellHeuristics.js";
 
@@ -178,23 +179,13 @@ function isOnOwnSide(actor, y, arena) {
   return actor === "blue" ? y >= midY : y <= midY;
 }
 
-function buildTroopPlacements(arena, actor) {
-  const midY = getMidY(arena);
-  const frontY = actor === "blue" ? midY + 2.5 : midY - 2.5;
-  const backY = actor === "blue" ? arena.maxY - 5.5 : arena.minY + 5.5;
-  const centerX = (arena.minX + arena.maxX) / 2;
-  const laneXs = arena.bridges?.length ? arena.bridges.map((bridge) => bridge.x) : [centerX - 4, centerX, centerX + 4];
-  const positions = [
-    { x: laneXs[0] ?? centerX - 4, y: frontY },
-    { x: centerX, y: frontY },
-    { x: laneXs[1] ?? centerX + 4, y: frontY },
-    { x: laneXs[0] ?? centerX - 4, y: backY },
-    { x: centerX, y: backY },
-    { x: laneXs[1] ?? centerX + 4, y: backY },
-  ];
-
-  return positions.map((position) => {
-    const snapped = snapPositionToGrid(position, arena);
+function buildTroopPlacements(state, actor) {
+  return buildTroopPlacementCandidates({
+    arena: state.arena,
+    entities: state.entities,
+    actor,
+  }).map((position) => {
+    const snapped = snapPositionToGrid(position, state.arena);
     return { x: roundPlacement(snapped.x), y: roundPlacement(snapped.y) };
   });
 }
@@ -257,9 +248,13 @@ function buildSpellTargets(state, actor) {
   return result;
 }
 
-function isLegalTroopPlacement(actor, arena, y) {
-  const midY = getMidY(arena);
-  return actor === "blue" ? y >= midY : y <= midY;
+function isLegalTroopPlacement(actor, state, placement) {
+  return getTroopPlacementStatus({
+    arena: state.arena,
+    entities: state.entities,
+    actor,
+    position: placement,
+  }).ok;
 }
 
 function cardCost(action) {
@@ -282,8 +277,8 @@ export function enumerateLegalCardActions({ engine, actor = "red" }) {
     }
 
     if (card.type === "troop") {
-      for (const placement of buildTroopPlacements(engine.state.arena, actor)) {
-        if (!isLegalTroopPlacement(actor, engine.state.arena, placement.y)) {
+      for (const placement of buildTroopPlacements(engine.state, actor)) {
+        if (!isLegalTroopPlacement(actor, engine.state, placement)) {
           continue;
         }
         actions.push({ type: "PLAY_CARD", cardId, x: placement.x, y: placement.y });
