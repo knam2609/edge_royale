@@ -55,6 +55,12 @@ const WORLD_BOUNDS = Object.freeze({
   minY: arena.minY,
   maxY: arena.maxY,
 });
+const ARENA_SNAP_MIN = Object.freeze(snapPositionToGrid({ x: arena.minX, y: arena.minY }, arena));
+const ARENA_SNAP_MAX = Object.freeze(snapPositionToGrid({ x: arena.maxX, y: arena.maxY }, arena));
+const PLACEMENT_TILE_STEP = arena.grid?.step ?? 1;
+const PLACEMENT_TILE_HALF_STEP = PLACEMENT_TILE_STEP * 0.5;
+const PLACEMENT_TILE_COLUMNS = Object.freeze(buildPlacementAxis(ARENA_SNAP_MIN.x, ARENA_SNAP_MAX.x, PLACEMENT_TILE_STEP));
+const PLACEMENT_TILE_ROWS = Object.freeze(buildPlacementAxis(ARENA_SNAP_MIN.y, ARENA_SNAP_MAX.y, PLACEMENT_TILE_STEP));
 
 const MAX_ELIXIR = 10;
 const PROFILE_STORAGE_KEY = "edge_royale_profile_v1";
@@ -134,6 +140,18 @@ const appState = {
   transientEffects: [],
   lastProcessedReplayEventCount: 0,
 };
+
+function roundPlacementValue(value) {
+  return Math.round(value * 100) / 100;
+}
+
+function buildPlacementAxis(minValue, maxValue, step) {
+  const values = [];
+  for (let value = minValue; value <= maxValue + 1e-9; value += step) {
+    values.push(roundPlacementValue(value));
+  }
+  return values;
+}
 
 function getCanvasWidth() {
   return appState.canvasMetrics.width;
@@ -325,6 +343,108 @@ function tilesToPixels(tiles) {
   const pxPerTileX = viewport.width / (arena.maxX - arena.minX);
   const pxPerTileY = viewport.height / (arena.maxY - arena.minY);
   return tiles * ((pxPerTileX + pxPerTileY) * 0.5);
+}
+
+function isWithinDeployRegion(position, region) {
+  return (
+    position.x >= region.minX - 1e-9 &&
+    position.x <= region.maxX + 1e-9 &&
+    position.y >= region.minY - 1e-9 &&
+    position.y <= region.maxY + 1e-9
+  );
+}
+
+function makePlacementTileKey(x, y) {
+  return `${x.toFixed(2)}|${y.toFixed(2)}`;
+}
+
+function getPlacementTileRect(x, y) {
+  const topLeft = worldToScreen({ x: x - PLACEMENT_TILE_HALF_STEP, y: y - PLACEMENT_TILE_HALF_STEP });
+  const bottomRight = worldToScreen({ x: x + PLACEMENT_TILE_HALF_STEP, y: y + PLACEMENT_TILE_HALF_STEP });
+  return {
+    left: Math.min(topLeft.x, bottomRight.x),
+    right: Math.max(topLeft.x, bottomRight.x),
+    top: Math.min(topLeft.y, bottomRight.y),
+    bottom: Math.max(topLeft.y, bottomRight.y),
+  };
+}
+
+function buildPlacementOverlayState(deployRegions) {
+  const tileState = new Map();
+  const invalidTiles = [];
+
+  for (const y of PLACEMENT_TILE_ROWS) {
+    for (const x of PLACEMENT_TILE_COLUMNS) {
+      const legal = arena.isPathable(x, y) && deployRegions.some((region) => isWithinDeployRegion({ x, y }, region));
+      const key = makePlacementTileKey(x, y);
+      tileState.set(key, legal);
+      if (!legal) {
+        invalidTiles.push({ x, y });
+      }
+    }
+  }
+
+  return { tileState, invalidTiles };
+}
+
+function hasLegalPlacementNeighbor(tileState, x, y, dx, dy) {
+  const nextX = roundPlacementValue(x + dx * PLACEMENT_TILE_STEP);
+  const nextY = roundPlacementValue(y + dy * PLACEMENT_TILE_STEP);
+  if (nextX < ARENA_SNAP_MIN.x - 1e-9 || nextX > ARENA_SNAP_MAX.x + 1e-9) {
+    return false;
+  }
+  if (nextY < ARENA_SNAP_MIN.y - 1e-9 || nextY > ARENA_SNAP_MAX.y + 1e-9) {
+    return false;
+  }
+  return tileState.get(makePlacementTileKey(nextX, nextY)) === true;
+}
+
+function drawTroopPlacementOverlay(deployRegions) {
+  const viewport = getArenaViewport();
+  const { tileState, invalidTiles } = buildPlacementOverlayState(deployRegions);
+
+  ctx.save();
+  pathRoundedRect(viewport.x, viewport.y, viewport.width, viewport.height, Math.max(18, 24 * getLayoutScale()));
+  ctx.clip();
+
+  ctx.fillStyle = "rgba(255, 108, 108, 0.18)";
+  for (const tile of invalidTiles) {
+    const rect = getPlacementTileRect(tile.x, tile.y);
+    ctx.fillRect(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top);
+  }
+
+  ctx.strokeStyle = "rgba(255, 72, 72, 0.96)";
+  ctx.lineWidth = Math.max(1.5, 2.2 * getLayoutScale());
+  ctx.lineCap = "round";
+  for (const tile of invalidTiles) {
+    const rect = getPlacementTileRect(tile.x, tile.y);
+    if (hasLegalPlacementNeighbor(tileState, tile.x, tile.y, 0, -1)) {
+      ctx.beginPath();
+      ctx.moveTo(rect.left, rect.top);
+      ctx.lineTo(rect.right, rect.top);
+      ctx.stroke();
+    }
+    if (hasLegalPlacementNeighbor(tileState, tile.x, tile.y, 1, 0)) {
+      ctx.beginPath();
+      ctx.moveTo(rect.right, rect.top);
+      ctx.lineTo(rect.right, rect.bottom);
+      ctx.stroke();
+    }
+    if (hasLegalPlacementNeighbor(tileState, tile.x, tile.y, 0, 1)) {
+      ctx.beginPath();
+      ctx.moveTo(rect.left, rect.bottom);
+      ctx.lineTo(rect.right, rect.bottom);
+      ctx.stroke();
+    }
+    if (hasLegalPlacementNeighbor(tileState, tile.x, tile.y, -1, 0)) {
+      ctx.beginPath();
+      ctx.moveTo(rect.left, rect.top);
+      ctx.lineTo(rect.left, rect.bottom);
+      ctx.stroke();
+    }
+  }
+
+  ctx.restore();
 }
 
 function getTeamPalette(actor) {
@@ -1496,32 +1616,7 @@ function drawArenaBackground() {
       entities: appState.engine.state.entities,
       actor: "blue",
     });
-    ctx.fillStyle = "rgba(98,165,255,0.1)";
-    for (const region of deployRegions) {
-      const topLeft = worldToScreen({ x: region.minX, y: region.minY });
-      const bottomRight = worldToScreen({ x: region.maxX, y: region.maxY });
-      const rectX = Math.min(topLeft.x, bottomRight.x);
-      const rectY = Math.min(topLeft.y, bottomRight.y);
-      const rectWidth = Math.abs(bottomRight.x - topLeft.x);
-      const rectHeight = Math.abs(bottomRight.y - topLeft.y);
-      ctx.fillRect(rectX, rectY, rectWidth, rectHeight);
-    }
-
-    ctx.setLineDash([12, 7]);
-    ctx.strokeStyle = "rgba(255,244,198,0.86)";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    for (const region of deployRegions) {
-      const topLeft = worldToScreen({ x: region.minX, y: region.minY });
-      const bottomRight = worldToScreen({ x: region.maxX, y: region.maxY });
-      const rectX = Math.min(topLeft.x, bottomRight.x);
-      const rectY = Math.min(topLeft.y, bottomRight.y);
-      const rectWidth = Math.abs(bottomRight.x - topLeft.x);
-      const rectHeight = Math.abs(bottomRight.y - topLeft.y);
-      ctx.rect(rectX, rectY, rectWidth, rectHeight);
-    }
-    ctx.stroke();
-    ctx.setLineDash([]);
+    drawTroopPlacementOverlay(deployRegions);
   }
 
   ctx.restore();

@@ -1,6 +1,8 @@
 import { getArenaMidY, snapPositionToGrid } from "./map.js";
 
 const POSITION_EPSILON = 1e-9;
+const POCKET_WIDTH_TILES = 9;
+const POCKET_DEPTH_TILES = 5;
 const TROOP_BACK_OFFSET = Object.freeze({
   own: 9,
   pocket: 5,
@@ -22,18 +24,43 @@ function getSharedBoundaryX(arena) {
   return snapPositionToGrid({ x: (arena.minX + arena.maxX) * 0.5, y: getArenaMidY(arena) }, arena).x;
 }
 
-function getFirstLandRowBeyondRiver(arena, actor, side) {
+function snapArenaRow(arena, y) {
+  return snapPositionToGrid({ x: arena.minX, y }, arena).y;
+}
+
+function snapArenaColumn(arena, x) {
+  return snapPositionToGrid({ x, y: arena.minY }, arena).x;
+}
+
+function getSnappedArenaBounds(arena) {
+  return {
+    minX: snapArenaColumn(arena, arena.minX),
+    maxX: snapArenaColumn(arena, arena.maxX),
+    minY: snapArenaRow(arena, arena.minY),
+    maxY: snapArenaRow(arena, arena.maxY),
+  };
+}
+
+function getBridgeEntryRow(arena, actor, side) {
   if (!arena.river) {
     return null;
   }
 
-  if (actor === "blue") {
-    const y = side === "enemy" ? arena.river.minY - 1 : arena.river.maxY + 1;
-    return snapPositionToGrid({ x: arena.minX, y }, arena).y;
-  }
+  const bridgeRowOnNorthSide = snapArenaRow(arena, arena.river.minY - 1);
+  const bridgeRowOnSouthSide = snapArenaRow(arena, arena.river.maxY);
+  const useSouthSide = side === "own" ? actor === "blue" : actor === "red";
+  return useSouthSide ? bridgeRowOnSouthSide : bridgeRowOnNorthSide;
+}
 
-  const y = side === "enemy" ? arena.river.maxY + 1 : arena.river.minY - 1;
-  return snapPositionToGrid({ x: arena.minX, y }, arena).y;
+function shiftSnappedRow(arena, row, steps, towardSouth) {
+  return snapArenaRow(arena, row + (towardSouth ? steps : -steps));
+}
+
+function getSnappedBridgeRange(arena, bridge) {
+  return {
+    minX: snapArenaColumn(arena, bridge.minX),
+    maxX: snapArenaColumn(arena, bridge.maxX),
+  };
 }
 
 function getEnemyCrownTowers(entities, actor) {
@@ -43,27 +70,7 @@ function getEnemyCrownTowers(entities, actor) {
   );
 }
 
-function buildOwnSideRegion(arena, actor) {
-  if (!arena.river) {
-    const midY = getArenaMidY(arena);
-    if (actor === "blue") {
-      return { kind: "own", minX: arena.minX, maxX: arena.maxX, minY: midY, maxY: arena.maxY };
-    }
-    return { kind: "own", minX: arena.minX, maxX: arena.maxX, minY: arena.minY, maxY: midY };
-  }
-
-  const ownFrontY = getFirstLandRowBeyondRiver(arena, actor, "own");
-  if (actor === "blue") {
-    return { kind: "own", minX: arena.minX, maxX: arena.maxX, minY: ownFrontY, maxY: arena.maxY };
-  }
-  return { kind: "own", minX: arena.minX, maxX: arena.maxX, minY: arena.minY, maxY: ownFrontY };
-}
-
-function buildPocketRegions(arena, entities, actor) {
-  if (!arena.river) {
-    return [];
-  }
-
+function getDestroyedEnemyLanes(arena, entities, actor) {
   const enemyCrowns = getEnemyCrownTowers(entities, actor);
   if (enemyCrowns.length === 0) {
     return [];
@@ -74,35 +81,125 @@ function buildPocketRegions(arena, entities, actor) {
     return [];
   }
 
-  const pocketRiverY = getFirstLandRowBeyondRiver(arena, actor, "enemy");
-  const crownYs = enemyCrowns.map((tower) => tower.y);
   const sharedBoundaryX = getSharedBoundaryX(arena);
-  const verticalBounds =
-    actor === "blue"
-      ? {
-          minY: Math.min(...crownYs),
-          maxY: pocketRiverY,
-        }
-      : {
-          minY: pocketRiverY,
-          maxY: Math.max(...crownYs),
-        };
+  const lanes = [];
 
-  const leftDestroyed = destroyedCrowns.some((tower) => tower.x < sharedBoundaryX - POSITION_EPSILON);
-  const rightDestroyed = destroyedCrowns.some((tower) => tower.x > sharedBoundaryX + POSITION_EPSILON);
-
-  if (leftDestroyed && rightDestroyed) {
-    return [{ kind: "pocket", lane: "full", minX: arena.minX, maxX: arena.maxX, ...verticalBounds }];
+  if (destroyedCrowns.some((tower) => tower.x < sharedBoundaryX - POSITION_EPSILON)) {
+    lanes.push("left");
+  }
+  if (destroyedCrowns.some((tower) => tower.x > sharedBoundaryX + POSITION_EPSILON)) {
+    lanes.push("right");
   }
 
-  const pockets = [];
-  if (leftDestroyed) {
-    pockets.push({ kind: "pocket", lane: "left", minX: arena.minX, maxX: sharedBoundaryX, ...verticalBounds });
+  return lanes;
+}
+
+function buildOwnSideRegions(arena, actor) {
+  if (!arena.river) {
+    const midY = getArenaMidY(arena);
+    if (actor === "blue") {
+      return [{ kind: "own", zone: "main", minX: arena.minX, maxX: arena.maxX, minY: midY, maxY: arena.maxY }];
+    }
+    return [{ kind: "own", zone: "main", minX: arena.minX, maxX: arena.maxX, minY: arena.minY, maxY: midY }];
   }
-  if (rightDestroyed) {
-    pockets.push({ kind: "pocket", lane: "right", minX: sharedBoundaryX, maxX: arena.maxX, ...verticalBounds });
+
+  const bounds = getSnappedArenaBounds(arena);
+  const ownBridgeRow = getBridgeEntryRow(arena, actor, "own");
+  return actor === "blue"
+    ? [{ kind: "own", zone: "main", minX: bounds.minX, maxX: bounds.maxX, minY: ownBridgeRow, maxY: bounds.maxY }]
+    : [{ kind: "own", zone: "main", minX: bounds.minX, maxX: bounds.maxX, minY: bounds.minY, maxY: ownBridgeRow }];
+}
+
+function buildPocketRegionForLane(arena, actor, lane) {
+  const bounds = getSnappedArenaBounds(arena);
+  const widthOffset = POCKET_WIDTH_TILES - 1;
+  const depthOffset = POCKET_DEPTH_TILES - 1;
+  const bridgeRow = getBridgeEntryRow(arena, actor, "enemy");
+
+  const horizontalBounds = lane === "left"
+    ? {
+        minX: bounds.minX,
+        maxX: roundPlacement(bounds.minX + widthOffset),
+      }
+    : {
+        minX: roundPlacement(bounds.maxX - widthOffset),
+        maxX: bounds.maxX,
+      };
+
+  if (actor === "blue") {
+    return {
+      kind: "pocket",
+      lane,
+      ...horizontalBounds,
+      minY: shiftSnappedRow(arena, bridgeRow, depthOffset, false),
+      maxY: bridgeRow,
+    };
   }
-  return pockets;
+
+  return {
+    kind: "pocket",
+    lane,
+    ...horizontalBounds,
+    minY: bridgeRow,
+    maxY: shiftSnappedRow(arena, bridgeRow, depthOffset, true),
+  };
+}
+
+function buildPocketRegions(arena, entities, actor) {
+  if (!arena.river) {
+    return [];
+  }
+
+  return getDestroyedEnemyLanes(arena, entities, actor).map((lane) => buildPocketRegionForLane(arena, actor, lane));
+}
+
+function getBridgeConnectorBounds(arena) {
+  if (!arena.river) {
+    return null;
+  }
+
+  const northBridgeRow = snapArenaRow(arena, arena.river.minY - 1);
+  const southBridgeRow = snapArenaRow(arena, arena.river.maxY);
+  const minY = shiftSnappedRow(arena, northBridgeRow, 1, true);
+  const maxY = shiftSnappedRow(arena, southBridgeRow, 1, false);
+
+  if (maxY < minY - POSITION_EPSILON) {
+    return null;
+  }
+
+  return { minY, maxY };
+}
+
+function buildBridgeConnectorRegionForLane(arena, lane) {
+  if (!arena.river) {
+    return null;
+  }
+
+  const bridge = (arena.bridges ?? []).find((candidate) => candidate.lane === lane);
+  const connectorBounds = getBridgeConnectorBounds(arena);
+  if (!bridge || !connectorBounds) {
+    return null;
+  }
+
+  const span = getSnappedBridgeRange(arena, bridge);
+  return {
+    kind: "bridge_connector",
+    lane,
+    minX: span.minX,
+    maxX: span.maxX,
+    minY: connectorBounds.minY,
+    maxY: connectorBounds.maxY,
+  };
+}
+
+function buildBridgeConnectorRegions(arena, entities, actor) {
+  if (!arena.river) {
+    return [];
+  }
+
+  return getDestroyedEnemyLanes(arena, entities, actor)
+    .map((lane) => buildBridgeConnectorRegionForLane(arena, lane))
+    .filter(Boolean);
 }
 
 function isWithinRegion(position, region) {
@@ -120,7 +217,11 @@ function isOnOwnSideWithoutRiver(arena, actor, position) {
 }
 
 export function getTroopDeployRegions({ arena, entities = [], actor = "blue" }) {
-  return [buildOwnSideRegion(arena, actor), ...buildPocketRegions(arena, entities, actor)];
+  return [
+    ...buildOwnSideRegions(arena, actor),
+    ...buildBridgeConnectorRegions(arena, entities, actor),
+    ...buildPocketRegions(arena, entities, actor),
+  ];
 }
 
 export function getTroopPlacementStatus({ arena, entities = [], actor = "blue", position }) {
@@ -153,15 +254,43 @@ export function getTroopPlacementStatus({ arena, entities = [], actor = "blue", 
 }
 
 function getCandidateRowsForRegion(region, arena) {
+  if (Math.abs(region.maxY - region.minY) <= POSITION_EPSILON) {
+    return [roundPlacement(region.minY)];
+  }
+
   const isNorthRegion = (region.minY + region.maxY) * 0.5 < getArenaMidY(arena);
-  const maxDepth = Math.max(1, region.maxY - region.minY - 1);
+  const maxDepth = Math.max(0, region.maxY - region.minY);
   const deepOffset = Math.min(TROOP_BACK_OFFSET[region.kind] ?? TROOP_BACK_OFFSET.own, maxDepth);
-  const offsets = [...new Set([1, deepOffset])];
+  const offsets = [...new Set([0, deepOffset])];
 
   return offsets.map((offset) => {
     const y = isNorthRegion ? region.maxY - offset : region.minY + offset;
     return roundPlacement(clamp(y, region.minY, region.maxY));
   });
+}
+
+function getCandidateColumnsForRegion(region, arena) {
+  const candidates = [
+    snapPositionToGrid({ x: (region.minX + region.maxX) * 0.5, y: region.minY }, arena).x,
+    ...(arena.bridges?.map((bridge) => snapArenaColumn(arena, bridge.x)) ?? []),
+  ];
+  const seen = new Set();
+  const columns = [];
+
+  for (const candidate of candidates) {
+    const rounded = roundPlacement(candidate);
+    if (rounded < region.minX - POSITION_EPSILON || rounded > region.maxX + POSITION_EPSILON) {
+      continue;
+    }
+    const key = rounded.toFixed(2);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    columns.push(rounded);
+  }
+
+  return columns;
 }
 
 export function buildTroopPlacementCandidates({ arena, entities = [], actor = "blue" }) {
@@ -187,18 +316,11 @@ export function buildTroopPlacementCandidates({ arena, entities = [], actor = "b
   }
 
   const regions = getTroopDeployRegions({ arena, entities, actor });
-  const centerX = getSharedBoundaryX(arena);
-  const laneXs = arena.bridges?.length
-    ? arena.bridges.map((bridge) => bridge.x)
-    : [((arena.minX + arena.maxX) * 0.5) - 4, centerX, ((arena.minX + arena.maxX) * 0.5) + 4];
-  const candidateXs = [...new Set([...laneXs, centerX].map((value) => roundPlacement(value)))];
   const placements = [];
   const seen = new Set();
 
   for (const region of regions) {
-    const xOptions = candidateXs.filter(
-      (value) => value >= region.minX - POSITION_EPSILON && value <= region.maxX + POSITION_EPSILON,
-    );
+    const xOptions = getCandidateColumnsForRegion(region, arena);
     const rows = getCandidateRowsForRegion(region, arena);
     for (const x of xOptions) {
       for (const y of rows) {

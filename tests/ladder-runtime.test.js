@@ -58,8 +58,8 @@ function makeRoyaleEngine(redHand, { blueLeftHp = getTowerStats("crown").hp, blu
   });
 }
 
-test("enumerateLegalCardActions respects side placement for troops", () => {
-  const engine = makeEngine(["giant", "fireball", "knight", "arrows"]);
+test("enumerateLegalCardActions includes the full front row on your side", () => {
+  const engine = makeRoyaleEngine(["giant", "fireball", "knight", "arrows"]);
   const actions = enumerateLegalCardActions({ engine, actor: "red" });
 
   assert.ok(actions.length > 0);
@@ -69,28 +69,42 @@ test("enumerateLegalCardActions respects side placement for troops", () => {
   assert.ok(troopActions.length > 0);
   assert.ok(spellActions.length > 0);
   for (const action of troopActions) {
-    assert.ok(action.y <= 16, `red troop action crossed river: y=${action.y}`);
+    assert.ok(action.y <= 14.5, `red troop action crossed river: y=${action.y}`);
   }
+  assert.ok(troopActions.some((action) => action.y === 14.5 && action.x === 3.5));
+  assert.ok(troopActions.some((action) => action.y === 14.5 && action.x === 9.5));
+  assert.ok(troopActions.some((action) => action.y === 14.5 && action.x === 15.5));
 });
 
-test("enumerateLegalCardActions unlocks only the captured pocket for red troops", () => {
+test("enumerateLegalCardActions unlocks only the captured 5x9 pocket and bridge connector for red troops", () => {
   const engine = makeRoyaleEngine(["giant", "fireball", "knight", "arrows"], { blueLeftHp: 0 });
   const actions = enumerateLegalCardActions({ engine, actor: "red" });
   const troopActions = actions.filter((action) => action.cardId === "giant" || action.cardId === "knight");
-  const pocketActions = troopActions.filter((action) => action.y >= 18.5);
+  const pocketActions = troopActions.filter((action) => action.y >= 17.5);
+  const bridgeActions = troopActions.filter((action) => action.y > 14.5 && action.y < 17.5);
 
   assert.ok(pocketActions.length > 0);
-  assert.ok(pocketActions.some((action) => action.x === 3.5 || action.x === 9.5));
+  assert.ok(pocketActions.some((action) => action.x === 3.5 || action.x === 4.5));
+  assert.ok(pocketActions.every((action) => action.x <= 8.5));
+  assert.ok(pocketActions.every((action) => action.y <= 21.5));
   assert.ok(!pocketActions.some((action) => action.x === 15.5));
+  assert.ok(bridgeActions.some((action) => action.x === 3.5));
+  assert.ok(bridgeActions.every((action) => action.x === 3.5));
+  assert.ok(bridgeActions.every((action) => action.y === 15.5 || action.y === 16.5));
 });
 
-test("enumerateLegalCardActions unlocks the full pocket after both crowns fall", () => {
+test("enumerateLegalCardActions unlocks both 5x9 pockets and both bridge connectors after both crowns fall", () => {
   const engine = makeRoyaleEngine(["giant", "fireball", "knight", "arrows"], { blueLeftHp: 0, blueRightHp: 0 });
   const actions = enumerateLegalCardActions({ engine, actor: "red" });
   const troopActions = actions.filter((action) => action.cardId === "giant" || action.cardId === "knight");
-  const pocketActions = troopActions.filter((action) => action.y >= 18.5);
+  const pocketActions = troopActions.filter((action) => action.y >= 17.5);
+  const bridgeActions = troopActions.filter((action) => action.y > 14.5 && action.y < 17.5);
 
+  assert.ok(pocketActions.some((action) => action.x <= 8.5));
   assert.ok(pocketActions.some((action) => action.x === 15.5));
+  assert.ok(pocketActions.every((action) => action.y <= 21.5));
+  assert.ok(bridgeActions.some((action) => action.x === 3.5));
+  assert.ok(bridgeActions.some((action) => action.x === 15.5));
 });
 
 test("noob bot returns a legal action when not passing", () => {

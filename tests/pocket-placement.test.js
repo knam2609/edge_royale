@@ -43,52 +43,170 @@ function createPocketEngine(towers = createRoyaleTowers()) {
   });
 }
 
-test("troop placement stays on own side until an enemy crown tower falls", () => {
+test("own-side front row is legal full width while river tiles stay locked before pockets open", () => {
   const arena = createRoyaleArena({ minX: 0, maxX: 18, minY: 0, maxY: 32 });
-  const status = getTroopPlacementStatus({
+  const blueLeftFront = getTroopPlacementStatus({
     arena,
     entities: createRoyaleTowers(),
     actor: "blue",
-    position: { x: 3, y: 14.5 },
+    position: { x: 3.5, y: 17.5 },
+  });
+  const blueCenterFront = getTroopPlacementStatus({
+    arena,
+    entities: createRoyaleTowers(),
+    actor: "blue",
+    position: { x: 9.5, y: 17.5 },
+  });
+  const blueRightFront = getTroopPlacementStatus({
+    arena,
+    entities: createRoyaleTowers(),
+    actor: "blue",
+    position: { x: 15.5, y: 17.5 },
+  });
+  const redLeftFront = getTroopPlacementStatus({
+    arena,
+    entities: createRoyaleTowers(),
+    actor: "red",
+    position: { x: 3.5, y: 14.5 },
+  });
+  const redCenterFront = getTroopPlacementStatus({
+    arena,
+    entities: createRoyaleTowers(),
+    actor: "red",
+    position: { x: 9.5, y: 14.5 },
+  });
+  const redRightFront = getTroopPlacementStatus({
+    arena,
+    entities: createRoyaleTowers(),
+    actor: "red",
+    position: { x: 15.5, y: 14.5 },
+  });
+  const lockedBridgeRiver = getTroopPlacementStatus({
+    arena,
+    entities: createRoyaleTowers(),
+    actor: "blue",
+    position: { x: 3.5, y: 15.5 },
+  });
+  const lockedWater = getTroopPlacementStatus({
+    arena,
+    entities: createRoyaleTowers(),
+    actor: "blue",
+    position: { x: 5.5, y: 15.5 },
   });
 
-  assert.equal(status.ok, false);
-  assert.equal(status.reason, "Troops must be played on your side.");
+  assert.equal(blueLeftFront.ok, true);
+  assert.equal(blueCenterFront.ok, true);
+  assert.equal(blueRightFront.ok, true);
+  assert.equal(redLeftFront.ok, true);
+  assert.equal(redCenterFront.ok, true);
+  assert.equal(redRightFront.ok, true);
+  assert.equal(lockedBridgeRiver.ok, false);
+  assert.equal(lockedWater.ok, false);
+  assert.equal(lockedBridgeRiver.reason, "Troops must be played on your side.");
+  assert.equal(lockedWater.reason, "Troops need a land tile.");
 });
 
-test("one destroyed crown tower unlocks only that pocket plus the shared center column", () => {
+test("one destroyed crown tower unlocks only that lane's 5x9 pocket box and bridge connector", () => {
   const arena = createRoyaleArena({ minX: 0, maxX: 18, minY: 0, maxY: 32 });
   const entities = createRoyaleTowers({ redLeftHp: 0 });
-
-  const legalLeft = getTroopPlacementStatus({ arena, entities, actor: "blue", position: { x: 3, y: 14.5 } });
-  const legalCenter = getTroopPlacementStatus({ arena, entities, actor: "blue", position: { x: 9.5, y: 14.5 } });
-  const illegalRight = getTroopPlacementStatus({ arena, entities, actor: "blue", position: { x: 15, y: 14.5 } });
-
-  assert.equal(legalLeft.ok, true);
-  assert.equal(legalCenter.ok, true);
-  assert.equal(illegalRight.ok, false);
-  assert.equal(illegalRight.reason, "Troops must be played on your side or in an unlocked pocket.");
-});
-
-test("two destroyed crown towers merge both pockets but stop at the crown row", () => {
-  const arena = createRoyaleArena({ minX: 0, maxX: 18, minY: 0, maxY: 32 });
-  const entities = createRoyaleTowers({ redLeftHp: 0, redRightHp: 0 });
   const regions = getTroopDeployRegions({ arena, entities, actor: "blue" });
   const pocket = regions.find((region) => region.kind === "pocket");
+  const connector = regions.find((region) => region.kind === "bridge_connector");
 
   assert.deepEqual(pocket, {
     kind: "pocket",
-    lane: "full",
-    minX: 0,
-    maxX: 18,
-    minY: 6,
+    lane: "left",
+    minX: 0.5,
+    maxX: 8.5,
+    minY: 10.5,
     maxY: 14.5,
   });
+  assert.deepEqual(connector, {
+    kind: "bridge_connector",
+    lane: "left",
+    minX: 2.5,
+    maxX: 4.5,
+    minY: 15.5,
+    maxY: 16.5,
+  });
 
-  const legalRight = getTroopPlacementStatus({ arena, entities, actor: "blue", position: { x: 15, y: 14.5 } });
-  const tooDeep = getTroopPlacementStatus({ arena, entities, actor: "blue", position: { x: 9.5, y: 5.5 } });
+  const legalBridgeRow = getTroopPlacementStatus({ arena, entities, actor: "blue", position: { x: 3.5, y: 14.5 } });
+  const legalUpperBridgeConnector = getTroopPlacementStatus({ arena, entities, actor: "blue", position: { x: 3.5, y: 15.5 } });
+  const legalLowerBridgeConnector = getTroopPlacementStatus({ arena, entities, actor: "blue", position: { x: 3.5, y: 16.5 } });
+  const legalInnerEdge = getTroopPlacementStatus({ arena, entities, actor: "blue", position: { x: 8.5, y: 10.5 } });
+  const illegalCenter = getTroopPlacementStatus({ arena, entities, actor: "blue", position: { x: 9.5, y: 14.5 } });
+  const illegalRight = getTroopPlacementStatus({ arena, entities, actor: "blue", position: { x: 15.5, y: 14.5 } });
+  const illegalOtherBridge = getTroopPlacementStatus({ arena, entities, actor: "blue", position: { x: 15.5, y: 15.5 } });
+  const illegalWater = getTroopPlacementStatus({ arena, entities, actor: "blue", position: { x: 5.5, y: 15.5 } });
+
+  assert.equal(legalBridgeRow.ok, true);
+  assert.equal(legalUpperBridgeConnector.ok, true);
+  assert.equal(legalLowerBridgeConnector.ok, true);
+  assert.equal(legalInnerEdge.ok, true);
+  assert.equal(illegalCenter.ok, false);
+  assert.equal(illegalRight.ok, false);
+  assert.equal(illegalOtherBridge.ok, false);
+  assert.equal(illegalWater.ok, false);
+  assert.equal(illegalCenter.reason, "Troops must be played on your side or in an unlocked pocket.");
+  assert.equal(illegalRight.reason, "Troops must be played on your side or in an unlocked pocket.");
+  assert.equal(illegalOtherBridge.reason, "Troops must be played on your side or in an unlocked pocket.");
+  assert.equal(illegalWater.reason, "Troops need a land tile.");
+});
+
+test("two destroyed crown towers unlock both 5x9 pocket boxes and bridge connectors without merging", () => {
+  const arena = createRoyaleArena({ minX: 0, maxX: 18, minY: 0, maxY: 32 });
+  const entities = createRoyaleTowers({ redLeftHp: 0, redRightHp: 0 });
+  const regions = getTroopDeployRegions({ arena, entities, actor: "blue" });
+  const pockets = regions.filter((region) => region.kind === "pocket");
+  const connectors = regions.filter((region) => region.kind === "bridge_connector");
+
+  assert.deepEqual(pockets, [
+    {
+      kind: "pocket",
+      lane: "left",
+      minX: 0.5,
+      maxX: 8.5,
+      minY: 10.5,
+      maxY: 14.5,
+    },
+    {
+      kind: "pocket",
+      lane: "right",
+      minX: 9.5,
+      maxX: 17.5,
+      minY: 10.5,
+      maxY: 14.5,
+    },
+  ]);
+  assert.deepEqual(connectors, [
+    {
+      kind: "bridge_connector",
+      lane: "left",
+      minX: 2.5,
+      maxX: 4.5,
+      minY: 15.5,
+      maxY: 16.5,
+    },
+    {
+      kind: "bridge_connector",
+      lane: "right",
+      minX: 14.5,
+      maxX: 16.5,
+      minY: 15.5,
+      maxY: 16.5,
+    },
+  ]);
+
+  const legalRight = getTroopPlacementStatus({ arena, entities, actor: "blue", position: { x: 15.5, y: 14.5 } });
+  const legalRightInnerEdge = getTroopPlacementStatus({ arena, entities, actor: "blue", position: { x: 9.5, y: 10.5 } });
+  const legalLeftBridgeConnector = getTroopPlacementStatus({ arena, entities, actor: "blue", position: { x: 3.5, y: 16.5 } });
+  const legalRightBridgeConnector = getTroopPlacementStatus({ arena, entities, actor: "blue", position: { x: 15.5, y: 15.5 } });
+  const tooDeep = getTroopPlacementStatus({ arena, entities, actor: "blue", position: { x: 9.5, y: 9.5 } });
 
   assert.equal(legalRight.ok, true);
+  assert.equal(legalRightInnerEdge.ok, true);
+  assert.equal(legalLeftBridgeConnector.ok, true);
+  assert.equal(legalRightBridgeConnector.ok, true);
   assert.equal(tooDeep.ok, false);
 });
 
@@ -103,8 +221,29 @@ test("engine rejects locked pockets without cycling the card", () => {
       type: "PLAY_CARD",
       actor: "blue",
       cardId: "knight",
-      x: 15,
+      x: 15.5,
       y: 14.5,
+    },
+  ]);
+
+  assert.deepEqual(engine.getHand("blue"), handBefore);
+  assert.equal(engine.state.elixir.blue.elixir, elixirBefore);
+  assert.equal(engine.state.replay.events.some((event) => event.type === "card_played"), false);
+});
+
+test("engine rejects locked bridge river placements without cycling the card", () => {
+  const engine = createPocketEngine();
+  const handBefore = engine.getHand("blue");
+  const elixirBefore = engine.state.elixir.blue.elixir;
+
+  engine.step([
+    {
+      tick: 1,
+      type: "PLAY_CARD",
+      actor: "blue",
+      cardId: "knight",
+      x: 3.5,
+      y: 15.5,
     },
   ]);
 
@@ -133,4 +272,26 @@ test("engine accepts unlocked pocket placements and cycles the card", () => {
   assert.ok(playedEvent);
   assert.equal(playedEvent.x, 3.5);
   assert.equal(playedEvent.y, 14.5);
+});
+
+test("engine accepts unlocked bridge river placements and cycles the card", () => {
+  const engine = createPocketEngine(createRoyaleTowers({ redLeftHp: 0 }));
+  const handBefore = engine.getHand("blue");
+
+  engine.step([
+    {
+      tick: 1,
+      type: "PLAY_CARD",
+      actor: "blue",
+      cardId: "knight",
+      x: 3.5,
+      y: 15.5,
+    },
+  ]);
+
+  assert.notDeepEqual(engine.getHand("blue"), handBefore);
+  const playedEvent = engine.state.replay.events.find((event) => event.type === "card_played" && event.card_id === "knight");
+  assert.ok(playedEvent);
+  assert.equal(playedEvent.x, 3.5);
+  assert.equal(playedEvent.y, 15.5);
 });
