@@ -306,3 +306,26 @@ Original prompt: PLEASE IMPLEMENT THIS PLAN (3x overtime elixir + Fireball knock
     - No `errors.json` produced in the Playwright output directory
   - Environment note:
     - Starting the local dev server required an escalated run because sandboxed listening failed with `listen EPERM`
+
+- Bridge-mouth placement + red invalid overlay pass (March 30, 2026):
+  - Reworked troop placement geometry in `src/sim/placement.js`:
+    - own-side legal area now uses a full-width back row plus forward bridge-mouth strips only
+    - unlocked pockets now use one `5 deep x 9 wide` box per destroyed crown tower, including the bridge row
+    - both crowns destroyed unlock both boxes independently instead of merging to a full-width enemy pocket
+  - Updated AI placement candidates to include the new bridge-mouth front row and the custom pocket boxes.
+  - Replaced the troop-card deploy overlay in `src/client/webGame.js`:
+    - legal ground stays normal
+    - invalid placement tiles are light red
+    - boundary between legal and invalid tiles is drawn in bright red
+    - overlay still appears on card select and drag, while spell targeting visuals stay unchanged
+  - Updated tests:
+    - `tests/pocket-placement.test.js`
+    - `tests/ladder-runtime.test.js`
+  - Validation:
+    - Full suite passing: `npm test` (`64/64`)
+    - Focused browser verification on local server `http://127.0.0.1:4173`
+    - `output/web-game-bridge-overlay-page.png` shows the light-red invalid zone with the boundary stepping forward only at the bridge mouths
+    - `output/web-game-bridge-overlay-page.meta.json` confirms the live page had a troop card selected (`blue_selected_index: 1`) during the capture
+    - `output/web-game-bridge-overlay-spell.png` confirms the red placement mask does not appear when a spell card is selected (`blue_selected_index: 0`)
+  - Browser automation note:
+    - the bundled web-game client still produced a mismatched canvas-only screenshot in this environment, so final visual verification used an escalated direct Playwright page capture instead
