@@ -28,9 +28,12 @@ test("portrait reference layout preserves the measured anchors", () => {
   assert.equal(layout.frame.width, REFERENCE_SCREEN.width);
   assert.equal(layout.frame.height, REFERENCE_SCREEN.height);
   assert.equal(layout.arenaViewport.y, 86);
+  assert.equal(layout.arenaViewport.height, 980);
   assert.equal(layout.bottomTray.y, 1088);
   assert.equal(layout.handSlots.length, 4);
+  assert.equal(layout.crownRail.y, 384);
   assert.ok(layout.crownRail.x > layout.arenaViewport.x + layout.arenaViewport.width * 0.9);
+  assert.ok(layout.bottomTray.y >= layout.arenaViewport.y + layout.arenaViewport.height + 20);
 });
 
 test("desktop layout keeps the portrait baseline centered with uniform scaling", () => {
@@ -42,6 +45,7 @@ test("desktop layout keeps the portrait baseline centered with uniform scaling",
   almostEqual(layout.frame.width, REFERENCE_SCREEN.width * expectedScale);
   almostEqual(layout.frame.x, (1400 - layout.frame.width) * 0.5);
   almostEqual(layout.arenaViewport.width, 750 * expectedScale);
+  almostEqual(layout.arenaViewport.height, 980 * expectedScale);
 });
 
 test("hand hit testing excludes the next card panel and returns slot indices", () => {

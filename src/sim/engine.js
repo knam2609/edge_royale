@@ -1,6 +1,6 @@
 import { saveReplay } from "../replay/codec.js";
 import { getCard, DEFAULT_DECK } from "./cards.js";
-import { stepCombat } from "./combat.js";
+import { resolveGroundUnitCollisions, stepCombat } from "./combat.js";
 import { ARROWS_CONFIG, FIREBALL_CONFIG, MATCH_CONFIG, TICK_RATE, getMatchPhase } from "./config.js";
 import { ElixirTracker } from "./elixir.js";
 import { applyForcedMotion, createTroop } from "./entities.js";
@@ -319,7 +319,7 @@ function spawnTroops({ state, actor, card, x, y }) {
       y: spawnPosition.y,
       hp: card.hp,
     });
-    troop.bridge_x = bridgeAssignments[i] ?? troop.x;
+    troop.preferred_lane_x = bridgeAssignments[i] ?? troop.x;
 
     state.entities.push(troop);
 
@@ -661,8 +661,21 @@ export function createEngine({
     }));
 
     state.entities.sort((a, b) => a.id.localeCompare(b.id));
+    const forcedMotionOrigins = new Map(
+      state.entities
+        .filter(
+          (entity) =>
+            entity.entity_type === "troop" &&
+            entity.hp > 0 &&
+            entity.forced_motion_ticks_remaining > 0,
+        )
+        .map((entity) => [entity.id, { x: entity.x, y: entity.y }]),
+    );
     for (const entity of state.entities) {
       applyForcedMotion(entity, arena);
+    }
+    if (forcedMotionOrigins.size > 0) {
+      resolveGroundUnitCollisions({ entities: state.entities, arena, originalPositions: forcedMotionOrigins });
     }
 
     const result = evaluateMatchResult({
@@ -721,6 +734,8 @@ export function createEngine({
         y: entity.y,
         velocity: entity.velocity,
         target_entity_id: entity.target_entity_id,
+        preferred_lane_x: entity.preferred_lane_x ?? null,
+        is_active: entity.is_active ?? null,
         attack_cooldown_ticks_remaining: entity.attack_cooldown_ticks_remaining,
         forced_motion_vector: entity.forced_motion_vector,
         forced_motion_ticks_remaining: entity.forced_motion_ticks_remaining,

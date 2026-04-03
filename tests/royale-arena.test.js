@@ -117,7 +117,7 @@ test("archers deploy as a visible pair around the snapped placement", () => {
   const archers = getEntitiesByIds(engine, deployEvent.entity_ids).sort((a, b) => a.x - b.x);
   const archerStats = getTroopStats("archers");
   assert.equal(archers.length, 2);
-  assert.deepEqual(archers.map((entity) => entity.bridge_x), [3, 15]);
+  assert.deepEqual(archers.map((entity) => entity.preferred_lane_x), [3, 15]);
   assert.ok(archers.every((entity) => entity.hp === archerStats.hp));
   assert.ok(archers.every((entity) => entity.attack_damage === archerStats.attack_damage));
   assert.ok(archers[0].x < deployEvent.x);
@@ -166,7 +166,7 @@ test("goblins deploy as four distinct units around the snapped placement", () =>
   const goblinStats = getTroopStats("goblins");
   assert.equal(goblins.length, 4);
   assert.equal(new Set(goblins.map((entity) => `${entity.x},${entity.y}`)).size, 4);
-  assert.deepEqual(goblins.map((entity) => entity.bridge_x).sort((a, b) => a - b), [3, 3, 15, 15]);
+  assert.deepEqual(goblins.map((entity) => entity.preferred_lane_x).sort((a, b) => a - b), [3, 3, 15, 15]);
   assert.ok(goblins.every((entity) => entity.hp === goblinStats.hp));
   assert.ok(goblins.every((entity) => entity.attack_damage === goblinStats.attack_damage));
   const xs = goblins.map((entity) => entity.x).sort((a, b) => a - b);
@@ -211,7 +211,7 @@ test("off-center multi-unit deployments stay on one lane", () => {
     (event) => event.type === "troop_deployed" && event.card_id === "archers",
   );
   const archers = getEntitiesByIds(archersEngine, archersDeploy.entity_ids);
-  assert.deepEqual(archers.map((entity) => entity.bridge_x), [15, 15]);
+  assert.deepEqual(archers.map((entity) => entity.preferred_lane_x), [15, 15]);
 
   const goblinsEngine = createEngine({
     seed: 307,
@@ -243,7 +243,7 @@ test("off-center multi-unit deployments stay on one lane", () => {
     (event) => event.type === "troop_deployed" && event.card_id === "goblins",
   );
   const goblins = getEntitiesByIds(goblinsEngine, goblinsDeploy.entity_ids);
-  assert.deepEqual(goblins.map((entity) => entity.bridge_x), [3, 3, 3, 3]);
+  assert.deepEqual(goblins.map((entity) => entity.preferred_lane_x), [3, 3, 3, 3]);
 });
 
 test("troops cross the royale river only on bridge tiles", () => {

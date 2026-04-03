@@ -138,6 +138,7 @@ const appState = {
   lagMs: 0,
   entityAnimations: new Map(),
   transientEffects: [],
+  towerActivationState: new Map(),
   lastProcessedReplayEventCount: 0,
 };
 
@@ -514,6 +515,11 @@ function getCardMonogram(cardId) {
 function resetVisualState() {
   appState.entityAnimations = new Map();
   appState.transientEffects = [];
+  appState.towerActivationState = new Map(
+    (appState.engine?.state?.entities ?? [])
+      .filter((entity) => entity.entity_type === "tower")
+      .map((entity) => [entity.id, entity.is_active !== false]),
+  );
   appState.lastProcessedReplayEventCount = appState.engine?.state?.replay?.events?.length ?? 0;
 }
 
@@ -641,6 +647,28 @@ function syncVisualState() {
 
   if (appState.engine?.state?.replay?.events) {
     processReplayVisualEvents();
+  }
+
+  for (const entity of appState.engine?.state?.entities ?? []) {
+    if (entity.entity_type !== "tower") {
+      continue;
+    }
+
+    const wasActive = appState.towerActivationState.get(entity.id) ?? false;
+    const isActive = entity.is_active !== false;
+    if (!wasActive && isActive) {
+      pushTransientEffect({
+        type: "king_activation",
+        startTick: tick,
+        endTick: tick + 24,
+        actor: entity.team,
+        towerId: entity.id,
+        towerRole: entity.tower_role,
+        x: entity.x,
+        y: entity.y,
+      });
+    }
+    appState.towerActivationState.set(entity.id, isActive);
   }
 
   for (const [entityId, animation] of appState.entityAnimations.entries()) {
@@ -1463,22 +1491,49 @@ function drawTowerPadAt(worldX, worldY, team, towerRole = "crown") {
   const layoutScale = getLayoutScale();
   const screen = worldToScreen({ x: worldX, y: worldY });
   const padRadius = (towerRole === "king" ? 31 : 24) * layoutScale;
-  drawShadow(screen, padRadius, 10, 0.15);
+  drawShadow(screen, padRadius, 10, towerRole === "king" ? 0.2 : 0.15);
   ctx.save();
   ctx.translate(screen.x, screen.y);
-  ctx.fillStyle = "rgba(222,229,232,0.9)";
+
+  if (towerRole === "king") {
+    ctx.save();
+    ctx.translate(0, 2 * layoutScale);
+    ctx.fillStyle = "rgba(244,233,210,0.68)";
+    ctx.beginPath();
+    ctx.ellipse(0, 1 * layoutScale, 34 * layoutScale, 18 * layoutScale, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "rgba(196,177,141,0.24)";
+    ctx.beginPath();
+    ctx.ellipse(0, -2 * layoutScale, 22 * layoutScale, 11 * layoutScale, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  ctx.fillStyle = towerRole === "king" ? "rgba(244,233,210,0.96)" : "rgba(222,229,232,0.9)";
   ctx.beginPath();
-  ctx.arc(0, 0, (towerRole === "king" ? 30 : 25) * layoutScale, 0, Math.PI * 2);
+  ctx.arc(0, 0, (towerRole === "king" ? 31 : 25) * layoutScale, 0, Math.PI * 2);
   ctx.fill();
-  ctx.strokeStyle = "rgba(108,117,128,0.9)";
+  ctx.strokeStyle = towerRole === "king" ? "rgba(136,106,58,0.7)" : "rgba(108,117,128,0.9)";
   ctx.lineWidth = Math.max(1.4, 2 * layoutScale);
   ctx.stroke();
 
   ctx.beginPath();
-  ctx.arc(0, 0, (towerRole === "king" ? 20 : 17) * layoutScale, 0, Math.PI * 2);
-  ctx.fillStyle = team === "blue" ? "rgba(88,140,255,0.2)" : "rgba(255,110,110,0.2)";
+  ctx.arc(0, 0, (towerRole === "king" ? 22 : 17) * layoutScale, 0, Math.PI * 2);
+  ctx.fillStyle =
+    towerRole === "king"
+      ? "rgba(246,222,154,0.28)"
+      : team === "blue"
+        ? "rgba(88,140,255,0.2)"
+        : "rgba(255,110,110,0.2)";
   ctx.fill();
   if (towerRole === "king") {
+    ctx.save();
+    ctx.globalAlpha = 0.38;
+    ctx.fillStyle = "rgba(255,236,179,0.72)";
+    ctx.beginPath();
+    ctx.ellipse(0, -10 * layoutScale, 18 * layoutScale, 8 * layoutScale, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
     drawCrownIcon(0, -1 * layoutScale, 12 * layoutScale, "rgba(244,212,123,0.95)");
   }
   ctx.restore();
@@ -1956,6 +2011,41 @@ function drawTransientEffects() {
       continue;
     }
 
+    if (effect.type === "king_activation") {
+      const screen = worldToScreen(effect);
+      const ringRadius = lerp(16, 54, eased);
+      const flareRadius = lerp(8, 20, eased);
+      const pulse = 1 + 0.12 * Math.sin(progress * Math.PI * 2);
+      ctx.save();
+      ctx.globalAlpha = alpha;
+
+      const glow = ctx.createRadialGradient(screen.x, screen.y - 4, flareRadius * 0.25, screen.x, screen.y - 4, ringRadius);
+      glow.addColorStop(0, "rgba(255,241,191,0.9)");
+      glow.addColorStop(0.45, "rgba(255,195,92,0.42)");
+      glow.addColorStop(1, "rgba(255,150,56,0)");
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      ctx.arc(screen.x, screen.y - 4, ringRadius, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.strokeStyle = "rgba(255,236,170,0.95)";
+      ctx.lineWidth = Math.max(2, 2.6 * (1 - progress));
+      ctx.beginPath();
+      ctx.arc(screen.x, screen.y - 2, flareRadius + 10 * eased, -Math.PI * 0.5, -Math.PI * 0.5 + Math.PI * 2 * eased);
+      ctx.stroke();
+
+      ctx.fillStyle = "rgba(255,241,186,0.9)";
+      ctx.beginPath();
+      ctx.moveTo(screen.x - 10 * pulse, screen.y - 6 * pulse);
+      ctx.lineTo(screen.x, screen.y - 18 * pulse);
+      ctx.lineTo(screen.x + 10 * pulse, screen.y - 6 * pulse);
+      ctx.lineTo(screen.x, screen.y + 6 * pulse);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+      continue;
+    }
+
     if (effect.type === "arrows_burst") {
       const screen = worldToScreen(effect);
       const radius = tilesToPixels(ARROWS_CONFIG.radius_tiles) * 0.75;
@@ -2213,6 +2303,18 @@ function drawTower(entity, entityLookup) {
 
   ctx.save();
   ctx.translate(screen.x, screen.y);
+  if (isKing && entity.is_active !== false) {
+    const pulse = 1 + 0.07 * Math.sin(appState.engine.state.tick * 0.4);
+    const haloRadius = 26 * pulse;
+    const halo = ctx.createRadialGradient(0, -2, 4, 0, -2, haloRadius);
+    halo.addColorStop(0, "rgba(255,234,170,0.42)");
+    halo.addColorStop(0.45, "rgba(255,198,92,0.18)");
+    halo.addColorStop(1, "rgba(255,160,60,0)");
+    ctx.fillStyle = halo;
+    ctx.beginPath();
+    ctx.arc(0, -2, haloRadius, 0, Math.PI * 2);
+    ctx.fill();
+  }
   fillRoundedRect(-towerWidth * 0.5, -towerHeight * 0.25, towerWidth, towerHeight, 6, "#dfe3e7");
   strokeRoundedRect(-towerWidth * 0.5, -towerHeight * 0.25, towerWidth, towerHeight, 6, "rgba(92,103,112,0.92)", 2);
   fillRoundedRect(-towerWidth * 0.38, -towerHeight * 0.5, towerWidth * 0.76, towerHeight * 0.3, 4, entity.team === "blue" ? "#5a8eff" : "#ff6969");
@@ -2220,13 +2322,29 @@ function drawTower(entity, entityLookup) {
 
   ctx.save();
   ctx.rotate(angle);
-  fillRoundedRect(-4, -towerHeight * 0.52, 8, isKing ? 20 : 16, 4, entity.is_active === false ? "#8f9cab" : "#a0a8b2");
-  ctx.fillStyle = entity.is_active === false ? "#71808f" : "#55626d";
+  fillRoundedRect(
+    -4,
+    -towerHeight * 0.52,
+    8,
+    isKing ? 20 : 16,
+    4,
+    entity.is_active === false ? "#8f9cab" : isKing ? "#f6d27a" : "#a0a8b2",
+  );
+  ctx.fillStyle = entity.is_active === false ? "#71808f" : isKing ? "#8b6441" : "#55626d";
   ctx.fillRect(-3, -towerHeight * 0.72, 6, 12);
   ctx.restore();
 
   if (isKing) {
     drawCrownIcon(0, -towerHeight * 0.12, 10, "#f6dd84", entity.is_active === false ? 0.65 : 1);
+    if (entity.is_active !== false) {
+      ctx.save();
+      ctx.globalAlpha = 0.25;
+      ctx.fillStyle = "#ffe49f";
+      ctx.beginPath();
+      ctx.arc(0, -towerHeight * 0.12, 13, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
   }
   ctx.restore();
 

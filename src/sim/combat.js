@@ -1,12 +1,12 @@
 import { TICK_RATE } from "./config.js";
-import {
-  clampPositionToArenaAndPathable,
-  getArenaMidY,
-  getArenaSide,
-  getNearestBridge,
-} from "./map.js";
+import { clampPositionToArenaAndPathable } from "./map.js";
+import { createGroundNavigation, getGroundPathingBlockers } from "./nav.js";
 
 const EPSILON = 1e-9;
+const MAX_COLLISION_PASSES = 3;
+const CROWD_INFLUENCE_PADDING = 0.4;
+const MOVEMENT_STEP_SCALES = Object.freeze([1, 0.72, 0.45]);
+const SIDE_STEP_ANGLES = Object.freeze([0, 0.4, -0.4, 0.8, -0.8]);
 
 function roundCoord(value) {
   return Math.round(value * 10000) / 10000;
@@ -108,33 +108,16 @@ function normalizeVector(x, y) {
   return { x: x / length, y: y / length };
 }
 
-function getForwardDirection(entity, arena) {
-  const bridge = getNearestBridge(arena, entity.x);
-  const laneBiasX = bridge ? (bridge.x - entity.x) * 0.18 : ((arena.minX + arena.maxX) * 0.5 - entity.x) * 0.15;
-  const laneBiasY = entity.team === "blue" ? -1 : 1;
-  return normalizeVector(laneBiasX, laneBiasY);
+function dotProduct(a, b) {
+  return a.x * b.x + a.y * b.y;
 }
 
-function getBridgeWaypoint(entity, goal, arena) {
-  if (!arena.river || !arena.bridges?.length) {
-    return goal;
-  }
-
-  const entitySide = getArenaSide(arena, entity.y);
-  const goalSide = getArenaSide(arena, goal.y);
-
-  if (entitySide === "river" || goalSide === "river" || entitySide === goalSide) {
-    return goal;
-  }
-
-  const bridge = getNearestBridge(arena, entity.bridge_x ?? entity.x);
-  if (!bridge) {
-    return goal;
-  }
-
+function rotateVector(vector, angle) {
+  const cosine = Math.cos(angle);
+  const sine = Math.sin(angle);
   return {
-    x: bridge.x,
-    y: arena.river.centerY,
+    x: vector.x * cosine - vector.y * sine,
+    y: vector.x * sine + vector.y * cosine,
   };
 }
 
@@ -171,40 +154,297 @@ function activateKingTowers(entities) {
   }
 }
 
-function moveTroop(entity, target, arena) {
-  const speedPerTick = entity.move_speed / TICK_RATE;
-  if (speedPerTick <= 0) {
-    entity.velocity = { x: 0, y: 0 };
-    return;
-  }
+function overlapsEntityAt(position, radius, otherPosition, otherRadius) {
+  const minDistance = radius + otherRadius;
+  return squaredDistance(position, otherPosition) < minDistance * minDistance - EPSILON;
+}
 
-  const movementGoal = target
-    ? getBridgeWaypoint(entity, target, arena)
-    : getBridgeWaypoint(
-        entity,
+function getStableCollisionNormal(a, b) {
+  if (a.preferred_lane_x !== b.preferred_lane_x) {
+    return normalizeVector((a.preferred_lane_x ?? a.x) - (b.preferred_lane_x ?? b.x), 0);
+  }
+  return normalizeVector(a.id.localeCompare(b.id) <= 0 ? -1 : 1, a.team === "blue" ? 1 : -1);
+}
+
+function resolvePositionAgainstStaticBlockers(position, entity, blockers, arena) {
+  let resolved = clampPositionToArenaAndPathable(position, arena);
+
+  for (let pass = 0; pass < 2; pass += 1) {
+    let moved = false;
+    for (const blocker of blockers) {
+      if (blocker.id === entity.id) {
+        continue;
+      }
+
+      const minDistance = (entity.collision_radius ?? entity.radius ?? 0) + (blocker.collision_radius ?? blocker.radius ?? 0);
+      const dx = resolved.x - blocker.x;
+      const dy = resolved.y - blocker.y;
+      const distance = Math.hypot(dx, dy);
+      if (distance >= minDistance - EPSILON) {
+        continue;
+      }
+
+      const direction =
+        distance > EPSILON
+          ? { x: dx / distance, y: dy / distance }
+          : getStableCollisionNormal(entity, blocker);
+      const pushDistance = minDistance - distance + 0.01;
+      resolved = clampPositionToArenaAndPathable(
         {
-          x: entity.x,
-          y: entity.team === "blue" ? arena.minY : arena.maxY,
+          x: resolved.x + direction.x * pushDistance,
+          y: resolved.y + direction.y * pushDistance,
         },
         arena,
       );
-  const direction =
-    target || movementGoal !== null
-      ? normalizeVector(movementGoal.x - entity.x, movementGoal.y - entity.y)
-      : getForwardDirection(entity, arena);
+      moved = true;
+    }
 
-  const desiredPosition = {
-    x: entity.x + direction.x * speedPerTick,
-    y: entity.y + direction.y * speedPerTick,
-  };
+    if (!moved) {
+      break;
+    }
+  }
 
-  const nextPosition = clampPositionToArenaAndPathable(desiredPosition, arena);
-  entity.velocity = {
-    x: roundCoord(nextPosition.x - entity.x),
-    y: roundCoord(nextPosition.y - entity.y),
+  return resolved;
+}
+
+function computeSeparationVector(entity, troopPositions, entitiesById) {
+  const current = troopPositions.get(entity.id) ?? entity;
+  let x = 0;
+  let y = 0;
+
+  for (const [otherId, otherPosition] of troopPositions.entries()) {
+    if (otherId === entity.id) {
+      continue;
+    }
+
+    const other = entitiesById.get(otherId);
+    if (!other || other.hp <= 0 || other.entity_type !== "troop") {
+      continue;
+    }
+
+    const minDistance = (entity.collision_radius ?? entity.radius ?? 0) + (other.collision_radius ?? other.radius ?? 0);
+    const influenceDistance = minDistance + CROWD_INFLUENCE_PADDING;
+    const dx = current.x - otherPosition.x;
+    const dy = current.y - otherPosition.y;
+    const distance = Math.hypot(dx, dy);
+    if (distance <= EPSILON || distance >= influenceDistance) {
+      continue;
+    }
+
+    const strength = ((influenceDistance - distance) / influenceDistance) / Math.max(0.2, entity.body_mass ?? 1);
+    x += (dx / distance) * strength;
+    y += (dy / distance) * strength;
+  }
+
+  return { x, y };
+}
+
+function isCandidatePositionClear(entity, candidate, troopPositions, entitiesById, blockers, arena) {
+  if (!arena.isPathable(candidate.x, candidate.y)) {
+    return false;
+  }
+
+  for (const blocker of blockers) {
+    if (blocker.id === entity.id) {
+      continue;
+    }
+
+    if (overlapsEntityAt(candidate, entity.collision_radius ?? entity.radius ?? 0, blocker, blocker.collision_radius ?? blocker.radius ?? 0)) {
+      return false;
+    }
+  }
+
+  for (const [otherId, otherPosition] of troopPositions.entries()) {
+    if (otherId === entity.id) {
+      continue;
+    }
+
+    const other = entitiesById.get(otherId);
+    if (!other || other.hp <= 0 || other.entity_type !== "troop") {
+      continue;
+    }
+
+    if (overlapsEntityAt(candidate, entity.collision_radius ?? entity.radius ?? 0, otherPosition, other.collision_radius ?? other.radius ?? 0)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function compareObjectivePlans(entity, candidate, incumbent) {
+  if (!incumbent) {
+    return -1;
+  }
+
+  if (Math.abs(candidate.path.distance - incumbent.path.distance) > EPSILON) {
+    return candidate.path.distance - incumbent.path.distance;
+  }
+
+  const preferredX = entity.preferred_lane_x ?? entity.x;
+  const candidatePreference = Math.abs(candidate.objective.x - preferredX);
+  const incumbentPreference = Math.abs(incumbent.objective.x - preferredX);
+  if (Math.abs(candidatePreference - incumbentPreference) > EPSILON) {
+    return candidatePreference - incumbentPreference;
+  }
+
+  return candidate.objective.id.localeCompare(incumbent.objective.id);
+}
+
+function getTowerObjectives(entity, entities) {
+  const enemyTowers = entities.filter(
+    (candidate) => candidate.hp > 0 && candidate.entity_type === "tower" && candidate.team !== entity.team,
+  );
+  const enemyCrownsDestroyed = entities.some(
+    (candidate) =>
+      candidate.entity_type === "tower" &&
+      candidate.team !== entity.team &&
+      candidate.tower_role === "crown" &&
+      candidate.hp <= 0,
+  );
+
+  return enemyTowers.filter((tower) => {
+    if (tower.tower_role === "crown") {
+      return true;
+    }
+    return enemyCrownsDestroyed;
+  });
+}
+
+function getNavigationCacheKey(entity, blockers) {
+  const blockerSignature = blockers
+    .map((blocker) => `${blocker.id}:${roundCoord(blocker.x)}:${roundCoord(blocker.y)}:${roundCoord(blocker.collision_radius ?? blocker.radius ?? 0)}`)
+    .join("|");
+  return `${roundCoord(entity.collision_radius ?? entity.radius ?? 0)}|${blockerSignature}`;
+}
+
+function getNavigationForTroop(entity, entities, arena, navigationCache) {
+  const blockers = getGroundPathingBlockers(entities);
+  const cacheKey = getNavigationCacheKey(entity, blockers);
+  const cached = navigationCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const navigation = createGroundNavigation({ arena, entities, troop: entity });
+  navigationCache.set(cacheKey, navigation);
+  return navigation;
+}
+
+function chooseMovementPlan(entity, target, entities, arena, navigationCache) {
+  const navigation = getNavigationForTroop(entity, entities, arena, navigationCache);
+
+  if (target) {
+    const targetPath = navigation.findPathToAttackRing(target);
+    if (targetPath.reachable) {
+      return {
+        navigation,
+        objective: target,
+        objectiveAnchor: { x: target.x, y: target.y },
+        path: targetPath,
+      };
+    }
+  }
+
+  const objectives = getTowerObjectives(entity, entities);
+  let best = null;
+  for (const objective of objectives) {
+    const path = navigation.findPathToAttackRing(objective);
+    if (!path.reachable) {
+      continue;
+    }
+
+    const candidate = {
+      navigation,
+      objective,
+      objectiveAnchor: { x: objective.x, y: objective.y },
+      path,
+    };
+    if (compareObjectivePlans(entity, candidate, best) < 0) {
+      best = candidate;
+    }
+  }
+
+  return best;
+}
+
+function scoreMovementCandidate(entity, currentPosition, candidatePosition, baseDirection, objectiveAnchor) {
+  const moveVector = normalizeVector(candidatePosition.x - currentPosition.x, candidatePosition.y - currentPosition.y);
+  const progress = objectiveAnchor
+    ? Math.hypot(objectiveAnchor.x - currentPosition.x, objectiveAnchor.y - currentPosition.y) -
+      Math.hypot(objectiveAnchor.x - candidatePosition.x, objectiveAnchor.y - candidatePosition.y)
+    : 0;
+  const lanePreference = Math.abs(candidatePosition.x - (entity.preferred_lane_x ?? entity.x));
+  return progress * 100 + dotProduct(moveVector, baseDirection) * 2 - lanePreference * 0.001;
+}
+
+function moveTroop(entity, target, arena, entities, troopPositions, entitiesById, navigationCache) {
+  const speedPerTick = entity.move_speed / TICK_RATE;
+  if (speedPerTick <= 0) {
+    return;
+  }
+
+  const movementPlan = chooseMovementPlan(entity, target, entities, arena, navigationCache);
+  const blockers = movementPlan?.navigation.blockers ?? getGroundPathingBlockers(entities);
+  const currentPosition = troopPositions.get(entity.id) ?? { x: entity.x, y: entity.y };
+  const objectiveAnchor = movementPlan?.path?.goal ?? movementPlan?.objectiveAnchor ?? {
+    x: entity.preferred_lane_x ?? entity.x,
+    y: entity.team === "blue" ? arena.minY : arena.maxY,
   };
-  entity.x = nextPosition.x;
-  entity.y = nextPosition.y;
+  const waypoint = movementPlan?.path?.nextWaypoint ?? movementPlan?.objectiveAnchor ?? objectiveAnchor;
+  const baseDirection = normalizeVector(waypoint.x - currentPosition.x, waypoint.y - currentPosition.y);
+  const fallbackDirection =
+    Math.hypot(baseDirection.x, baseDirection.y) > EPSILON
+      ? baseDirection
+      : normalizeVector(objectiveAnchor.x - currentPosition.x, objectiveAnchor.y - currentPosition.y);
+  const separationVector = computeSeparationVector(entity, troopPositions, entitiesById);
+  const steeringDirection = normalizeVector(
+    fallbackDirection.x + separationVector.x * 1.35,
+    fallbackDirection.y + separationVector.y * 1.35,
+  );
+
+  const directions = [];
+  const baseCandidate = Math.hypot(steeringDirection.x, steeringDirection.y) > EPSILON ? steeringDirection : fallbackDirection;
+  for (const angle of SIDE_STEP_ANGLES) {
+    const direction = angle === 0 ? baseCandidate : rotateVector(baseCandidate, angle);
+    if (Math.hypot(direction.x, direction.y) > EPSILON) {
+      directions.push(direction);
+    }
+  }
+  const pureSeparation = normalizeVector(separationVector.x, separationVector.y);
+  if (Math.hypot(pureSeparation.x, pureSeparation.y) > EPSILON) {
+    directions.push(pureSeparation);
+  }
+
+  let bestPosition = currentPosition;
+  let bestScore = Number.NEGATIVE_INFINITY;
+  for (const direction of directions) {
+    for (const scale of MOVEMENT_STEP_SCALES) {
+      const candidatePosition = resolvePositionAgainstStaticBlockers(
+        {
+          x: currentPosition.x + direction.x * speedPerTick * scale,
+          y: currentPosition.y + direction.y * speedPerTick * scale,
+        },
+        entity,
+        blockers,
+        arena,
+      );
+
+      if (!isCandidatePositionClear(entity, candidatePosition, troopPositions, entitiesById, blockers, arena)) {
+        continue;
+      }
+
+      const score = scoreMovementCandidate(entity, currentPosition, candidatePosition, fallbackDirection, objectiveAnchor);
+      if (score > bestScore + EPSILON) {
+        bestScore = score;
+        bestPosition = candidatePosition;
+      }
+    }
+  }
+
+  troopPositions.set(entity.id, bestPosition);
+  entity.x = roundCoord(bestPosition.x);
+  entity.y = roundCoord(bestPosition.y);
 }
 
 function tickCooldown(entity) {
@@ -213,9 +453,106 @@ function tickCooldown(entity) {
   }
 }
 
+export function resolveGroundUnitCollisions({ entities, arena, originalPositions = null }) {
+  const troops = entities
+    .filter((entity) => entity.entity_type === "troop" && entity.hp > 0)
+    .sort((a, b) => a.id.localeCompare(b.id));
+  const blockers = getGroundPathingBlockers(entities);
+
+  for (let pass = 0; pass < MAX_COLLISION_PASSES; pass += 1) {
+    let changed = false;
+
+    for (const troop of troops) {
+      const resolved = resolvePositionAgainstStaticBlockers(troop, troop, blockers, arena);
+      if (Math.abs(resolved.x - troop.x) > EPSILON || Math.abs(resolved.y - troop.y) > EPSILON) {
+        troop.x = roundCoord(resolved.x);
+        troop.y = roundCoord(resolved.y);
+        changed = true;
+      }
+    }
+
+    for (let i = 0; i < troops.length; i += 1) {
+      for (let j = i + 1; j < troops.length; j += 1) {
+        const a = troops[i];
+        const b = troops[j];
+        const dx = a.x - b.x;
+        const dy = a.y - b.y;
+        const distance = Math.hypot(dx, dy);
+        const minDistance = (a.collision_radius ?? a.radius ?? 0) + (b.collision_radius ?? b.radius ?? 0);
+        if (distance >= minDistance - EPSILON) {
+          continue;
+        }
+
+        const direction = distance > EPSILON ? { x: dx / distance, y: dy / distance } : getStableCollisionNormal(a, b);
+        const overlap = minDistance - distance + 0.01;
+        const inverseMassA = 1 / Math.max(0.2, a.body_mass ?? 1);
+        const inverseMassB = 1 / Math.max(0.2, b.body_mass ?? 1);
+        const totalInverseMass = inverseMassA + inverseMassB;
+        const moveA = overlap * (inverseMassA / totalInverseMass);
+        const moveB = overlap * (inverseMassB / totalInverseMass);
+
+        const nextA = resolvePositionAgainstStaticBlockers(
+          {
+            x: a.x + direction.x * moveA,
+            y: a.y + direction.y * moveA,
+          },
+          a,
+          blockers,
+          arena,
+        );
+        const nextB = resolvePositionAgainstStaticBlockers(
+          {
+            x: b.x - direction.x * moveB,
+            y: b.y - direction.y * moveB,
+          },
+          b,
+          blockers,
+          arena,
+        );
+
+        a.x = roundCoord(nextA.x);
+        a.y = roundCoord(nextA.y);
+        b.x = roundCoord(nextB.x);
+        b.y = roundCoord(nextB.y);
+        changed = true;
+      }
+    }
+
+    if (!changed) {
+      break;
+    }
+  }
+
+  if (originalPositions) {
+    for (const troop of troops) {
+      const original = originalPositions.get(troop.id);
+      if (!original) {
+        continue;
+      }
+
+      troop.velocity = {
+        x: roundCoord(troop.x - original.x),
+        y: roundCoord(troop.y - original.y),
+      };
+    }
+  }
+}
+
 export function stepCombat({ entities, arena }) {
   const ordered = [...entities].sort((a, b) => a.id.localeCompare(b.id));
   const attackEvents = [];
+  const navigationCache = new Map();
+  const originalPositions = new Map(
+    ordered
+      .filter((entity) => entity.entity_type === "troop" && entity.hp > 0)
+      .map((entity) => [entity.id, { x: entity.x, y: entity.y }]),
+  );
+  const troopPositions = new Map(
+    ordered
+      .filter((entity) => entity.entity_type === "troop" && entity.hp > 0)
+      .map((entity) => [entity.id, { x: entity.x, y: entity.y }]),
+  );
+  const entitiesById = new Map(ordered.map((entity) => [entity.id, entity]));
 
   for (const entity of ordered) {
     if (!isAlive(entity)) {
@@ -245,7 +582,7 @@ export function stepCombat({ entities, arena }) {
 
     if (!target) {
       if (entity.entity_type === "troop") {
-        moveTroop(entity, null, arena);
+        moveTroop(entity, null, arena, ordered, troopPositions, entitiesById, navigationCache);
       } else {
         entity.velocity = { x: 0, y: 0 };
       }
@@ -259,11 +596,12 @@ export function stepCombat({ entities, arena }) {
     }
 
     if (entity.entity_type === "troop") {
-      moveTroop(entity, target, arena);
+      moveTroop(entity, target, arena, ordered, troopPositions, entitiesById, navigationCache);
     } else {
       entity.velocity = { x: 0, y: 0 };
     }
   }
 
+  resolveGroundUnitCollisions({ entities: ordered, arena, originalPositions });
   return attackEvents;
 }
