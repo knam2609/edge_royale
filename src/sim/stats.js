@@ -20,11 +20,23 @@ export const MOVE_SPEED_TILES_PER_SECOND = Object.freeze({
   [MOVE_SPEED_CLASS.VERY_FAST]: 2.4,
 });
 
+const COLLISION_PROFILE = Object.freeze({
+  giant: Object.freeze({ collision_radius: 0.72, body_mass: 3.2 }),
+  knight: Object.freeze({ collision_radius: 0.5, body_mass: 1.7 }),
+  archers: Object.freeze({ collision_radius: 0.42, body_mass: 0.95 }),
+  mini_pekka: Object.freeze({ collision_radius: 0.5, body_mass: 1.8 }),
+  musketeer: Object.freeze({ collision_radius: 0.5, body_mass: 1.6 }),
+  goblins: Object.freeze({ collision_radius: 0.36, body_mass: 0.75 }),
+});
+
 function withMoveSpeed(spec) {
   const moveSpeed = MOVE_SPEED_TILES_PER_SECOND[spec.move_speed_class];
+  const collisionProfile = COLLISION_PROFILE[spec.id] ?? COLLISION_PROFILE.knight;
   return Object.freeze({
     ...spec,
     move_speed: moveSpeed ?? MOVE_SPEED_TILES_PER_SECOND[MOVE_SPEED_CLASS.MEDIUM],
+    collision_radius: spec.collision_radius ?? collisionProfile.collision_radius,
+    body_mass: spec.body_mass ?? collisionProfile.body_mass,
   });
 }
 

@@ -68,6 +68,7 @@ export function runLadderMatch({
   seed,
   trainedModelBlue = null,
   trainedModelRed = null,
+  maxTicks = MATCH_CONFIG.regulation_ticks + MATCH_CONFIG.overtime_ticks + 40,
 }) {
   const arena = makeArena();
   const engine = createEngine({
@@ -80,7 +81,6 @@ export function runLadderMatch({
   const blue = makeBotController(seed ^ 0x9e3779b9);
   const red = makeBotController(seed ^ 0x85ebca6b);
 
-  const maxTicks = MATCH_CONFIG.regulation_ticks + MATCH_CONFIG.overtime_ticks + 40;
   while (engine.state.tick < maxTicks && !engine.getMatchResult()) {
     const actions = [];
 
@@ -119,7 +119,7 @@ export function runLadderMatch({
   };
 }
 
-export function runBenchmark({ botA, botB, seed = 1337, rounds = 100 }) {
+export function runBenchmark({ botA, botB, seed = 1337, rounds = 100, maxTicks = undefined }) {
   const rng = createRng(seed);
 
   let winsA = 0;
@@ -134,6 +134,7 @@ export function runBenchmark({ botA, botB, seed = 1337, rounds = 100 }) {
       blueTier: swapSides ? botB : botA,
       redTier: swapSides ? botA : botB,
       seed: matchSeed,
+      maxTicks,
     });
 
     const winner = match.result?.winner ?? null;
@@ -167,6 +168,7 @@ export function runBenchmarkMatrix({
   tiers = ["noob", "mid", "top", "pro", "goat", "god"],
   seed = 1337,
   roundsPerPair = 100,
+  maxTicks = undefined,
 } = {}) {
   const normalizedTiers = Array.isArray(tiers)
     ? tiers.filter((tierId, index) => typeof tierId === "string" && tiers.indexOf(tierId) === index)
@@ -184,6 +186,7 @@ export function runBenchmarkMatrix({
         botB: lower,
         seed: pairSeed,
         rounds: roundsPerPair,
+        maxTicks,
       });
 
       pairs.push({

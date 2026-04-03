@@ -6,8 +6,8 @@ export const REFERENCE_SCREEN = Object.freeze({
 const REFERENCE_RECTS = Object.freeze({
   topBanner: Object.freeze({ x: 8, y: 8, width: 476, height: 82 }),
   timerBox: Object.freeze({ x: 618, y: 6, width: 126, height: 82 }),
-  arenaViewport: Object.freeze({ x: 0, y: 86, width: 750, height: 1006 }),
-  crownRail: Object.freeze({ x: 690, y: 372, width: 60, height: 384 }),
+  arenaViewport: Object.freeze({ x: 0, y: 86, width: 750, height: 980 }),
+  crownRail: Object.freeze({ x: 690, y: 384, width: 60, height: 384 }),
   bottomTray: Object.freeze({ x: 126, y: 1088, width: 624, height: 246 }),
   closeButton: Object.freeze({ x: 32, y: 1100, width: 78, height: 78 }),
   nextCardRect: Object.freeze({ x: 36, y: 1220, width: 70, height: 92 }),
