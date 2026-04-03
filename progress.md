@@ -1,5 +1,15 @@
 Original prompt: PLEASE IMPLEMENT THIS PLAN (3x overtime elixir + Fireball knockback exception), then continue.
 
+- Hybrid pathfinding/body-blocking pass (April 4, 2026):
+  - Added deterministic half-tile ground navigation in `src/sim/nav.js` with tower blockers and attack-ring path queries.
+  - Reworked `src/sim/combat.js` troop movement to use objective-driven routing, size-based crowd steering, and post-step non-overlap resolution.
+  - Replaced hard `bridge_x` lane commitment with `preferred_lane_x` as a spawn-side tie-breaker only.
+  - Added troop collision profiles (`collision_radius`, `body_mass`) and tower ground-block flags in sim entities/stats.
+  - Added sim regressions for tower routing, choke-point blocking, lateral side-slip, diagonal king repathing, and deterministic obstacle-aware movement.
+  - Updated `docs/GAME_RULES.md` movement/collision language to match the new model.
+  - Parallel UI pass also landed locally: shorter arena viewport, recentered crown rail, stronger king pad/tile treatment, and king activation VFX.
+  - Next step: run the broader combined test suite plus browser validation on the integrated sim + UI changes and tune any gameplay feel issues found there.
+
 - Initialized headless simulation, replay, AI, and tests for overtime + knockback rules.
 - Current step: scaffold browser client with deterministic hooks (`window.render_game_to_text`, `window.advanceTime`).
 - TODO: wire canvas UI to sim tick loop and click-to-cast fireball interaction.
