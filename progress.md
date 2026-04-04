@@ -339,3 +339,24 @@ Original prompt: PLEASE IMPLEMENT THIS PLAN (3x overtime elixir + Fireball knock
     - `output/web-game-bridge-overlay-spell.png` confirms the red placement mask does not appear when a spell card is selected (`blue_selected_index: 0`)
   - Browser automation note:
     - the bundled web-game client still produced a mismatched canvas-only screenshot in this environment, so final visual verification used an escalated direct Playwright page capture instead
+
+- Pathfinding rollback to pre-April 4 movement behavior (April 5, 2026):
+  - Replaced the hybrid half-tile navigation/body-blocking movement in `src/sim/combat.js` with the earlier bridge-waypoint routing model, while keeping `preferred_lane_x` as the lane-assignment field.
+  - Removed the now-unused navigation/collision scaffolding:
+    - deleted `src/sim/nav.js`
+    - removed collision/body-mass/path-block metadata from `src/sim/entities.js` and `src/sim/stats.js`
+    - removed post-forced-motion ground collision resolution from `src/sim/engine.js`
+  - Reverted movement docs and tests to the older behavior:
+    - updated `docs/GAME_RULES.md`
+    - removed the April 4 combat regressions from `tests/combat.test.js`
+  - Validation:
+    - Full suite passing: `npm test` (`67/67`)
+    - Browser smoke artifacts against the user's local server on `http://127.0.0.1:5173`:
+      - `output/pathfinding-rollback-smoke/shot-0.png`
+      - `output/pathfinding-rollback-smoke/shot-1.png`
+      - `output/pathfinding-rollback-smoke/shot-2.png`
+      - `output/pathfinding-rollback-smoke/state-0.json`
+      - `output/pathfinding-rollback-smoke/state-1.json`
+      - `output/pathfinding-rollback-smoke/state-2.json`
+    - No `errors-*.json` files were produced in the smoke output directory.
+    - State snapshots show red troops advancing and ending the sampled match cleanly by destroying the blue king tower under the restored movement model.
