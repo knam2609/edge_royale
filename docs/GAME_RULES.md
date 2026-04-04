@@ -87,21 +87,12 @@
 
 ## 8) Movement and Pathing
 
-- Ground troops use deterministic objective-driven navigation on a half-tile grid.
-- Static blockers:
-  - River tiles outside bridges are impassable.
-  - Live towers block ground pathing.
+- Troops follow shortest lane path toward opposing towers.
 - Collision handling:
-  - Troops have collision radii and body mass values separate from combat range radii.
-  - Troops may not end a tick overlapping another troop or a blocking structure.
-  - Larger troops displace less and naturally body-block smaller troops more often.
-  - Smaller troops may slide into side clearance, but only when there is real lateral space.
-- Objective routing:
-  - If a troop has a reachable target, it paths toward that target's attack ring.
-  - Otherwise it paths toward the nearest reachable enemy tower objective.
-  - Enemy king towers become valid movement objectives as soon as one enemy crown tower has fallen.
+  - Soft separation to avoid exact overlap.
+  - No advanced body-block simulation.
 - Repathing:
-  - Recompute movement paths continuously as blockers, targets, and tower objectives change.
+  - Recompute target path if target is destroyed.
 
 ## 9) Spells
 
