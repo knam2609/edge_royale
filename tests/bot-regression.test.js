@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import { runBenchmark, runBenchmarkMatrix, runLadderMatch } from "../src/ai/benchmark.js";
 
-const SMOKE_MAX_TICKS = 600;
+const SMOKE_MAX_TICKS = 120;
 
 test("ladder match smoke run returns structured score payload", () => {
   const match = runLadderMatch({

@@ -53,6 +53,7 @@ export function createArena({
     river,
     bridges,
     grid,
+    pathability_mode: isPathable ? "custom" : "default",
   };
 
   arena.isPathable = isPathable ?? createDefaultIsPathable(arena);

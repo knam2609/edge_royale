@@ -34,6 +34,7 @@ function defineTroop(spec) {
     spawn_count: 1,
     spawn_offsets: SINGLE_SPAWN_OFFSETS,
     deploy_time_ticks: TROOP_DEPLOY_TICKS,
+    body_mass: 1,
     ...spec,
   });
 }
@@ -50,6 +51,7 @@ export const CARD_STATS = Object.freeze({
     id: "giant",
     cost: 5,
     hp: 4090,
+    body_mass: 18,
     move_speed_class: MOVE_SPEED_CLASS.SLOW,
     attack_damage: 253,
     attack_range: 1.2,
@@ -61,6 +63,7 @@ export const CARD_STATS = Object.freeze({
     id: "knight",
     cost: 3,
     hp: 1766,
+    body_mass: 6,
     move_speed_class: MOVE_SPEED_CLASS.MEDIUM,
     attack_damage: 202,
     attack_range: 1.2,
@@ -72,6 +75,7 @@ export const CARD_STATS = Object.freeze({
     id: "archers",
     cost: 3,
     hp: 304,
+    body_mass: 3,
     spawn_count: 2,
     spawn_offsets: freezeSpawnOffsets([
       { x: -0.35, y: 0 },
@@ -88,6 +92,7 @@ export const CARD_STATS = Object.freeze({
     id: "mini_pekka",
     cost: 4,
     hp: 1433,
+    body_mass: 4,
     move_speed_class: MOVE_SPEED_CLASS.FAST,
     attack_damage: 755,
     attack_range: 0.8,
@@ -99,6 +104,7 @@ export const CARD_STATS = Object.freeze({
     id: "musketeer",
     cost: 4,
     hp: 721,
+    body_mass: 5,
     move_speed_class: MOVE_SPEED_CLASS.MEDIUM,
     attack_damage: 217,
     attack_range: 6.0,
@@ -110,6 +116,7 @@ export const CARD_STATS = Object.freeze({
     id: "goblins",
     cost: 2,
     hp: 202,
+    body_mass: 2,
     spawn_count: 4,
     spawn_offsets: freezeSpawnOffsets([
       { x: -0.4, y: -0.2 },

@@ -1,6 +1,6 @@
 import { saveReplay } from "../replay/codec.js";
 import { getCard, DEFAULT_DECK } from "./cards.js";
-import { stepCombat } from "./combat.js";
+import { resolveTroopBodyCollisions, stepCombat } from "./combat.js";
 import { ARROWS_CONFIG, FIREBALL_CONFIG, MATCH_CONFIG, TICK_RATE, getMatchPhase } from "./config.js";
 import { ElixirTracker } from "./elixir.js";
 import { applyForcedMotion, createTroop } from "./entities.js";
@@ -18,6 +18,7 @@ function cloneEntity(entity) {
     ...entity,
     forced_motion_vector: { ...entity.forced_motion_vector },
     velocity: { ...(entity.velocity ?? { x: 0, y: 0 }) },
+    ground_blocker: entity.ground_blocker ? { ...entity.ground_blocker } : entity.ground_blocker,
   };
 }
 
@@ -148,6 +149,25 @@ function getDefaultLaunchPosition(arena, actor) {
 
 function roundCoord(value) {
   return Math.round(value * 10000) / 10000;
+}
+
+function snapshotPositions(entities) {
+  return new Map(entities.map((entity) => [entity.id, { x: entity.x, y: entity.y }]));
+}
+
+function updateEntityVelocities(entities, startPositions) {
+  for (const entity of entities) {
+    const start = startPositions.get(entity.id);
+    if (!start || entity.hp <= 0) {
+      entity.velocity = { x: 0, y: 0 };
+      continue;
+    }
+
+    entity.velocity = {
+      x: roundCoord(entity.x - start.x),
+      y: roundCoord(entity.y - start.y),
+    };
+  }
 }
 
 function getCenterDeploymentColumns(arena) {
@@ -655,6 +675,7 @@ export function createEngine({
 
     processDueEffects({ state, fireballConfig });
 
+    const positionsAtTickStart = snapshotPositions(state.entities);
     state.recent_combat_events = stepCombat({ entities: state.entities, arena }).map((event) => ({
       ...event,
       tick: state.tick,
@@ -662,8 +683,10 @@ export function createEngine({
 
     state.entities.sort((a, b) => a.id.localeCompare(b.id));
     for (const entity of state.entities) {
-      applyForcedMotion(entity, arena);
+      applyForcedMotion(entity, arena, state.entities);
     }
+    resolveTroopBodyCollisions({ entities: state.entities, arena });
+    updateEntityVelocities(state.entities, positionsAtTickStart);
 
     const result = evaluateMatchResult({
       tick: state.tick,
@@ -723,6 +746,8 @@ export function createEngine({
         target_entity_id: entity.target_entity_id,
         preferred_lane_x: entity.preferred_lane_x ?? null,
         is_active: entity.is_active ?? null,
+        collision_radius: entity.collision_radius ?? null,
+        body_mass: entity.body_mass ?? null,
         attack_cooldown_ticks_remaining: entity.attack_cooldown_ticks_remaining,
         forced_motion_vector: entity.forced_motion_vector,
         forced_motion_ticks_remaining: entity.forced_motion_ticks_remaining,
