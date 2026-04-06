@@ -1,5 +1,5 @@
 import { createKnockbackReplayEvent } from "../replay/events.js";
-import { clampPositionToArenaAndPathable } from "./map.js";
+import { clampGroundPosition, getIgnoredBlockerIdsForEntity, getTroopCollisionRadius } from "./nav.js";
 
 function roundCoord(value) {
   return Math.round(value * 10000) / 10000;
@@ -84,7 +84,13 @@ export function resolveFireballImpact({
       y: entity.y + direction.y * fireballConfig.knockback_distance_tiles,
     };
 
-    const clampedFinalPosition = clampPositionToArenaAndPathable(desiredPosition, arena);
+    const clampedFinalPosition = clampGroundPosition({
+      position: desiredPosition,
+      arena,
+      entities,
+      clearance: getTroopCollisionRadius(entity),
+      ignoredBlockerIds: getIgnoredBlockerIdsForEntity(entity, entities),
+    });
     const durationTicks = fireballConfig.knockback_duration_ticks;
 
     const vectorPerTick = {

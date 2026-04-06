@@ -218,6 +218,17 @@ Original prompt: PLEASE IMPLEMENT THIS PLAN (3x overtime elixir + Fireball knock
   - Replaced abstract troop circles with procedural 2D silhouettes and card-specific combat poses:
     - Giant punch
     - Knight / Mini P.E.K.K.A sword swings
+
+- Lane-locked collision restore pass (April 6, 2026):
+  - Reverted `src/sim/combat.js` normal troop movement from half-tile nav / crowd-steering back to bridge-waypoint lane-locked movement.
+  - Kept only a small one-pass local body resolver with capped compression (`0.18`) and capped lateral slip (`0.20`) so collisions no longer rewrite bridge choice or macro path.
+  - Restored uniform troop movement width in `src/sim/entities.js` (`radius` / `collision_radius` back to `0.45`) and removed per-card collision radius specs from `src/sim/stats.js`.
+  - Replaced the collision regressions in `tests/collision.test.js`; removed expectations for bridge queueing and tower-footprint rerouting, added assertions for bridge stability, mild compression, heavy-vs-light local resolution, and retarget lane lock.
+  - Validation:
+    - `npm test` passed (`72/72`).
+    - Browser smoke run via local dev server on `http://127.0.0.1:4173` produced clean artifacts in `output/web-game-collision-fix/`, `output/web-game-collision-fix-short/`, and `output/web-game-collision-fix-scaled/` with no Playwright error dumps.
+  - Follow-up:
+    - If the live feel still needs tuning, adjust only the local compression / lateral-slip caps; do not reintroduce nav-based repathing for troop bodies.
     - Archer bow fire + projectile
     - Musketeer shotgun-style recoil / muzzle blast
     - Goblin knife stab

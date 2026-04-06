@@ -4,8 +4,13 @@ import assert from "node:assert/strict";
 import { FIREBALL_CONFIG } from "../src/sim/config.js";
 import { createEngine } from "../src/sim/engine.js";
 import { createTroop, createTower } from "../src/sim/entities.js";
-import { createArena } from "../src/sim/map.js";
+import { ROYALE_LANE_X, createArena, createRoyaleArena } from "../src/sim/map.js";
+import { resolveFireballImpact } from "../src/sim/spells.js";
 import { getTowerStats } from "../src/sim/stats.js";
+
+function getEntity(engine, id) {
+  return engine.state.entities.find((entity) => entity.id === id);
+}
 
 test("troops advance toward enemy side when out of range", () => {
   const arena = createArena({ minX: 0, maxX: 18, minY: 0, maxY: 32 });
@@ -135,4 +140,144 @@ test("troops acquire enemies inside sight range before they are in attack range"
   assert.equal(red.hp, 1400);
   assert.ok(blue.y < 9);
   assert.ok(red.y > 4.2);
+});
+
+test("side-pocket troops fall back to the enemy king instead of drifting to the arena edge", () => {
+  const cases = [
+    { id: "archer", cardId: "archers", hp: 304 },
+    { id: "goblin", cardId: "goblins", hp: 202 },
+  ];
+
+  for (const troopCase of cases) {
+    const arena = createRoyaleArena({ minX: 0, maxX: 18, minY: 0, maxY: 32 });
+    const engine = createEngine({
+      seed: 150,
+      arena,
+      fireballConfig: FIREBALL_CONFIG,
+      initialEntities: [
+        createTower({ id: "red_left", team: "red", x: ROYALE_LANE_X.left, y: 6, hp: 0, tower_role: "crown" }),
+        createTower({ id: "red_right", team: "red", x: ROYALE_LANE_X.right, y: 6, hp: 3052, tower_role: "crown" }),
+        createTower({ id: "red_king", team: "red", x: ROYALE_LANE_X.center, y: 2, hp: 4824, tower_role: "king", is_active: false }),
+        createTroop({ id: troopCase.id, cardId: troopCase.cardId, team: "blue", x: 0.5, y: 10.5, hp: troopCase.hp }),
+      ],
+    });
+
+    engine.step([]);
+
+    const troop = getEntity(engine, troopCase.id);
+    assert.equal(troop.target_entity_id, "red_king", `${troopCase.cardId} should lock the enemy king as its fallback objective`);
+    assert.ok(troop.x > 0.5, `${troopCase.cardId} should move laterally toward the king tower`);
+    assert.ok(troop.y < 10.5, `${troopCase.cardId} should advance toward the enemy side objective`);
+  }
+});
+
+test("troops keep their locked target when a closer enemy enters sight but not attack range", () => {
+  const arena = createArena({ minX: 0, maxX: 12, minY: 0, maxY: 12 });
+  const engine = createEngine({
+    seed: 151,
+    arena,
+    fireballConfig: FIREBALL_CONFIG,
+    initialEntities: [
+      createTroop({ id: "blue", cardId: "knight", team: "blue", x: 6, y: 10, hp: 1766 }),
+      createTroop({ id: "red_locked", cardId: "knight", team: "red", x: 6, y: 6.2, hp: 1766 }),
+    ],
+  });
+
+  engine.step([]);
+  assert.equal(getEntity(engine, "blue").target_entity_id, "red_locked");
+
+  engine.state.entities.push(createTroop({ id: "red_closer", cardId: "knight", team: "red", x: 7.8, y: 9.2, hp: 1766 }));
+  engine.step([]);
+
+  const blue = getEntity(engine, "blue");
+  assert.equal(blue.target_entity_id, "red_locked");
+});
+
+test("troops only switch locks when a different target is already in attack range", () => {
+  const arena = createArena({ minX: 0, maxX: 12, minY: 0, maxY: 12 });
+  const engine = createEngine({
+    seed: 152,
+    arena,
+    fireballConfig: FIREBALL_CONFIG,
+    initialEntities: [
+      createTroop({ id: "blue", cardId: "knight", team: "blue", x: 6, y: 10, hp: 1766 }),
+      createTroop({ id: "red_locked", cardId: "knight", team: "red", x: 6, y: 6.2, hp: 1766 }),
+    ],
+  });
+
+  engine.step([]);
+  assert.equal(getEntity(engine, "blue").target_entity_id, "red_locked");
+
+  engine.state.entities.push(createTroop({ id: "red_in_range", cardId: "knight", team: "red", x: 6.2, y: 8.6, hp: 1766 }));
+  engine.step([]);
+
+  const blue = getEntity(engine, "blue");
+  const redInRange = getEntity(engine, "red_in_range");
+  assert.equal(blue.target_entity_id, "red_in_range");
+  assert.ok(redInRange.hp < 1766, `expected the in-range override target to take damage, got hp ${redInRange.hp}`);
+});
+
+test("forced motion clears the current lock until knockback ends, then troops reacquire", () => {
+  const arena = createArena({ minX: 0, maxX: 12, minY: 0, maxY: 12 });
+  const engine = createEngine({
+    seed: 153,
+    arena,
+    fireballConfig: FIREBALL_CONFIG,
+    initialEntities: [
+      createTroop({ id: "blue", cardId: "knight", team: "blue", x: 6, y: 10, hp: 1766 }),
+      createTroop({ id: "red_locked", cardId: "knight", team: "red", x: 6, y: 6.2, hp: 1766 }),
+    ],
+  });
+
+  engine.step([]);
+  assert.equal(getEntity(engine, "blue").target_entity_id, "red_locked");
+
+  resolveFireballImpact({
+    tick: engine.state.tick,
+    impactX: 6,
+    impactY: 10,
+    entities: engine.state.entities,
+    arena,
+    sourceSpell: "fireball",
+    fireballConfig: {
+      ...FIREBALL_CONFIG,
+      troop_damage: 0,
+      tower_damage: 0,
+    },
+  });
+
+  for (let i = 0; i < FIREBALL_CONFIG.knockback_duration_ticks; i += 1) {
+    engine.step([]);
+    assert.equal(getEntity(engine, "blue").target_entity_id, null);
+  }
+
+  engine.step([]);
+  assert.equal(getEntity(engine, "blue").target_entity_id, "red_locked");
+});
+
+test("towers keep their current lock until another troop is in range and the old lock is not", () => {
+  const arena = createArena({ minX: 0, maxX: 12, minY: 0, maxY: 12 });
+  const engine = createEngine({
+    seed: 154,
+    arena,
+    fireballConfig: FIREBALL_CONFIG,
+    initialEntities: [
+      createTower({ id: "blue_t", team: "blue", x: 6, y: 10, hp: 3800 }),
+      createTroop({ id: "red_locked", cardId: "knight", team: "red", x: 6, y: 4.2, hp: 1766 }),
+    ],
+  });
+
+  engine.step([]);
+  assert.equal(getEntity(engine, "blue_t").target_entity_id, "red_locked");
+
+  engine.state.entities.push(createTroop({ id: "red_in_range", cardId: "knight", team: "red", x: 6.2, y: 9, hp: 1766 }));
+  engine.step([]);
+
+  assert.equal(getEntity(engine, "blue_t").target_entity_id, "red_locked");
+  assert.equal(getEntity(engine, "red_in_range").hp, 1766);
+
+  getEntity(engine, "red_locked").y = 0;
+  engine.step([]);
+
+  assert.equal(getEntity(engine, "blue_t").target_entity_id, "red_in_range");
 });

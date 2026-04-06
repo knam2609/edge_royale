@@ -3058,6 +3058,8 @@ window.render_game_to_text = () => {
         x: entity.x,
         y: entity.y,
         velocity: entity.velocity,
+        collision_radius: entity.collision_radius ?? null,
+        body_mass: entity.body_mass ?? null,
         target_entity_id: entity.target_entity_id,
         attack_cooldown_ticks_remaining: entity.attack_cooldown_ticks_remaining,
         forced_motion_ticks_remaining: entity.forced_motion_ticks_remaining,
