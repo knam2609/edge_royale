@@ -1,373 +1,54 @@
-Original prompt: PLEASE IMPLEMENT THIS PLAN (3x overtime elixir + Fireball knockback exception), then continue.
+# Progress
 
-- Hybrid pathfinding/body-blocking pass (April 4, 2026):
-  - Added deterministic half-tile ground navigation in `src/sim/nav.js` with tower blockers and attack-ring path queries.
-  - Reworked `src/sim/combat.js` troop movement to use objective-driven routing, size-based crowd steering, and post-step non-overlap resolution.
-  - Replaced hard `bridge_x` lane commitment with `preferred_lane_x` as a spawn-side tie-breaker only.
-  - Added troop collision profiles (`collision_radius`, `body_mass`) and tower ground-block flags in sim entities/stats.
-  - Added sim regressions for tower routing, choke-point blocking, lateral side-slip, diagonal king repathing, and deterministic obstacle-aware movement.
-  - Updated `docs/GAME_RULES.md` movement/collision language to match the new model.
-  - Parallel UI pass also landed locally: shorter arena viewport, recentered crown rail, stronger king pad/tile treatment, and king activation VFX.
-  - Next step: run the broader combined test suite plus browser validation on the integrated sim + UI changes and tune any gameplay feel issues found there.
+## Current State
 
-- Initialized headless simulation, replay, AI, and tests for overtime + knockback rules.
-- Current step: scaffold browser client with deterministic hooks (`window.render_game_to_text`, `window.advanceTime`).
-- TODO: wire canvas UI to sim tick loop and click-to-cast fireball interaction.
-- TODO: run browser automation loop and inspect screenshot/state output.
+- As of April 8, 2026, the repo contains a playable browser prototype backed by a deterministic headless simulation.
+- The current product shape is a lightweight single-player Clash Royale-inspired game with one arena, a fixed 8-card deck, local bot ladder progression, replay support, and local self-play training scaffolding.
+- `progress.md` is now a live handoff only. Git history is the archive for prior implementation details.
 
-- Added browser client (`index.html`, `src/client/webGame.js`) with canvas rendering, player click Fireball, bot Fireball, overtime transition, and deterministic hooks.
-- Added local static dev server (`scripts/dev-server.mjs`) and `npm run dev` script.
-- Updated engine to enforce Fireball elixir spend by actor.
-- Installed Playwright tooling and browsers for validation.
-- Ran Playwright loop against local server; fixed browser import issue by removing Node-only crypto dependency from shared sim hash utility.
-- Re-ran Playwright with click actions: screenshots and state snapshots confirm gameplay loop, elixir spend, troop knockback (Giant immunity), and no console errors.
-- Next chunk: implement troop/tower movement + targeting + auto-attack in sim, then expose velocity/target info in text-state output.
-- Implemented deterministic combat tick (`src/sim/combat.js`): troop movement, target selection, cooldown-based auto-attacks, tower attacks.
-- Expanded entity runtime stats/fields (move speed, attack values, cooldown, current velocity, current target id).
-- Added combat tests (`tests/combat.test.js`) for movement, tower DPS, and Giant building-only targeting behavior.
-- Playwright validation (early-match snapshots) confirms troops now move up/down lanes, acquire targets, and trade damage.
-- `render_game_to_text` now exports velocity, target id, and cooldown for each visible entity.
-- Console error log remained clean in latest run; screenshots/state artifacts under `output/web-game`.
-- Added match-resolution module (`src/sim/match.js`) for crowns, regulation tie detection, overtime-end HP tiebreak, and draw handling.
-- Engine now stores `match_result`, tracks `overtime_start_tick`, emits `match_result` replay events, and exposes `getScore()`, `getMatchResult()`, `shouldStartOvertime()`.
-- Client now starts overtime only on tied crowns at regulation end, shows crowns in HUD, and transitions to `game_over` with structured winner reason.
-- Added integration tests for regulation winner, overtime tie path, overtime HP tiebreak, and overtime draw (`tests/match.test.js`).
-- Playwright run on updated build confirmed `game_over` transition and winner status message in HUD with score data in text output.
+## Source of Truth
 
-- Implemented real deck/hand cycle flow for gameplay actions:
-  - Added `src/sim/cards.js` with `CARD_LIBRARY` + deterministic `DEFAULT_DECK`.
-  - Updated engine action handling to support `PLAY_CARD` with hand validation, cost spend, placement rules, troop spawn/spell resolution, and post-play cycling.
-  - Added arrows spell resolution path and hand/deck APIs (`getHand`, `getDeckQueue`) for both actors.
-  - Updated browser client to card-slot selection + arena click card play, and switched bot from free-cast to hand-driven `PLAY_CARD`.
-- Resolved replay regression introduced by enemy-only spell filtering:
-  - Updated replay fixture to include a surviving enemy troop so knockback event assertions remain meaningful.
-  - Full test suite now passes (`20/20`).
-- Ran Playwright gameplay validation for hand/deck UX against local server (`output/web-game-hand`):
-  - Verified slot selection + card-play loop works and hand/draw queue rotate in `render_game_to_text`.
-  - Verified no console/page errors were emitted.
-  - Captured screenshots + state snapshots for three iterations; observed expected ongoing match state and elixir constraints.
+- Product overview and run instructions: `README.md`
+- Roadmap and phase intent: `docs/IMPLEMENTATION_PLAN.md`
+- Gameplay rules and engine behavior: `docs/GAME_RULES.md`
+- Card stats and contracts: `docs/CARD_SPECS.md`
+- Bot tier expectations and promotion targets: `docs/BOT_LEVELS.md`
+- Backlog and milestone framing: `docs/SPRINT_BACKLOG.md`
+- Durable agent workflow and handoff rules: `AGENTS.md`
 
-- Implemented deterministic delayed card resolution in simulation:
-  - Added troop deploy timing metadata in card library (`deploy_time_ticks=20` for troops).
-  - Added spell timing config (`fireball.cast_delay_ticks=6`, `fireball.travel_speed_tiles_per_second=10`, `arrows.cast_delay_ticks=16`).
-  - Refactored engine to schedule and resolve effects via `pending_effects` queue (`effect_scheduled`, `troop_deployed`, delayed `spell_impact` events).
-  - Preserved immediate elixir spend + hand cycle on accepted `PLAY_CARD`, with effect resolution deferred by timing rules.
-  - Added pending effects to state hash for determinism with in-flight actions.
-- Added timing-focused regression tests (`tests/action-timing.test.js`):
-  - Troop deployment resolves after 20 ticks.
-  - Arrows damage resolves after cast delay.
-  - Fireball resolves after cast+travel delay.
-  - Full suite passes (`23/23`).
-- Updated browser HUD/text-state to surface delayed effects:
-  - HUD now displays `Pending effects` count.
-  - `render_game_to_text` now includes structured `pending_effects`.
-- Playwright validation after timing refactor:
-  - Main gameplay run: `output/web-game-timing` (3 iterations), no console/page errors.
-  - Additional early snapshot run: `output/web-game-timing-pending` confirms non-zero pending effect state in both screenshot and text output.
+## What Works
 
-- Added visual telegraphs for delayed action timing in client canvas:
-  - Troop deploy pending effects now render as countdown circles + labels at spawn coordinates.
-  - Spell pending effects now render target reticles with countdown progress.
-  - Fireball pending effect now renders cast-phase link (launcher to target) and travel-phase projectile + trail.
-- Extended text-state pending effect payload with enqueue/launch fields:
-  - `enqueue_tick`, `launch_x`, `launch_y` are now included in `render_game_to_text`.
-- Validation artifacts for visuals:
-  - `output/web-game-visual-troop/shot-0.png` shows deploy telegraph in-world.
-  - `output/web-game-visual-fireball/shot-0.png` shows Fireball reticle + projectile path.
-  - No console error logs emitted in these focused runs.
+- Deterministic sim with fixed-tick combat, elixir pacing, overtime, match resolution, replay hashing, and Fireball knockback with Giant immunity.
+- Playable browser client with six-tower Royale layout, portrait-oriented HUD, card selection and placement, spell targeting, and deterministic browser hooks (`window.render_game_to_text`, `window.advanceTime`).
+- Placement and arena rules including bridge-only crossings, crown-tower pocket unlocks, and king activation behavior.
+- Local ladder/profile flow with unlock persistence, multiple bot tiers (`noob`, `mid`, `top`, `pro`, `goat`, `god`, `self`), benchmark utilities, and basic self-play training hooks.
 
-- Polished telegraph visual language (second pass):
-  - Added team-aware palettes (blue/red) and card-aware accents (Fireball/Arrows) for pending effects.
-  - Added eased timing interpolation for travel motion and smoother fade/opacity across effect lifetime.
-  - Fireball reticle now labels phase (`CAST` / `TRAVEL`) and uses layered countdown rings.
-  - Troop deploy marker now shows card mnemonic with cleaner countdown treatment.
-- Validation artifacts for polished pass:
-  - `output/web-game-visual-troop-v3/shot-0.png` confirms updated deploy telegraph styling while pending.
-  - `output/web-game-visual-fireball-v2/shot-0.png` confirms updated Fireball travel styling.
-  - No console error logs emitted in these captures.
+## Known Gaps
 
-- Code review + UI continuation pass completed in `src/client/webGame.js` and `index.html`:
-  - Fixed fullscreen/render-surface bug by adding DPR-aware canvas resize logic, `resize` + `fullscreenchange` handlers, and fullscreen CSS sizing rules.
-  - Fixed deterministic stepping edge case: `window.advanceTime(ms)` now only restores `ready` mode if the simulation is still `playing` after stepping (prevents clobbering `game_over`).
-  - Added drag-and-drop card placement UX on canvas (pointer capture, drag threshold, release-to-play flow, drop feedback, and selection fallback).
-  - Added live drag placement preview (tether line from hand slot, legal/illegal reticle, on-canvas reason text).
-  - Added deploy-side tint overlay when troop cards are active/dragged to improve placement affordance.
-  - Added HUD elixir pip meters (blue/red) and updated control hint text for drag flow.
-- Validation runs after changes:
-  - Unit tests: `npm test` passing (`23/23`).
-  - Playwright loop via skill client on clean local port: `output/web-game-ui-v3` (`shot-0..2.png`, `state-0..2.json`), no error artifacts generated.
-  - Focused drag verification script captured `output/web-game-ui-v3/drag-preview.png` and `output/web-game-ui-v3/drag-drop.png`; `drag-state.json` confirms drop created pending troop deploy effect.
-- Environment note:
-  - Port `5173` was already occupied by a stale dev server from another checkout (`/Users/thangnguyen/Documents/GitHub/edge_royale`), so validation used isolated ports (`5174`, `5175`) to avoid cross-worktree artifacts.
-- Next UI TODO suggestions:
-  - Add touch-friendly drag ghost/card icon scaling for smaller screens.
-  - Add explicit placement boundary/invalid-zone line labels for troop-only restrictions.
-  - Add a small integration UI smoke test around drag-drop + fullscreen resize behavior.
-- Started bot levels + training implementation pass (March 6, 2026):
-  - Added ladder runtime (`src/ai/ladderRuntime.js`) with tier configs (`noob`, `mid`, `top`, `self`), legal action generation from hand/elixir/placement rules, reaction delay ranges, and tier-specific action selection heuristics.
-  - Added profile progression module (`src/ai/profile.js`) with persistent unlock/win tracking and self-play unlock gating (`100` matches + `3` top wins).
-  - Added training module (`src/ai/training.js`) for local decision sample storage + simple phase/elixir bucket model used by `self` bot tier.
-  - Integrated new systems into browser client (`src/client/webGame.js`): tier selection UI, local storage persistence, per-match training sample capture, progression updates on match result, and self-model training button flow.
-  - Updated top toolbar (`index.html`) to include Bot Level selector, Train Self Bot button, and profile/training summary line.
-  - Added tests: `tests/profile.test.js`, `tests/training.test.js`, `tests/ladder-runtime.test.js`.
-- TODO next:
-  - Replace current heuristic-only self policy with dataset export + offline trainer script and model evaluation report.
-  - Add client tests for localStorage migration/failure paths and unlock UX states.
-  - Add benchmark matrix for ladder tiers using full `PLAY_CARD` action space (current `bot-regression` still measures legacy fireball-only policies).
-- Validation pass for bot/training slice:
-  - Full unit/integration suite passed: `npm test` (`35/35`).
-  - Browser validation run completed with Playwright client against `http://127.0.0.1:4173` and action burst file `/tmp/edge-royale-actions.json`.
-  - Captured artifacts in `output/web-game-bot-training/` (`shot-0..2.png`, `state-0..2.json`).
-  - Visual check confirms tier label and training status render in HUD; text-state includes `bot_tier`, `unlocked_tiers`, and `training` payload.
-  - No console/page errors were emitted during the Playwright run.
+- Bot strength ordering is not yet reliable enough to treat as a promotion gate. A quick snapshot on April 8, 2026 (`npm run bot:bench -- --seed 202 --rounds 8 --tiers noob,mid,top,pro`) showed unstable results, including `top` and `pro` failing to cleanly separate from lower tiers.
+- The roadmap items for telemetry schema/export and a fuller data pipeline are still not present as first-class repo outputs.
+- Browser validation exists as an ad hoc workflow, not yet a repeatable repo command with stable artifact conventions.
 
-- Side-offset + match-resolution pass completed (March 29, 2026):
-  - Moved Royale lane anchors from `x=5/13` to `x=3/15` in shared arena geometry (`src/sim/map.js`) and updated the browser tower layout (`src/client/webGame.js`) to consume the shared values while keeping existing tower depths.
-  - Updated Royale bridge corridors to `2..4` and `14..16`, keeping bridges 3 tiles wide and kings centered at `x=9`.
-  - Kept non-Royale fallback bot placements centered for generic arenas while preserving the new shared bridge anchors for Royale arenas (`src/ai/ladderRuntime.js`).
-  - Reworked match evaluation (`src/sim/match.js`) so:
-    - king tower destruction still wins immediately
-    - regulation only resolves tower advantage at the clock
-    - overtime ends immediately once tower counts become unequal after a tick
-    - overtime expiry uses weakest surviving tower HP instead of summed tower HP
-    - exact weakest-HP ties remain draws
-  - Updated rules docs (`docs/GAME_RULES.md`) and expanded regression coverage in `tests/match.test.js` + `tests/royale-arena.test.js`.
-- Validation for this pass:
-  - Full suite passed: `npm test` (`57/57`).
-  - Browser validation run completed against `http://127.0.0.1:4176` with Playwright skill client.
-  - Captured artifacts in `output/web-game-side-offsets/`.
-  - `state-0.json` confirms crown towers now spawn at `x=3` and `x=15`, with king towers at `x=9`.
-  - `shot-0.png` visually confirms bridges and crown towers are wider toward the side edges, with no console/page error artifact emitted.
+## Next 3 Tasks
 
-- Continued bot work (March 7, 2026):
-  - Expanded ladder tiers in runtime to include post-MVP tiers: `pro`, `goat`, `god` in `src/ai/ladderRuntime.js`.
-  - Refined tier action selection logic and delay/error characteristics; kept all tiers on legal `PLAY_CARD` action path.
-  - Updated progression ordering in `src/ai/profile.js` to: `noob -> mid -> top -> pro -> goat -> god -> self`.
-  - Replaced legacy fireball-scenario benchmark with full simulated bot-vs-bot match benchmark in `src/ai/benchmark.js`:
-    - Added `runLadderMatch(...)` for one deterministic match.
-    - Updated `runBenchmark(...)` to run round-robin side-swapped full matches.
-  - Rewrote regression tests to validate full-match benchmark determinism + payload shape (`tests/bot-regression.test.js`).
-  - Updated ladder runtime tests for new tier set and legal action guarantees (`tests/ladder-runtime.test.js`).
-  - Updated profile tests for new tier chain behavior (Top win now unlocks `pro`, and self unlock gate still works).
-- Validation:
-  - `npm test` passed (`37/37`).
-  - Playwright run completed against `http://127.0.0.1:4174` with artifacts in `output/web-game-bots-v2/` and no console/page errors.
+1. Stabilize ladder ordering by tuning `top` and `pro` heuristics against `mid`, then add stronger adjacent-tier benchmark assertions.
+2. Implement telemetry/event export work from the roadmap so matches produce training-ready artifacts beyond replay data alone.
+3. Turn browser smoke validation into a repeatable documented workflow for UI/input regressions, including artifact paths and expected checks.
 
-- Continued UI iteration (`src/client/webGame.js`) focused on responsiveness and placement clarity:
-  - Implemented responsive hand layout sizing (`getHandLayout`) so 4 card slots always fit narrow canvases without overflow.
-  - Added compact hand text rendering logic for narrow cards (auto-fit labels with ellipsis, stacked cost text).
-  - Added explicit troop placement boundary guide treatment in arena (dashed midline + side labels when space allows).
-  - Added drag ghost card widget near pointer during drag (card name + elixir cost, legal/illegal border coloring).
-  - Added compact HUD mode for small canvas sizes and width-clamped status text to reduce overflow.
-- Regression/validation checks:
-  - Syntax check: `node --check src/client/webGame.js`.
-  - Unit tests: `npm test` passing (`23/23`).
-- Browser validation artifacts:
-  - Main UI loop on clean port: `output/web-game-ui-v5` (`shot-0..2.png`, `state-0..2.json`), no error artifacts generated.
-  - Focused troop-boundary visibility capture: `output/web-game-ui-v5-boundary/shot-0.png` + `state-0.json`.
-  - Focused mobile drag captures: `output/web-game-ui-v5/drag-preview-mobile.png`, `drag-drop-mobile.png`, and `drag-state-mobile.json`.
-- Notes:
-  - Compact mode substantially reduces clipping on small canvases, but portrait mobile still has inherently dense UI due fixed 16:9 arena footprint.
-  - Next likely step: split gameplay HUD into toggleable “minimal” and “full” overlays for portrait devices.
+## Validation
 
-- UI + startup-state continuation pass (March 7, 2026):
-  - Refactored canvas layout in `src/client/webGame.js` to use dedicated bands: top info panel, middle arena viewport, bottom hand panel, and status strip.
-  - Updated world/screen transforms and tile sizing to map through the arena viewport so gameplay coordinates are isolated from UI bands.
-  - Added arena-bound placement guardrails: click/drag card placement now rejects drops outside arena viewport with explicit status message.
-  - Updated arena rendering to draw gameplay background only inside the viewport and added an arena frame border.
-  - Updated hand rendering to draw in a dedicated hand panel (no overlap with arena).
-  - Simplified and repositioned HUD text/elixir rows into top info band to avoid overlap with arena entities.
-  - Changed initial match entities to towers only (removed all pre-seeded troops) so both sides must play cards to create first troop presence.
-- Validation runs for this pass:
-  - Syntax + tests: `node --check src/client/webGame.js` and `npm test` passed (`37/37`).
-  - Playwright gameplay validation: `output/web-game-ui-v6b/` (`shot-0..2.png`, `state-0..2.json`), no error artifacts emitted.
-  - Focused initial-state capture: `output/web-game-ui-v6-initial/state-0.json` confirms only `blue_tower` and `red_tower` in `entities` (no troop entities at startup).
-- Notes / next suggestions:
-  - Compact/mobile top info band may still need a single-line condensed variant at very small heights.
-  - Consider a tiny deck-cycle indicator for bot hand to make early no-troop openings clearer to players.
-- Post-fix validation refresh (March 7, 2026):
-  - Fixed `getUiLayout` vertical sizing math to avoid over-allocation on short canvas heights by shrinking info/hand/status bands before arena height assignment.
-  - Re-ran browser validation artifacts: `output/web-game-ui-v6c/` (`shot-0..2.png`, `state-0..2.json`) with clean run.
-  - Re-ran startup-state check: `output/web-game-ui-v6-initial2/state-0.json` still shows only towers in `entities`.
-- AI bot review + continuation pass (March 7, 2026, follow-up):
-  - Reviewed ladder benchmarks and found a quality gap: stronger tiers were underperforming `noob` in full-match simulations.
-  - Reworked `src/ai/ladderRuntime.js` heuristics:
-    - Added tier strategy weights (tower chip bonus, arrows tower-only penalty, anti-overstack penalty, giant backline setup bonus).
-    - Added tower-aware pressure scoring and capped/penalized lane overstacking.
-    - Added heavy-commit helper for high-elixir windows and tuned noob/mid delay + hesitation/blunder behavior.
-    - Fixed top-tier spell threshold clamp bug (`Math.min(240, ...)`) by using the configured phase threshold directly.
-    - Refined top/pro/goat/god action selection and fallback scoring paths.
-  - Extended benchmarking utilities:
-    - Added `runBenchmarkMatrix(...)` to `src/ai/benchmark.js` for deterministic pairwise ladder snapshots.
-    - Added CLI helper `scripts/bot-benchmark.mjs` and npm script `npm run bot:bench`.
-  - Added regression coverage in `tests/bot-regression.test.js`:
-    - Deterministic matrix generation test.
-    - Baseline strength checks for selected tier pairs (`mid>noob`, `top>noob`, `goat>top`) under fixed seed/round config.
-  - Updated delay-range assertion in `tests/ladder-runtime.test.js` to match new Mid config (`8..20` ticks).
-- Validation:
-  - Full test suite passing: `npm test` (`39/39`).
-  - Bench matrix smoke run: `npm run bot:bench -- --seed 202 --rounds 40`.
-  - Playwright browser validation (escalated due sandbox restrictions) against local server on `http://127.0.0.1:4176`:
-    - Artifacts in `output/web-game-bots-v3/` (`shot-0.png`, `shot-1.png`, `state-0.json`, `state-1.json`).
-    - No `errors.json` generated; visual and text-state outputs remained coherent after bot-logic changes.
-- Remaining AI TODO:
-  - Ladder ordering is improved vs `noob`, but `top/pro` are still inconsistent against `mid` depending on seed batch; next step is targeted tuning for `top/pro` defense-vs-overcommit scenarios and adding stronger matrix acceptance gates per adjacent tier.
+- April 8, 2026: `npm test` passed (`79/79`).
+- April 8, 2026: `npm run bot:bench -- --seed 202 --rounds 8 --tiers noob,mid,top,pro`
+  - `mid > noob`: 4-4
+  - `top > noob`: 1-5-2
+  - `pro > noob`: 2-4-2
+  - `top > mid`: 4-4
+  - `pro > mid`: 3-5
+  - `pro > top`: 5-2-1
 
-- Clash Royale-inspired 2D UI refresh pass (March 23, 2026):
-  - Reworked canvas presentation in `src/client/webGame.js` into a brighter battlefield with grass lanes, river, bridges, tower pads, a simplified battle bar, and a cleaner hand strip.
-  - Replaced abstract troop circles with procedural 2D silhouettes and card-specific combat poses:
-    - Giant punch
-    - Knight / Mini P.E.K.K.A sword swings
+## Risks / Notes
 
-- Lane-locked collision restore pass (April 6, 2026):
-  - Reverted `src/sim/combat.js` normal troop movement from half-tile nav / crowd-steering back to bridge-waypoint lane-locked movement.
-  - Kept only a small one-pass local body resolver with capped compression (`0.18`) and capped lateral slip (`0.20`) so collisions no longer rewrite bridge choice or macro path.
-  - Restored uniform troop movement width in `src/sim/entities.js` (`radius` / `collision_radius` back to `0.45`) and removed per-card collision radius specs from `src/sim/stats.js`.
-  - Replaced the collision regressions in `tests/collision.test.js`; removed expectations for bridge queueing and tower-footprint rerouting, added assertions for bridge stability, mild compression, heavy-vs-light local resolution, and retarget lane lock.
-  - Validation:
-    - `npm test` passed (`72/72`).
-    - Browser smoke run via local dev server on `http://127.0.0.1:4173` produced clean artifacts in `output/web-game-collision-fix/`, `output/web-game-collision-fix-short/`, and `output/web-game-collision-fix-scaled/` with no Playwright error dumps.
-  - Follow-up:
-    - If the live feel still needs tuning, adjust only the local compression / lateral-slip caps; do not reintroduce nav-based repathing for troop bodies.
-    - Archer bow fire + projectile
-    - Musketeer shotgun-style recoil / muzzle blast
-    - Goblin knife stab
-  - Added deterministic client-side visual state for attack animations and transient VFX, plus a minimal internal combat event feed from sim (`src/sim/combat.js`, `src/sim/engine.js`) to trigger them reliably without changing gameplay rules.
-  - Restyled spell telegraphs:
-    - `Arrows` now renders as a rain-of-arrows telegraph / burst
-    - `Fireball` keeps existing gameplay but uses a more stylized travel + impact treatment
-  - Updated outer shell styling in `index.html` to better match the refreshed canvas presentation.
-  - Fixed a post-pass UI regression by removing the overlapping “Next” badge from the hand strip.
-- Validation for the UI refresh:
-  - Syntax check: `node --check src/client/webGame.js`
-  - Full test suite: `npm test` passing (`39/39`)
-  - Browser validation used the Playwright skill on a local dev server at `http://127.0.0.1:4177`
-  - Visual artifact inspected: `.playwright-cli/page-2026-03-23T03-48-32-680Z.png`
-  - Browser console issue observed was only the expected missing `favicon.ico` 404 from the static dev server
-  - Note: Playwright session startup/interaction overhead let live matches advance farther than ideal before capture, so the inspected artifact is a useful late-battle sanity check rather than a perfect per-unit showcase
-
-- Clash Royale arena rebuild pass (March 23, 2026, follow-up):
-  - Replaced the single-tower arena with a six-tower layout in `src/client/webGame.js` and sim state: two crown towers plus one king tower per side.
-  - Switched the browser client to a Royale-specific arena definition with tile-snapped placement, a real river/bridge pathability model, and bridge-routed troop movement.
-  - Added king-tower metadata/behavior in sim (`src/sim/entities.js`, `src/sim/combat.js`, `src/sim/match.js`, `src/sim/engine.js`):
-    - `tower_role` (`crown` / `king`)
-    - dormant king towers that activate when hit or when a friendly crown tower falls
-    - 3-crown scoring when a king tower is destroyed
-  - Updated AI placement generation in `src/ai/ladderRuntime.js` so troop drop candidates and spell targets stay coherent with the tiled arena.
-  - Rebuilt the in-canvas layout to give the arena more room, compress the battle chrome, and add a left-docked next-card preview chip beside the four-card hand.
-  - Restyled the battlefield rendering to show subtle tile seams, six tower pads, and bridge-only crossings; `render_game_to_text` now includes next-card and tower-role/activation details.
-  - Added regression coverage in `tests/royale-arena.test.js` for:
-
-- HUD/card readability pass (March 24, 2026):
-  - Removed both level-12 badge anchors/rendering and stripped tower text markers (`CT`, sleeping `zzz`) while keeping the king crown icon.
-  - Added numeric HP labels above tower health bars in `src/client/webGame.js`.
-  - Reworked hand cards and next-card preview to use code-drawn portrait art with top-left elixir badges instead of acronym/name text.
-  - Updated troop visuals so Archers, Goblins, Knight, and Musketeer have more distinct palettes/headgear/props at arena scale.
-  - Changed Goblins to 4 units in `src/sim/cards.js` and replaced spawn spread logic with explicit formation offsets in `src/sim/engine.js`.
-  - Added deploy regression coverage in `tests/royale-arena.test.js` for Archer pair spacing and 4-Goblin spacing around snapped base placement.
-  - Local validation so far:
-    - `node --check src/client/webGame.js`
-    - `node --check src/client/layout.js`
-    - `node --check src/sim/engine.js`
-    - `node --check src/sim/cards.js`
-    - `node --test tests/action-timing.test.js`
-    - `node --test tests/royale-arena.test.js`
-    - `node --test tests/ui-layout.test.js`
-  - Next step: run full test suite and Playwright screenshot/state validation on the updated UI to catch portrait/layout issues.
-  - Browser validation completed against a local dev server on `http://127.0.0.1:4179`:
-    - `output/web-game-ui-readability/shot-0.png`, `shot-1.png` confirm the portrait-based hand/next-card UI and numeric tower HP labels render in-game.
-    - `output/web-game-ui-goblins-2/shot-0.png` and `state-0.json` confirm Goblins now cycle into hand correctly, deploy as a multi-unit card, and pressure the red right tower.
-    - No `errors-*.json` artifacts were produced in the validation output directories.
-  - Final validation:
-    - `npm test` passing (`49/49`)
-    - `node --check src/client/webGame.js`
-    - tile-snapped placement
-    - bridge-only crossing
-    - king activation after damage
-    - 1-crown vs 3-crown score behavior
-- Validation for the arena rebuild:
-  - Syntax checks: `node --check src/client/webGame.js`, `node --check src/sim/engine.js`, `node --check src/sim/combat.js`, `node --check src/sim/map.js`
-  - Full suite passing: `npm test` (`43/43`)
-  - Browser validation on local server `http://127.0.0.1:4178` produced `output/playwright/royale-rebuild/shot-0.png` and `state-0.json`
-  - Visual inspection of `shot-0.png` confirms:
-    - next-card preview is visible on the left of the hand
-    - six towers are rendered in Royale-style formation
-    - arena occupies substantially more of the canvas
-    - visible enemy units are approaching/crossing via the bridge lane rather than walking on open water
-  - Text-state inspection of `state-0.json` confirms:
-    - separate `blue_next_card`
-    - crown/king tower roles for all six towers
-    - dormant king towers still inactive until triggered
-  - Browser automation note:
-    - the Playwright game client produced the first validation artifact reliably, but subsequent repeated iterations stalled in this environment, so the captured artifact above is the clean validation record for this pass
-
-- Portrait Clash Royale measurement rebuild (March 23, 2026, follow-up):
-  - Added pure portrait layout helpers in `src/client/layout.js`:
-    - reference screen size
-    - measured frame rects for top banner, timer, arena, crown rail, bottom tray, hand slots, next card, and elixir bar
-    - shared hit-test + world/screen mapping helpers
-  - Rewired `src/client/webGame.js` to render the battle frame from the portrait layout instead of the previous `info/arena/hand/status` desktop split.
-  - Moved setup controls out of the live battle frame by replacing the old toolbar in `index.html` with an in-shell pre-match overlay that hides during play.
-  - Rebuilt the in-canvas HUD/tray to better match the reference composition:
-    - portrait top banner + timer
-    - level badges
-    - right-side crown rail
-    - portrait card tray with next-card chip and elixir bar
-    - in-canvas close/reset button
-  - Added layout regression tests in `tests/ui-layout.test.js` covering:
-    - portrait anchor preservation
-    - desktop scaling / centering
-    - hand-slot hit testing
-    - arena world/screen round-trip mapping
-  - Validation:
-    - Full suite passing: `npm test` (`47/47`)
-    - Browser validation on local server `http://127.0.0.1:4179`
-    - Latest inspected artifact: `output/playwright/portrait-rebuild/shot-0.png`
-    - Latest state artifact: `output/playwright/portrait-rebuild/state-0.json`
-    - No `errors.json` produced in the Playwright output directory
-  - Environment note:
-    - Starting the local dev server required an escalated run because sandboxed listening failed with `listen EPERM`
-
-- Bridge-mouth placement + red invalid overlay pass (March 30, 2026):
-  - Reworked troop placement geometry in `src/sim/placement.js`:
-    - own-side legal area now uses a full-width back row plus forward bridge-mouth strips only
-    - unlocked pockets now use one `5 deep x 9 wide` box per destroyed crown tower, including the bridge row
-    - both crowns destroyed unlock both boxes independently instead of merging to a full-width enemy pocket
-  - Updated AI placement candidates to include the new bridge-mouth front row and the custom pocket boxes.
-  - Replaced the troop-card deploy overlay in `src/client/webGame.js`:
-    - legal ground stays normal
-    - invalid placement tiles are light red
-    - boundary between legal and invalid tiles is drawn in bright red
-    - overlay still appears on card select and drag, while spell targeting visuals stay unchanged
-  - Updated tests:
-    - `tests/pocket-placement.test.js`
-    - `tests/ladder-runtime.test.js`
-  - Validation:
-    - Full suite passing: `npm test` (`64/64`)
-    - Focused browser verification on local server `http://127.0.0.1:4173`
-    - `output/web-game-bridge-overlay-page.png` shows the light-red invalid zone with the boundary stepping forward only at the bridge mouths
-    - `output/web-game-bridge-overlay-page.meta.json` confirms the live page had a troop card selected (`blue_selected_index: 1`) during the capture
-    - `output/web-game-bridge-overlay-spell.png` confirms the red placement mask does not appear when a spell card is selected (`blue_selected_index: 0`)
-  - Browser automation note:
-    - the bundled web-game client still produced a mismatched canvas-only screenshot in this environment, so final visual verification used an escalated direct Playwright page capture instead
-
-- Pathfinding rollback to pre-April 4 movement behavior (April 5, 2026):
-  - Replaced the hybrid half-tile navigation/body-blocking movement in `src/sim/combat.js` with the earlier bridge-waypoint routing model, while keeping `preferred_lane_x` as the lane-assignment field.
-  - Removed the now-unused navigation/collision scaffolding:
-    - deleted `src/sim/nav.js`
-    - removed collision/body-mass/path-block metadata from `src/sim/entities.js` and `src/sim/stats.js`
-    - removed post-forced-motion ground collision resolution from `src/sim/engine.js`
-  - Reverted movement docs and tests to the older behavior:
-    - updated `docs/GAME_RULES.md`
-    - removed the April 4 combat regressions from `tests/combat.test.js`
-  - Validation:
-    - Full suite passing: `npm test` (`67/67`)
-    - Browser smoke artifacts against the user's local server on `http://127.0.0.1:5173`:
-      - `output/pathfinding-rollback-smoke/shot-0.png`
-      - `output/pathfinding-rollback-smoke/shot-1.png`
-      - `output/pathfinding-rollback-smoke/shot-2.png`
-      - `output/pathfinding-rollback-smoke/state-0.json`
-      - `output/pathfinding-rollback-smoke/state-1.json`
-      - `output/pathfinding-rollback-smoke/state-2.json`
-    - No `errors-*.json` files were produced in the smoke output directory.
-    - State snapshots show red troops advancing and ending the sampled match cleanly by destroying the blue king tower under the restored movement model.
+- Do not expand this file back into a changelog. Keep it to the current handoff only.
+- The current movement model is intentionally lane-locked with only mild local body resolution. Do not reintroduce the reverted half-tile nav/body-blocking system without explicit intent, updated tests, and spec updates.
+- The engine remains the source of truth. UI changes should consume state, not redefine rules.
+- If local browser serving fails under sandbox restrictions, use an escalated run and record that fact in the validation note.
