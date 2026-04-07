@@ -140,11 +140,27 @@ function chooseVisibleTarget(attacker, entities) {
   return chooseTarget(attacker, entities, (candidate) => isWithinSight(attacker, candidate));
 }
 
+function chooseVisibleTroopTarget(attacker, entities) {
+  return chooseTarget(
+    attacker,
+    entities,
+    (candidate) => candidate.entity_type === "troop" && isWithinSight(attacker, candidate),
+  );
+}
+
 function chooseImmediateAttackTarget(attacker, entities, excludedId = null) {
   return chooseTarget(
     attacker,
     entities,
     (candidate) => candidate.id !== excludedId && isInRange(attacker, candidate),
+  );
+}
+
+function chooseImmediateAttackTroopTarget(attacker, entities, excludedId = null) {
+  return chooseTarget(
+    attacker,
+    entities,
+    (candidate) => candidate.id !== excludedId && candidate.entity_type === "troop" && isInRange(attacker, candidate),
   );
 }
 
@@ -156,7 +172,34 @@ function chooseTowerObjective(attacker, entities) {
   return chooseTarget(attacker, entities, (candidate) => candidate.entity_type === "tower");
 }
 
-function resolveTarget(attacker, entities, entitiesById) {
+function resolveAnyTargetTroop(attacker, entities, entitiesById) {
+  const lockedTarget = getLockedTarget(attacker, entitiesById);
+  if (lockedTarget?.entity_type === "troop" && isWithinSight(attacker, lockedTarget)) {
+    if (isInRange(attacker, lockedTarget)) {
+      return lockedTarget;
+    }
+
+    return chooseImmediateAttackTroopTarget(attacker, entities, lockedTarget.id) ?? lockedTarget;
+  }
+
+  const immediateTroopTarget = chooseImmediateAttackTroopTarget(attacker, entities);
+  if (immediateTroopTarget) {
+    return immediateTroopTarget;
+  }
+
+  const visibleTroopTarget = chooseVisibleTroopTarget(attacker, entities);
+  if (visibleTroopTarget) {
+    return visibleTroopTarget;
+  }
+
+  if (lockedTarget?.entity_type === "tower") {
+    return lockedTarget;
+  }
+
+  return chooseTowerObjective(attacker, entities);
+}
+
+function resolveDefaultTarget(attacker, entities, entitiesById) {
   const lockedTarget = getLockedTarget(attacker, entitiesById);
   if (lockedTarget) {
     if (isInRange(attacker, lockedTarget)) {
@@ -172,6 +215,14 @@ function resolveTarget(attacker, entities, entitiesById) {
   }
 
   return chooseTowerObjective(attacker, entities);
+}
+
+function resolveTarget(attacker, entities, entitiesById) {
+  if (attacker.entity_type === "troop" && attacker.targeting_mode === "any") {
+    return resolveAnyTargetTroop(attacker, entities, entitiesById);
+  }
+
+  return resolveDefaultTarget(attacker, entities, entitiesById);
 }
 
 function isWithinSight(attacker, target) {

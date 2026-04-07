@@ -142,6 +142,24 @@ test("troops acquire enemies inside sight range before they are in attack range"
   assert.ok(red.y > 4.2);
 });
 
+test("any-target troops prefer visible enemy troops over closer tower objectives", () => {
+  const arena = createArena({ minX: 0, maxX: 10, minY: 0, maxY: 10 });
+  const engine = createEngine({
+    seed: 105,
+    arena,
+    fireballConfig: FIREBALL_CONFIG,
+    initialEntities: [
+      createTroop({ id: "blue", cardId: "knight", team: "blue", x: 5, y: 9, hp: 1766 }),
+      createTower({ id: "red_t", team: "red", x: 5, y: 5, hp: 3052 }),
+      createTroop({ id: "red_troop", cardId: "knight", team: "red", x: 5, y: 4.2, hp: 1766 }),
+    ],
+  });
+
+  engine.step([]);
+
+  assert.equal(getEntity(engine, "blue").target_entity_id, "red_troop");
+});
+
 test("side-pocket troops fall back to the enemy king instead of drifting to the arena edge", () => {
   const cases = [
     { id: "archer", cardId: "archers", hp: 304 },
@@ -191,6 +209,29 @@ test("troops keep their locked target when a closer enemy enters sight but not a
 
   const blue = getEntity(engine, "blue");
   assert.equal(blue.target_entity_id, "red_locked");
+});
+
+test("any-target troops retarget off tower objectives to visible troops before attack range", () => {
+  const arena = createRoyaleArena({ minX: 0, maxX: 18, minY: 0, maxY: 32 });
+  const engine = createEngine({
+    seed: 155,
+    arena,
+    fireballConfig: FIREBALL_CONFIG,
+    initialEntities: [
+      createTroop({ id: "blue", cardId: "knight", team: "blue", x: ROYALE_LANE_X.left, y: 10, hp: 1766 }),
+      createTower({ id: "red_left", team: "red", x: ROYALE_LANE_X.left, y: 6, hp: 3052, tower_role: "crown" }),
+      createTower({ id: "red_right", team: "red", x: ROYALE_LANE_X.right, y: 6, hp: 3052, tower_role: "crown" }),
+      createTower({ id: "red_king", team: "red", x: ROYALE_LANE_X.center, y: 2, hp: 4824, tower_role: "king", is_active: false }),
+    ],
+  });
+
+  engine.step([]);
+  assert.equal(getEntity(engine, "blue").target_entity_id, "red_left");
+
+  engine.state.entities.push(createTroop({ id: "red_side", cardId: "goblins", team: "red", x: 4.8, y: 8.4, hp: 202 }));
+  engine.step([]);
+
+  assert.equal(getEntity(engine, "blue").target_entity_id, "red_side");
 });
 
 test("troops only switch locks when a different target is already in attack range", () => {
