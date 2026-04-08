@@ -3,7 +3,7 @@
 ## 1) Match Format
 
 - Mode: 1v1, player vs bot.
-- Arena: Royale-style two-bridge map; crown-tower and bridge lanes sit three tiles from the side edges.
+- Arena: Royale-style two-bridge map; bridge/princess lane centers sit on the fourth tile from each side edge. Princess towers stay on those same bridge-aligned columns with `3x3` tile footprints, and king towers occupy `4x4` tile footprints one tile closer to the river so the back row behind the king remains deployable.
 - Stat baseline: current level 11 tournament-standard values for the supported deck and towers.
 - Match duration: 180 seconds regulation.
 - Overtime: 120 seconds sudden death if tied.
@@ -51,6 +51,7 @@
   - Card not in current hand.
   - Insufficient elixir.
   - Coordinate out of legal placement region.
+  - Coordinate lands on a tower footprint tile.
 - Invalid requests are ignored and logged for telemetry.
 
 ## 6) Combat Model

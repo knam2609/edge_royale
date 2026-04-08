@@ -5,7 +5,7 @@ import { FIREBALL_CONFIG } from "../src/sim/config.js";
 import { createEngine } from "../src/sim/engine.js";
 import { createTower, createTroop } from "../src/sim/entities.js";
 import { getScoreSnapshot } from "../src/sim/match.js";
-import { ROYALE_LANE_X, createArena, createRoyaleArena } from "../src/sim/map.js";
+import { ROYALE_LANE_X, ROYALE_TOWER_X, ROYALE_TOWER_Y, createArena, createRoyaleArena } from "../src/sim/map.js";
 import { getTroopStats } from "../src/sim/stats.js";
 
 function makeCardState({ blueHand, blueQueue }) {
@@ -68,16 +68,56 @@ test("royale arena PLAY_CARD snaps troop placement to tile centers", () => {
   assert.equal(deployEvent.y, 20.5);
 });
 
-test("royale arena keeps bridge lanes three tiles from the side edges", () => {
+test("royale arena centers bridge lanes on the fourth tile from the side edges", () => {
   const arena = createRoyaleArena({ minX: 0, maxX: 18, minY: 0, maxY: 32 });
 
   assert.deepEqual(
     arena.bridges.map((bridge) => ({ x: bridge.x, minX: bridge.minX, maxX: bridge.maxX })),
     [
-      { x: ROYALE_LANE_X.left, minX: 2, maxX: 4 },
-      { x: ROYALE_LANE_X.right, minX: 14, maxX: 16 },
+      { x: ROYALE_LANE_X.left, minX: 2.5, maxX: 4.5 },
+      { x: ROYALE_LANE_X.right, minX: 13.5, maxX: 15.5 },
     ],
   );
+});
+
+test("royale arena tower anchors match the princess 3x3 and king 4x4 boxes", () => {
+  assert.deepEqual(ROYALE_TOWER_X, {
+    left: 3.5,
+    center: 9,
+    right: 14.5,
+  });
+  assert.deepEqual(ROYALE_TOWER_Y, {
+    blue: {
+      crown: 25.5,
+      king: 29,
+    },
+    red: {
+      crown: 6.5,
+      king: 3,
+    },
+  });
+
+  const crown = createTower({ id: "crown", team: "red", x: ROYALE_TOWER_X.left, y: ROYALE_TOWER_Y.red.crown, tower_role: "crown" });
+  const king = createTower({ id: "king", team: "red", x: ROYALE_TOWER_X.center, y: ROYALE_TOWER_Y.red.king, tower_role: "king" });
+
+  assert.deepEqual(crown.ground_blocker, {
+    kind: "rect",
+    width: 3,
+    height: 3,
+    minX: 2,
+    maxX: 5,
+    minY: 5,
+    maxY: 8,
+  });
+  assert.deepEqual(king.ground_blocker, {
+    kind: "rect",
+    width: 4,
+    height: 4,
+    minX: 7,
+    maxX: 11,
+    minY: 1,
+    maxY: 5,
+  });
 });
 
 test("archers deploy as a visible pair around the snapped placement", () => {
@@ -117,7 +157,7 @@ test("archers deploy as a visible pair around the snapped placement", () => {
   const archers = getEntitiesByIds(engine, deployEvent.entity_ids).sort((a, b) => a.x - b.x);
   const archerStats = getTroopStats("archers");
   assert.equal(archers.length, 2);
-  assert.deepEqual(archers.map((entity) => entity.preferred_lane_x), [3, 15]);
+  assert.deepEqual(archers.map((entity) => entity.preferred_lane_x), [3.5, 14.5]);
   assert.ok(archers.every((entity) => entity.hp === archerStats.hp));
   assert.ok(archers.every((entity) => entity.attack_damage === archerStats.attack_damage));
   assert.ok(archers[0].x < deployEvent.x);
@@ -166,7 +206,7 @@ test("goblins deploy as four distinct units around the snapped placement", () =>
   const goblinStats = getTroopStats("goblins");
   assert.equal(goblins.length, 4);
   assert.equal(new Set(goblins.map((entity) => `${entity.x},${entity.y}`)).size, 4);
-  assert.deepEqual(goblins.map((entity) => entity.preferred_lane_x).sort((a, b) => a - b), [3, 3, 15, 15]);
+  assert.deepEqual(goblins.map((entity) => entity.preferred_lane_x).sort((a, b) => a - b), [3.5, 3.5, 14.5, 14.5]);
   assert.ok(goblins.every((entity) => entity.hp === goblinStats.hp));
   assert.ok(goblins.every((entity) => entity.attack_damage === goblinStats.attack_damage));
   const xs = goblins.map((entity) => entity.x).sort((a, b) => a - b);
@@ -211,7 +251,7 @@ test("off-center multi-unit deployments stay on one lane", () => {
     (event) => event.type === "troop_deployed" && event.card_id === "archers",
   );
   const archers = getEntitiesByIds(archersEngine, archersDeploy.entity_ids);
-  assert.deepEqual(archers.map((entity) => entity.preferred_lane_x), [15, 15]);
+  assert.deepEqual(archers.map((entity) => entity.preferred_lane_x), [14.5, 14.5]);
 
   const goblinsEngine = createEngine({
     seed: 307,
@@ -243,7 +283,7 @@ test("off-center multi-unit deployments stay on one lane", () => {
     (event) => event.type === "troop_deployed" && event.card_id === "goblins",
   );
   const goblins = getEntitiesByIds(goblinsEngine, goblinsDeploy.entity_ids);
-  assert.deepEqual(goblins.map((entity) => entity.preferred_lane_x), [3, 3, 3, 3]);
+  assert.deepEqual(goblins.map((entity) => entity.preferred_lane_x), [3.5, 3.5, 3.5, 3.5]);
 });
 
 test("troops cross the royale river only on bridge tiles", () => {
@@ -254,7 +294,7 @@ test("troops cross the royale river only on bridge tiles", () => {
     fireballConfig: FIREBALL_CONFIG,
     initialEntities: [
       createTroop({ id: "blue_k", cardId: "knight", team: "blue", x: 2.5, y: 20.5, hp: 1400 }),
-      createTower({ id: "red_left", team: "red", x: ROYALE_LANE_X.left, y: 6, hp: 2500, tower_role: "crown" }),
+      createTower({ id: "red_left", team: "red", x: ROYALE_TOWER_X.left, y: ROYALE_TOWER_Y.red.crown, hp: 2500, tower_role: "crown" }),
     ],
   });
 
@@ -281,7 +321,7 @@ test("troops cross the royale river only on bridge tiles", () => {
   assert.ok(crossedRiver, "expected the troop to cross the river");
   assert.ok(riverPositions.length > 0, "expected the troop to spend time in the bridge corridor");
   assert.ok(
-    riverPositions.every((position) => position.x >= 2 && position.x <= 4),
+    riverPositions.every((position) => position.x >= 2.5 && position.x <= 4.5),
     `expected river positions to stay on the left bridge, got ${JSON.stringify(riverPositions)}`,
   );
 });
@@ -330,9 +370,9 @@ test("king tower stays dormant until hit, then activates and defends", () => {
 
 test("destroying a crown tower adds one crown but destroying the king tower grants three", () => {
   const crownScore = getScoreSnapshot([
-    createTower({ id: "red_left", team: "red", x: ROYALE_LANE_X.left, y: 6, hp: 0, tower_role: "crown" }),
-    createTower({ id: "red_right", team: "red", x: ROYALE_LANE_X.right, y: 6, hp: 2500, tower_role: "crown" }),
-    createTower({ id: "red_king", team: "red", x: ROYALE_LANE_X.center, y: 2, hp: 3600, tower_role: "king", is_active: false }),
+    createTower({ id: "red_left", team: "red", x: ROYALE_TOWER_X.left, y: ROYALE_TOWER_Y.red.crown, hp: 0, tower_role: "crown" }),
+    createTower({ id: "red_right", team: "red", x: ROYALE_TOWER_X.right, y: ROYALE_TOWER_Y.red.crown, hp: 2500, tower_role: "crown" }),
+    createTower({ id: "red_king", team: "red", x: ROYALE_TOWER_X.center, y: ROYALE_TOWER_Y.red.king, hp: 3600, tower_role: "king", is_active: false }),
   ]);
   assert.equal(crownScore.blue_crowns, 1);
 

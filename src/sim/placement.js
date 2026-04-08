@@ -211,6 +211,12 @@ function isWithinRegion(position, region) {
   );
 }
 
+function isBlockedByTowerFootprint(position, entities = []) {
+  return entities.some(
+    (entity) => entity.entity_type === "tower" && entity.ground_blocker && isWithinRegion(position, entity.ground_blocker),
+  );
+}
+
 function isOnOwnSideWithoutRiver(arena, actor, position) {
   const midY = getArenaMidY(arena);
   return actor === "blue" ? position.y > midY + POSITION_EPSILON : position.y < midY - POSITION_EPSILON;
@@ -224,10 +230,14 @@ export function getTroopDeployRegions({ arena, entities = [], actor = "blue" }) 
   ];
 }
 
-export function getTroopPlacementStatus({ arena, entities = [], actor = "blue", position }) {
+export function getTroopPlacementStatus({ arena, entities = [], actor = "blue", position, regions = null }) {
   const snappedPosition = snapPositionToGrid(position, arena);
   if (!arena.isPathable(snappedPosition.x, snappedPosition.y)) {
     return { ok: false, reason: "Troops need a land tile.", position: snappedPosition };
+  }
+
+  if (isBlockedByTowerFootprint(snappedPosition, entities)) {
+    return { ok: false, reason: "Troops cannot be played on tower tiles.", position: snappedPosition };
   }
 
   if (!arena.river) {
@@ -239,13 +249,13 @@ export function getTroopPlacementStatus({ arena, entities = [], actor = "blue", 
     };
   }
 
-  const regions = getTroopDeployRegions({ arena, entities, actor });
-  const ok = regions.some((region) => isWithinRegion(snappedPosition, region));
+  const deployRegions = regions ?? getTroopDeployRegions({ arena, entities, actor });
+  const ok = deployRegions.some((region) => isWithinRegion(snappedPosition, region));
   if (ok) {
     return { ok: true, reason: null, position: snappedPosition };
   }
 
-  const hasPocket = regions.some((region) => region.kind === "pocket");
+  const hasPocket = deployRegions.some((region) => region.kind === "pocket");
   return {
     ok: false,
     reason: hasPocket ? "Troops must be played on your side or in an unlocked pocket." : "Troops must be played on your side.",
