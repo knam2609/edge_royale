@@ -2,9 +2,9 @@
 
 ## Current State
 
-- As of April 8, 2026, the repo contains a playable browser prototype backed by a deterministic headless simulation.
-- The current product shape is a lightweight single-player Clash Royale-inspired game with one arena, a fixed 8-card deck, local bot ladder progression, replay support, and local self-play training scaffolding.
-- `progress.md` is now a live handoff only. Git history is the archive for prior implementation details.
+- As of April 9, 2026, the repo has a playable deterministic browser prototype with crown towers back on the bridge columns and king towers still one row closer to the river.
+- Crown towers now use `3x3` footprints centered at `x=3.5/14.5` and `y=6.5/25.5`, matching the bridge columns.
+- King towers now use `4x4` footprints centered at `x=9` and `y=3/29`, which keeps the back-most row behind each king legal for troop placement.
 
 ## Source of Truth
 
@@ -18,37 +18,36 @@
 
 ## What Works
 
-- Deterministic sim with fixed-tick combat, elixir pacing, overtime, match resolution, replay hashing, and Fireball knockback with Giant immunity.
-- Playable browser client with six-tower Royale layout, portrait-oriented HUD, card selection and placement, spell targeting, and deterministic browser hooks (`window.render_game_to_text`, `window.advanceTime`).
-- Placement and arena rules including bridge-only crossings, crown-tower pocket unlocks, and king activation behavior.
-- Local ladder/profile flow with unlock persistence, multiple bot tiers (`noob`, `mid`, `top`, `pro`, `goat`, `god`, `self`), benchmark utilities, and basic self-play training hooks.
+- Deterministic sim with fixed-tick combat, elixir pacing, overtime, replay hashing, Fireball knockback, and tower blocker-aware pathing.
+- Royale bridge lanes remain centered on the fourth tile from each side edge, crown towers share those columns again, and king towers sit one tile closer to the river.
+- Troop placement, overlay highlighting, path blockers, and renderer pads now all follow the same tower footprint truth.
+- Browser smoke validation confirmed the crown pads line up with the bridge columns and a troop can still be played in the back row behind the blue king.
 
 ## Known Gaps
 
-- Bot strength ordering is not yet reliable enough to treat as a promotion gate. A quick snapshot on April 8, 2026 (`npm run bot:bench -- --seed 202 --rounds 8 --tiers noob,mid,top,pro`) showed unstable results, including `top` and `pro` failing to cleanly separate from lower tiers.
-- The roadmap items for telemetry schema/export and a fuller data pipeline are still not present as first-class repo outputs.
-- Browser validation exists as an ad hoc workflow, not yet a repeatable repo command with stable artifact conventions.
+- Bot strength ordering is still not reliable enough to serve as a promotion gate.
+- Telemetry/export pipeline work from the roadmap is still incomplete beyond replay data.
+- Browser validation is still an ad hoc skill-driven workflow rather than a single repo command with stable conventions.
 
 ## Next 3 Tasks
 
-1. Stabilize ladder ordering by tuning `top` and `pro` heuristics against `mid`, then add stronger adjacent-tier benchmark assertions.
-2. Implement telemetry/event export work from the roadmap so matches produce training-ready artifacts beyond replay data alone.
-3. Turn browser smoke validation into a repeatable documented workflow for UI/input regressions, including artifact paths and expected checks.
+1. Polish the arena art around the bridge-aligned crown pads, bridge approaches, and forward king pads so the layout reads closer to Clash Royale.
+2. Stabilize ladder ordering by tuning `top` and `pro` heuristics against `mid`, then add stronger adjacent-tier benchmark assertions.
+3. Implement telemetry/event export work from the roadmap so matches produce training-ready artifacts beyond replay data alone.
 
 ## Validation
 
-- April 8, 2026: `npm test` passed (`79/79`).
-- April 8, 2026: `npm run bot:bench -- --seed 202 --rounds 8 --tiers noob,mid,top,pro`
-  - `mid > noob`: 4-4
-  - `top > noob`: 1-5-2
-  - `pro > noob`: 2-4-2
-  - `top > mid`: 4-4
-  - `pro > mid`: 3-5
-  - `pro > top`: 5-2-1
+- April 9, 2026: `npm test`
+- April 9, 2026: `PORT=4173 npm run dev` (escalated local serve because sandbox blocked the default local bind)
+- April 9, 2026: `node /Users/thangnguyen/.codex/skills/develop-web-game/scripts/web_game_playwright_client.js --url http://127.0.0.1:4173 --click-selector '#start-btn' --actions-json '{"steps":[{"buttons":[],"frames":1}]}' --iterations 1 --pause-ms 250 --screenshot-dir output/web-game/crown-bridge-column-smoke/start`
+  - Visual artifact: `output/web-game/crown-bridge-column-smoke/start/shot-0.png`
+  - State artifact: `output/web-game/crown-bridge-column-smoke/start/state-0.json`
+- April 9, 2026: `node /Users/thangnguyen/.codex/skills/develop-web-game/scripts/web_game_playwright_client.js --url http://127.0.0.1:4173 --click-selector '#start-btn' --actions-json '{"steps":[{"buttons":["left_mouse_button"],"frames":1,"mouse_x":160,"mouse_y":610},{"buttons":[],"frames":2},{"buttons":["left_mouse_button"],"frames":1,"mouse_x":190,"mouse_y":535},{"buttons":[],"frames":20}]}' --iterations 1 --pause-ms 250 --screenshot-dir output/web-game/crown-bridge-column-smoke/back-row`
+  - Visual artifact: `output/web-game/crown-bridge-column-smoke/back-row/shot-0.png`
+  - State artifact: `output/web-game/crown-bridge-column-smoke/back-row/state-0.json`
 
 ## Risks / Notes
 
-- Do not expand this file back into a changelog. Keep it to the current handoff only.
-- The current movement model is intentionally lane-locked with only mild local body resolution. Do not reintroduce the reverted half-tile nav/body-blocking system without explicit intent, updated tests, and spec updates.
-- The engine remains the source of truth. UI changes should consume state, not redefine rules.
-- If local browser serving fails under sandbox restrictions, use an escalated run and record that fact in the validation note.
+- `ROYALE_TOWER_X.left/right` now intentionally match `ROYALE_LANE_X.left/right`; keep using the tower constants for tower layout so crown and king anchors can still diverge if needed.
+- Placement blocks tower footprint tiles even when a tower has been destroyed; movement/path blockers still apply only to live towers.
+- Collision/path tests still allow mild post-bridge drift while requiring river movement to stay inside the bridge corridor.

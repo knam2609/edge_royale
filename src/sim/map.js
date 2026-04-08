@@ -25,14 +25,31 @@ function createDefaultIsPathable(arena) {
 }
 
 export const ROYALE_LANE_X = Object.freeze({
-  left: 3,
+  left: 3.5,
   center: 9,
-  right: 15,
+  right: 14.5,
+});
+
+export const ROYALE_TOWER_X = Object.freeze({
+  left: ROYALE_LANE_X.left,
+  center: 9,
+  right: ROYALE_LANE_X.right,
+});
+
+export const ROYALE_TOWER_Y = Object.freeze({
+  blue: Object.freeze({
+    crown: 25.5,
+    king: 29,
+  }),
+  red: Object.freeze({
+    crown: 6.5,
+    king: 3,
+  }),
 });
 
 export const ROYALE_BRIDGES = Object.freeze([
-  Object.freeze({ lane: "left", x: ROYALE_LANE_X.left, minX: 2, maxX: 4 }),
-  Object.freeze({ lane: "right", x: ROYALE_LANE_X.right, minX: 14, maxX: 16 }),
+  Object.freeze({ lane: "left", x: ROYALE_LANE_X.left, minX: 2.5, maxX: 4.5 }),
+  Object.freeze({ lane: "right", x: ROYALE_LANE_X.right, minX: 13.5, maxX: 15.5 }),
 ]);
 
 export function createArena({

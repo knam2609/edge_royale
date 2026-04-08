@@ -5,7 +5,7 @@ import { enumerateLegalCardActions, evaluateSpellAction, rollDecisionDelayTicks,
 import { trainSelfModel } from "../src/ai/training.js";
 import { FIREBALL_CONFIG } from "../src/sim/config.js";
 import { createEngine } from "../src/sim/engine.js";
-import { ROYALE_LANE_X, createArena, createRoyaleArena } from "../src/sim/map.js";
+import { ROYALE_LANE_X, ROYALE_TOWER_X, ROYALE_TOWER_Y, createArena, createRoyaleArena } from "../src/sim/map.js";
 import { createTower, createTroop } from "../src/sim/entities.js";
 import { getTowerStats } from "../src/sim/stats.js";
 
@@ -46,12 +46,12 @@ function makeRoyaleEngine(redHand, { blueLeftHp = getTowerStats("crown").hp, blu
     arena,
     fireballConfig: FIREBALL_CONFIG,
     initialEntities: [
-      createTower({ id: "blue_left", team: "blue", x: ROYALE_LANE_X.left, y: 26, hp: blueLeftHp, tower_role: "crown" }),
-      createTower({ id: "blue_right", team: "blue", x: ROYALE_LANE_X.right, y: 26, hp: blueRightHp, tower_role: "crown" }),
-      createTower({ id: "blue_king", team: "blue", x: ROYALE_LANE_X.center, y: 30, tower_role: "king", is_active: false }),
-      createTower({ id: "red_left", team: "red", x: ROYALE_LANE_X.left, y: 6, hp: crownHp, tower_role: "crown" }),
-      createTower({ id: "red_right", team: "red", x: ROYALE_LANE_X.right, y: 6, hp: crownHp, tower_role: "crown" }),
-      createTower({ id: "red_king", team: "red", x: ROYALE_LANE_X.center, y: 2, tower_role: "king", is_active: false }),
+      createTower({ id: "blue_left", team: "blue", x: ROYALE_TOWER_X.left, y: ROYALE_TOWER_Y.blue.crown, hp: blueLeftHp, tower_role: "crown" }),
+      createTower({ id: "blue_right", team: "blue", x: ROYALE_TOWER_X.right, y: ROYALE_TOWER_Y.blue.crown, hp: blueRightHp, tower_role: "crown" }),
+      createTower({ id: "blue_king", team: "blue", x: ROYALE_TOWER_X.center, y: ROYALE_TOWER_Y.blue.king, tower_role: "king", is_active: false }),
+      createTower({ id: "red_left", team: "red", x: ROYALE_TOWER_X.left, y: ROYALE_TOWER_Y.red.crown, hp: crownHp, tower_role: "crown" }),
+      createTower({ id: "red_right", team: "red", x: ROYALE_TOWER_X.right, y: ROYALE_TOWER_Y.red.crown, hp: crownHp, tower_role: "crown" }),
+      createTower({ id: "red_king", team: "red", x: ROYALE_TOWER_X.center, y: ROYALE_TOWER_Y.red.king, tower_role: "king", is_active: false }),
       createTroop({ id: "blue_knight", cardId: "knight", team: "blue", x: 9, y: 23, hp: 1400 }),
     ],
     initialCardState: makeCardState(redHand),
@@ -73,7 +73,7 @@ test("enumerateLegalCardActions includes the full front row on your side", () =>
   }
   assert.ok(troopActions.some((action) => action.y === 14.5 && action.x === 3.5));
   assert.ok(troopActions.some((action) => action.y === 14.5 && action.x === 9.5));
-  assert.ok(troopActions.some((action) => action.y === 14.5 && action.x === 15.5));
+  assert.ok(troopActions.some((action) => action.y === 14.5 && action.x === ROYALE_LANE_X.right));
 });
 
 test("enumerateLegalCardActions unlocks only the captured 5x9 pocket and bridge connector for red troops", () => {
@@ -101,10 +101,10 @@ test("enumerateLegalCardActions unlocks both 5x9 pockets and both bridge connect
   const bridgeActions = troopActions.filter((action) => action.y > 14.5 && action.y < 17.5);
 
   assert.ok(pocketActions.some((action) => action.x <= 8.5));
-  assert.ok(pocketActions.some((action) => action.x === 15.5));
+  assert.ok(pocketActions.some((action) => action.x === 13.5 || action.x === ROYALE_LANE_X.right));
   assert.ok(pocketActions.every((action) => action.y <= 21.5));
   assert.ok(bridgeActions.some((action) => action.x === 3.5));
-  assert.ok(bridgeActions.some((action) => action.x === 15.5));
+  assert.ok(bridgeActions.some((action) => action.x === ROYALE_LANE_X.right));
 });
 
 test("noob bot returns a legal action when not passing", () => {

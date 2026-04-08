@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { FIREBALL_CONFIG } from "../src/sim/config.js";
 import { createEngine } from "../src/sim/engine.js";
 import { createTower } from "../src/sim/entities.js";
-import { ROYALE_LANE_X, createRoyaleArena } from "../src/sim/map.js";
+import { ROYALE_LANE_X, ROYALE_TOWER_X, ROYALE_TOWER_Y, createRoyaleArena } from "../src/sim/map.js";
 import { getTroopDeployRegions, getTroopPlacementStatus } from "../src/sim/placement.js";
 import { getTowerStats } from "../src/sim/stats.js";
 
@@ -15,12 +15,40 @@ function createRoyaleTowers({
   redRightHp = getTowerStats("crown").hp,
 } = {}) {
   return [
-    createTower({ id: "blue_left", team: "blue", x: ROYALE_LANE_X.left, y: 26, hp: blueLeftHp, tower_role: "crown" }),
-    createTower({ id: "blue_right", team: "blue", x: ROYALE_LANE_X.right, y: 26, hp: blueRightHp, tower_role: "crown" }),
-    createTower({ id: "blue_king", team: "blue", x: ROYALE_LANE_X.center, y: 30, tower_role: "king", is_active: false }),
-    createTower({ id: "red_left", team: "red", x: ROYALE_LANE_X.left, y: 6, hp: redLeftHp, tower_role: "crown" }),
-    createTower({ id: "red_right", team: "red", x: ROYALE_LANE_X.right, y: 6, hp: redRightHp, tower_role: "crown" }),
-    createTower({ id: "red_king", team: "red", x: ROYALE_LANE_X.center, y: 2, tower_role: "king", is_active: false }),
+    createTower({
+      id: "blue_left",
+      team: "blue",
+      x: ROYALE_TOWER_X.left,
+      y: ROYALE_TOWER_Y.blue.crown,
+      hp: blueLeftHp,
+      tower_role: "crown",
+    }),
+    createTower({
+      id: "blue_right",
+      team: "blue",
+      x: ROYALE_TOWER_X.right,
+      y: ROYALE_TOWER_Y.blue.crown,
+      hp: blueRightHp,
+      tower_role: "crown",
+    }),
+    createTower({ id: "blue_king", team: "blue", x: ROYALE_TOWER_X.center, y: ROYALE_TOWER_Y.blue.king, tower_role: "king", is_active: false }),
+    createTower({
+      id: "red_left",
+      team: "red",
+      x: ROYALE_TOWER_X.left,
+      y: ROYALE_TOWER_Y.red.crown,
+      hp: redLeftHp,
+      tower_role: "crown",
+    }),
+    createTower({
+      id: "red_right",
+      team: "red",
+      x: ROYALE_TOWER_X.right,
+      y: ROYALE_TOWER_Y.red.crown,
+      hp: redRightHp,
+      tower_role: "crown",
+    }),
+    createTower({ id: "red_king", team: "red", x: ROYALE_TOWER_X.center, y: ROYALE_TOWER_Y.red.king, tower_role: "king", is_active: false }),
   ];
 }
 
@@ -104,6 +132,84 @@ test("own-side front row is legal full width while river tiles stay locked befor
   assert.equal(lockedWater.ok, false);
   assert.equal(lockedBridgeRiver.reason, "Troops must be played on your side.");
   assert.equal(lockedWater.reason, "Troops need a land tile.");
+});
+
+test("tower footprint tiles stay blocked for troop deployment", () => {
+  const arena = createRoyaleArena({ minX: 0, maxX: 18, minY: 0, maxY: 32 });
+  const entities = createRoyaleTowers();
+  const blueCrown = getTroopPlacementStatus({
+    arena,
+    entities,
+    actor: "blue",
+    position: { x: ROYALE_TOWER_X.left, y: ROYALE_TOWER_Y.blue.crown },
+  });
+  const blueKing = getTroopPlacementStatus({
+    arena,
+    entities,
+    actor: "blue",
+    position: { x: 8.5, y: 29.5 },
+  });
+  const redCrown = getTroopPlacementStatus({
+    arena,
+    entities,
+    actor: "red",
+    position: { x: ROYALE_TOWER_X.right, y: ROYALE_TOWER_Y.red.crown },
+  });
+
+  assert.equal(blueCrown.ok, false);
+  assert.equal(blueKing.ok, false);
+  assert.equal(redCrown.ok, false);
+  assert.equal(blueCrown.reason, "Troops cannot be played on tower tiles.");
+  assert.equal(blueKing.reason, "Troops cannot be played on tower tiles.");
+  assert.equal(redCrown.reason, "Troops cannot be played on tower tiles.");
+});
+
+test("crown side columns and king back row stay deployable while tower columns remain blocked", () => {
+  const arena = createRoyaleArena({ minX: 0, maxX: 18, minY: 0, maxY: 32 });
+  const entities = createRoyaleTowers();
+  const blueOuterEdge = getTroopPlacementStatus({
+    arena,
+    entities,
+    actor: "blue",
+    position: { x: 0.5, y: ROYALE_TOWER_Y.blue.crown },
+  });
+  const blueSecondColumn = getTroopPlacementStatus({
+    arena,
+    entities,
+    actor: "blue",
+    position: { x: 1.5, y: ROYALE_TOWER_Y.blue.crown },
+  });
+  const blueBackRow = getTroopPlacementStatus({
+    arena,
+    entities,
+    actor: "blue",
+    position: { x: ROYALE_TOWER_X.center, y: 31.5 },
+  });
+  const redOuterEdge = getTroopPlacementStatus({
+    arena,
+    entities,
+    actor: "red",
+    position: { x: 17.5, y: ROYALE_TOWER_Y.red.crown },
+  });
+  const redSecondColumn = getTroopPlacementStatus({
+    arena,
+    entities,
+    actor: "red",
+    position: { x: 16.5, y: ROYALE_TOWER_Y.red.crown },
+  });
+  const redBackRow = getTroopPlacementStatus({
+    arena,
+    entities,
+    actor: "red",
+    position: { x: ROYALE_TOWER_X.center, y: 0.5 },
+  });
+
+  assert.equal(blueOuterEdge.ok, true);
+  assert.equal(blueSecondColumn.ok, true);
+  assert.equal(blueBackRow.ok, true);
+  assert.equal(redOuterEdge.ok, true);
+  assert.equal(redSecondColumn.ok, true);
+  assert.equal(redBackRow.ok, true);
 });
 
 test("one destroyed crown tower unlocks only that lane's 5x9 pocket box and bridge connector", () => {
@@ -190,8 +296,8 @@ test("two destroyed crown towers unlock both 5x9 pocket boxes and bridge connect
     {
       kind: "bridge_connector",
       lane: "right",
-      minX: 14.5,
-      maxX: 16.5,
+      minX: 13.5,
+      maxX: 15.5,
       minY: 15.5,
       maxY: 16.5,
     },

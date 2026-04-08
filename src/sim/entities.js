@@ -51,10 +51,19 @@ function createTowerFootprint(x, y, size) {
   };
 }
 
+export const TOWER_FOOTPRINT_TILES = Object.freeze({
+  crown: 3,
+  king: 4,
+});
+
+export function getTowerFootprintSize(towerRole = "crown") {
+  return TOWER_FOOTPRINT_TILES[towerRole] ?? TOWER_FOOTPRINT_TILES.crown;
+}
+
 export function createTower({ id, team, x, y, hp = null, tower_role = "crown", is_active = true }) {
   const stats = getTowerStats(tower_role);
   const resolvedHp = hp ?? stats.hp;
-  const footprintSize = tower_role === "king" ? 4 : 3;
+  const footprintSize = getTowerFootprintSize(tower_role);
   return {
     id,
     cardId: "tower",

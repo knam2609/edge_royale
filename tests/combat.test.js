@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { FIREBALL_CONFIG } from "../src/sim/config.js";
 import { createEngine } from "../src/sim/engine.js";
 import { createTroop, createTower } from "../src/sim/entities.js";
-import { ROYALE_LANE_X, createArena, createRoyaleArena } from "../src/sim/map.js";
+import { ROYALE_LANE_X, ROYALE_TOWER_X, ROYALE_TOWER_Y, createArena, createRoyaleArena } from "../src/sim/map.js";
 import { resolveFireballImpact } from "../src/sim/spells.js";
 import { getTowerStats } from "../src/sim/stats.js";
 
@@ -173,9 +173,9 @@ test("side-pocket troops fall back to the enemy king instead of drifting to the 
       arena,
       fireballConfig: FIREBALL_CONFIG,
       initialEntities: [
-        createTower({ id: "red_left", team: "red", x: ROYALE_LANE_X.left, y: 6, hp: 0, tower_role: "crown" }),
-        createTower({ id: "red_right", team: "red", x: ROYALE_LANE_X.right, y: 6, hp: 3052, tower_role: "crown" }),
-        createTower({ id: "red_king", team: "red", x: ROYALE_LANE_X.center, y: 2, hp: 4824, tower_role: "king", is_active: false }),
+        createTower({ id: "red_left", team: "red", x: ROYALE_TOWER_X.left, y: ROYALE_TOWER_Y.red.crown, hp: 0, tower_role: "crown" }),
+        createTower({ id: "red_right", team: "red", x: ROYALE_TOWER_X.right, y: ROYALE_TOWER_Y.red.crown, hp: 3052, tower_role: "crown" }),
+        createTower({ id: "red_king", team: "red", x: ROYALE_TOWER_X.center, y: ROYALE_TOWER_Y.red.king, hp: 4824, tower_role: "king", is_active: false }),
         createTroop({ id: troopCase.id, cardId: troopCase.cardId, team: "blue", x: 0.5, y: 10.5, hp: troopCase.hp }),
       ],
     });
@@ -219,9 +219,9 @@ test("any-target troops retarget off tower objectives to visible troops before a
     fireballConfig: FIREBALL_CONFIG,
     initialEntities: [
       createTroop({ id: "blue", cardId: "knight", team: "blue", x: ROYALE_LANE_X.left, y: 10, hp: 1766 }),
-      createTower({ id: "red_left", team: "red", x: ROYALE_LANE_X.left, y: 6, hp: 3052, tower_role: "crown" }),
-      createTower({ id: "red_right", team: "red", x: ROYALE_LANE_X.right, y: 6, hp: 3052, tower_role: "crown" }),
-      createTower({ id: "red_king", team: "red", x: ROYALE_LANE_X.center, y: 2, hp: 4824, tower_role: "king", is_active: false }),
+      createTower({ id: "red_left", team: "red", x: ROYALE_TOWER_X.left, y: ROYALE_TOWER_Y.red.crown, hp: 3052, tower_role: "crown" }),
+      createTower({ id: "red_right", team: "red", x: ROYALE_TOWER_X.right, y: ROYALE_TOWER_Y.red.crown, hp: 3052, tower_role: "crown" }),
+      createTower({ id: "red_king", team: "red", x: ROYALE_TOWER_X.center, y: ROYALE_TOWER_Y.red.king, hp: 4824, tower_role: "king", is_active: false }),
     ],
   });
 

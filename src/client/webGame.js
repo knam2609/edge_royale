@@ -1,8 +1,8 @@
 import { getCard } from "../sim/cards.js";
 import { ARROWS_CONFIG, FIREBALL_CONFIG, MATCH_CONFIG, TICK_RATE, getMatchPhase } from "../sim/config.js";
 import { createEngine } from "../sim/engine.js";
-import { createTower } from "../sim/entities.js";
-import { ROYALE_LANE_X, createRoyaleArena, snapPositionToGrid } from "../sim/map.js";
+import { createTower, getTowerFootprintSize } from "../sim/entities.js";
+import { ROYALE_LANE_X, ROYALE_TOWER_X, ROYALE_TOWER_Y, createRoyaleArena, snapPositionToGrid } from "../sim/map.js";
 import { getTroopDeployRegions, getTroopPlacementStatus } from "../sim/placement.js";
 import { createRng } from "../sim/random.js";
 import { getTowerStats } from "../sim/stats.js";
@@ -92,16 +92,62 @@ const CARD_MONOGRAM = Object.freeze({
   fireball: "FB",
 });
 
+const BRIDGE_TILE_SPAN = 3;
+
 const TOWER_LAYOUT = Object.freeze({
   blue: Object.freeze([
-    Object.freeze({ id: "blue_crown_left", team: "blue", tower_role: "crown", x: ROYALE_LANE_X.left, y: 26, hp: getTowerStats("crown").hp }),
-    Object.freeze({ id: "blue_crown_right", team: "blue", tower_role: "crown", x: ROYALE_LANE_X.right, y: 26, hp: getTowerStats("crown").hp }),
-    Object.freeze({ id: "blue_king", team: "blue", tower_role: "king", x: ROYALE_LANE_X.center, y: 30, hp: getTowerStats("king").hp, is_active: false }),
+    Object.freeze({
+      id: "blue_crown_left",
+      team: "blue",
+      tower_role: "crown",
+      x: ROYALE_TOWER_X.left,
+      y: ROYALE_TOWER_Y.blue.crown,
+      hp: getTowerStats("crown").hp,
+    }),
+    Object.freeze({
+      id: "blue_crown_right",
+      team: "blue",
+      tower_role: "crown",
+      x: ROYALE_TOWER_X.right,
+      y: ROYALE_TOWER_Y.blue.crown,
+      hp: getTowerStats("crown").hp,
+    }),
+    Object.freeze({
+      id: "blue_king",
+      team: "blue",
+      tower_role: "king",
+      x: ROYALE_TOWER_X.center,
+      y: ROYALE_TOWER_Y.blue.king,
+      hp: getTowerStats("king").hp,
+      is_active: false,
+    }),
   ]),
   red: Object.freeze([
-    Object.freeze({ id: "red_crown_left", team: "red", tower_role: "crown", x: ROYALE_LANE_X.left, y: 6, hp: getTowerStats("crown").hp }),
-    Object.freeze({ id: "red_crown_right", team: "red", tower_role: "crown", x: ROYALE_LANE_X.right, y: 6, hp: getTowerStats("crown").hp }),
-    Object.freeze({ id: "red_king", team: "red", tower_role: "king", x: ROYALE_LANE_X.center, y: 2, hp: getTowerStats("king").hp, is_active: false }),
+    Object.freeze({
+      id: "red_crown_left",
+      team: "red",
+      tower_role: "crown",
+      x: ROYALE_TOWER_X.left,
+      y: ROYALE_TOWER_Y.red.crown,
+      hp: getTowerStats("crown").hp,
+    }),
+    Object.freeze({
+      id: "red_crown_right",
+      team: "red",
+      tower_role: "crown",
+      x: ROYALE_TOWER_X.right,
+      y: ROYALE_TOWER_Y.red.crown,
+      hp: getTowerStats("crown").hp,
+    }),
+    Object.freeze({
+      id: "red_king",
+      team: "red",
+      tower_role: "king",
+      x: ROYALE_TOWER_X.center,
+      y: ROYALE_TOWER_Y.red.king,
+      hp: getTowerStats("king").hp,
+      is_active: false,
+    }),
   ]),
 });
 
@@ -346,15 +392,6 @@ function tilesToPixels(tiles) {
   return tiles * ((pxPerTileX + pxPerTileY) * 0.5);
 }
 
-function isWithinDeployRegion(position, region) {
-  return (
-    position.x >= region.minX - 1e-9 &&
-    position.x <= region.maxX + 1e-9 &&
-    position.y >= region.minY - 1e-9 &&
-    position.y <= region.maxY + 1e-9
-  );
-}
-
 function makePlacementTileKey(x, y) {
   return `${x.toFixed(2)}|${y.toFixed(2)}`;
 }
@@ -370,13 +407,19 @@ function getPlacementTileRect(x, y) {
   };
 }
 
-function buildPlacementOverlayState(deployRegions) {
+function buildPlacementOverlayState(deployRegions, entities, actor = "blue") {
   const tileState = new Map();
   const invalidTiles = [];
 
   for (const y of PLACEMENT_TILE_ROWS) {
     for (const x of PLACEMENT_TILE_COLUMNS) {
-      const legal = arena.isPathable(x, y) && deployRegions.some((region) => isWithinDeployRegion({ x, y }, region));
+      const legal = getTroopPlacementStatus({
+        arena,
+        entities,
+        actor,
+        position: { x, y },
+        regions: deployRegions,
+      }).ok;
       const key = makePlacementTileKey(x, y);
       tileState.set(key, legal);
       if (!legal) {
@@ -402,7 +445,8 @@ function hasLegalPlacementNeighbor(tileState, x, y, dx, dy) {
 
 function drawTroopPlacementOverlay(deployRegions) {
   const viewport = getArenaViewport();
-  const { tileState, invalidTiles } = buildPlacementOverlayState(deployRegions);
+  const entities = appState.engine?.state?.entities ?? [];
+  const { tileState, invalidTiles } = buildPlacementOverlayState(deployRegions, entities, "blue");
 
   ctx.save();
   pathRoundedRect(viewport.x, viewport.y, viewport.width, viewport.height, Math.max(18, 24 * getLayoutScale()));
@@ -1489,54 +1533,56 @@ function drawArcTrail(centerX, centerY, radius, fromAngle, toAngle, color, alpha
 
 function drawTowerPadAt(worldX, worldY, team, towerRole = "crown") {
   const layoutScale = getLayoutScale();
-  const screen = worldToScreen({ x: worldX, y: worldY });
-  const padRadius = (towerRole === "king" ? 31 : 24) * layoutScale;
-  drawShadow(screen, padRadius, 10, towerRole === "king" ? 0.2 : 0.15);
-  ctx.save();
-  ctx.translate(screen.x, screen.y);
+  const footprintSize = getTowerFootprintSize(towerRole);
+  const topLeft = worldToScreen({ x: worldX - footprintSize * 0.5, y: worldY - footprintSize * 0.5 });
+  const bottomRight = worldToScreen({ x: worldX + footprintSize * 0.5, y: worldY + footprintSize * 0.5 });
+  const left = Math.min(topLeft.x, bottomRight.x);
+  const right = Math.max(topLeft.x, bottomRight.x);
+  const top = Math.min(topLeft.y, bottomRight.y);
+  const bottom = Math.max(topLeft.y, bottomRight.y);
+  const width = right - left;
+  const height = bottom - top;
+  const centerX = (left + right) * 0.5;
+  const centerY = (top + bottom) * 0.5;
+  const radius = Math.max(8, 12 * layoutScale);
+  const innerInset = towerRole === "king" ? 9 * layoutScale : 7 * layoutScale;
+  const screen = { x: centerX, y: centerY };
+  drawShadow(screen, Math.max(width, height) * 0.45, 10, towerRole === "king" ? 0.2 : 0.15);
 
-  if (towerRole === "king") {
-    ctx.save();
-    ctx.translate(0, 2 * layoutScale);
-    ctx.fillStyle = "rgba(244,233,210,0.68)";
-    ctx.beginPath();
-    ctx.ellipse(0, 1 * layoutScale, 34 * layoutScale, 18 * layoutScale, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = "rgba(196,177,141,0.24)";
-    ctx.beginPath();
-    ctx.ellipse(0, -2 * layoutScale, 22 * layoutScale, 11 * layoutScale, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-  }
+  fillRoundedRect(left, top, width, height, radius, towerRole === "king" ? "rgba(244,233,210,0.96)" : "rgba(222,229,232,0.92)");
+  strokeRoundedRect(
+    left,
+    top,
+    width,
+    height,
+    radius,
+    towerRole === "king" ? "rgba(136,106,58,0.72)" : "rgba(108,117,128,0.92)",
+    Math.max(1.4, 2 * layoutScale),
+  );
 
-  ctx.fillStyle = towerRole === "king" ? "rgba(244,233,210,0.96)" : "rgba(222,229,232,0.9)";
-  ctx.beginPath();
-  ctx.arc(0, 0, (towerRole === "king" ? 31 : 25) * layoutScale, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = towerRole === "king" ? "rgba(136,106,58,0.7)" : "rgba(108,117,128,0.9)";
-  ctx.lineWidth = Math.max(1.4, 2 * layoutScale);
-  ctx.stroke();
-
-  ctx.beginPath();
-  ctx.arc(0, 0, (towerRole === "king" ? 22 : 17) * layoutScale, 0, Math.PI * 2);
-  ctx.fillStyle =
+  fillRoundedRect(
+    left + innerInset,
+    top + innerInset,
+    Math.max(0, width - innerInset * 2),
+    Math.max(0, height - innerInset * 2),
+    Math.max(6, 8 * layoutScale),
     towerRole === "king"
       ? "rgba(246,222,154,0.28)"
       : team === "blue"
         ? "rgba(88,140,255,0.2)"
-        : "rgba(255,110,110,0.2)";
-  ctx.fill();
+        : "rgba(255,110,110,0.2)",
+  );
+
   if (towerRole === "king") {
     ctx.save();
     ctx.globalAlpha = 0.38;
     ctx.fillStyle = "rgba(255,236,179,0.72)";
     ctx.beginPath();
-    ctx.ellipse(0, -10 * layoutScale, 18 * layoutScale, 8 * layoutScale, 0, 0, Math.PI * 2);
+    ctx.ellipse(centerX, centerY - 10 * layoutScale, 18 * layoutScale, 8 * layoutScale, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
-    drawCrownIcon(0, -1 * layoutScale, 12 * layoutScale, "rgba(244,212,123,0.95)");
+    drawCrownIcon(centerX, centerY - 1 * layoutScale, 12 * layoutScale, "rgba(244,212,123,0.95)");
   }
-  ctx.restore();
 }
 
 function drawArenaBackground() {
@@ -1605,9 +1651,10 @@ function drawArenaBackground() {
   }
 
   for (const bridge of arena.bridges) {
-    const laneLeft = worldToScreen({ x: bridge.minX, y: arena.minY }).x;
-    const laneRight = worldToScreen({ x: bridge.maxX, y: arena.minY }).x;
-    const laneWidth = laneRight - laneLeft;
+    const bridgeCenterX = worldToScreen({ x: bridge.x, y: arena.minY }).x;
+    const laneWidth = tilesToPixels(BRIDGE_TILE_SPAN);
+    const laneLeft = bridgeCenterX - laneWidth * 0.5;
+    const laneRight = bridgeCenterX + laneWidth * 0.5;
     const laneGradient = ctx.createLinearGradient(laneLeft, 0, laneRight, 0);
     laneGradient.addColorStop(0, "rgba(255,255,255,0)");
     laneGradient.addColorStop(0.5, "rgba(255,255,255,0.08)");
@@ -1637,10 +1684,8 @@ function drawArenaBackground() {
 
   const bridgeHeight = riverHeight + 12;
   for (const bridge of arena.bridges) {
-    const left = worldToScreen({ x: bridge.minX, y: arena.river.centerY }).x;
-    const right = worldToScreen({ x: bridge.maxX, y: arena.river.centerY }).x;
-    const bridgeWidth = Math.max(48, right - left);
     const bridgeCenter = worldToScreen({ x: bridge.x, y: arena.river.centerY });
+    const bridgeWidth = Math.max(48, tilesToPixels(BRIDGE_TILE_SPAN));
     fillRoundedRect(
       bridgeCenter.x - bridgeWidth * 0.5,
       riverY - bridgeHeight * 0.5,

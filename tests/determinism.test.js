@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { FIREBALL_CONFIG } from "../src/sim/config.js";
 import { createEngine } from "../src/sim/engine.js";
 import { createTower, createTroop } from "../src/sim/entities.js";
-import { ROYALE_LANE_X, createArena, createRoyaleArena } from "../src/sim/map.js";
+import { ROYALE_LANE_X, ROYALE_TOWER_X, ROYALE_TOWER_Y, createArena, createRoyaleArena } from "../src/sim/map.js";
 
 function makeInitialEntities() {
   return [
@@ -52,9 +52,9 @@ test("same seed + same input stream yields identical hash with obstacle pathing 
   const initialEntities = [
     createTroop({ id: "blue_giant", cardId: "giant", team: "blue", x: ROYALE_LANE_X.left, y: 19, hp: 4090 }),
     createTroop({ id: "blue_goblin", cardId: "goblins", team: "blue", x: ROYALE_LANE_X.left, y: 20.2, hp: 202 }),
-    createTower({ id: "red_left", team: "red", x: ROYALE_LANE_X.left, y: 6, hp: 0, tower_role: "crown" }),
-    createTower({ id: "red_right", team: "red", x: ROYALE_LANE_X.right, y: 6, hp: 3052, tower_role: "crown" }),
-    createTower({ id: "red_king", team: "red", x: ROYALE_LANE_X.center, y: 2, hp: 4824, tower_role: "king", is_active: false }),
+    createTower({ id: "red_left", team: "red", x: ROYALE_TOWER_X.left, y: ROYALE_TOWER_Y.red.crown, hp: 0, tower_role: "crown" }),
+    createTower({ id: "red_right", team: "red", x: ROYALE_TOWER_X.right, y: ROYALE_TOWER_Y.red.crown, hp: 3052, tower_role: "crown" }),
+    createTower({ id: "red_king", team: "red", x: ROYALE_TOWER_X.center, y: ROYALE_TOWER_Y.red.king, hp: 4824, tower_role: "king", is_active: false }),
   ];
 
   const engineA = createEngine({
