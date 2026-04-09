@@ -68,6 +68,9 @@
 - Target selection priority:
   - Closest valid enemy by path distance.
   - If tie: lower HP first, then lower entity id.
+  - For `any`-target troops, this nearest-target priority applies during the approach to a tower, so an early defensive drop can still pull aggro.
+  - Once an `any`-target troop already has its current tower target in attack range, that tower lock persists and late defensive drops do not peel it off.
+  - An engaged tower lock can break only if the tower is destroyed, the troop is displaced so the tower leaves attack range, Fireball forced motion clears the lock, or enemy troop collisions displace the troop.
 - Projectiles:
   - Ranged attacks create projectile entities with travel time.
   - Damage is applied on projectile impact tick.

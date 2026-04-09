@@ -2,9 +2,9 @@
 
 ## Current State
 
-- As of April 9, 2026, the repo has a playable deterministic browser prototype with crown towers back on the bridge columns and king towers still one row closer to the river.
-- Crown towers now use `3x3` footprints centered at `x=3.5/14.5` and `y=6.5/25.5`, matching the bridge columns.
-- King towers now use `4x4` footprints centered at `x=9` and `y=3/29`, which keeps the back-most row behind each king legal for troop placement.
+- As of April 10, 2026, the sim keeps nearest-target priority during approach but preserves an `any`-target troop's tower lock once that tower is already in attack range.
+- Late defensive drops no longer peel an engaged attacker off the tower; early drops still pull aggro before tower engagement.
+- Fireball forced motion and enemy-caused body-collision displacement now both clear engaged tower locks so troops reacquire normally on the next legal targeting tick.
 
 ## Source of Truth
 
@@ -18,10 +18,10 @@
 
 ## What Works
 
-- Deterministic sim with fixed-tick combat, elixir pacing, overtime, replay hashing, Fireball knockback, and tower blocker-aware pathing.
+- Deterministic sim with fixed-tick combat, elixir pacing, overtime, replay hashing, Fireball knockback, tower blocker-aware pathing, and engaged tower-lock persistence.
+- Early-vs-late pull behavior is covered in combat tests, including tower destruction, Fireball unlock, enemy-collision unlock, and allied-compression no-op cases.
 - Royale bridge lanes remain centered on the fourth tile from each side edge, crown towers share those columns again, and king towers sit one tile closer to the river.
-- Troop placement, overlay highlighting, path blockers, and renderer pads now all follow the same tower footprint truth.
-- Browser smoke validation confirmed the crown pads line up with the bridge columns and a troop can still be played in the back row behind the blue king.
+- Troop placement, overlay highlighting, path blockers, and renderer pads still follow the same tower footprint truth.
 
 ## Known Gaps
 
@@ -31,23 +31,16 @@
 
 ## Next 3 Tasks
 
-1. Polish the arena art around the bridge-aligned crown pads, bridge approaches, and forward king pads so the layout reads closer to Clash Royale.
+1. Add a repeatable browser smoke for early-pull vs late-pull tower engagement so combat lock behavior is validated outside headless tests.
 2. Stabilize ladder ordering by tuning `top` and `pro` heuristics against `mid`, then add stronger adjacent-tier benchmark assertions.
 3. Implement telemetry/event export work from the roadmap so matches produce training-ready artifacts beyond replay data alone.
 
 ## Validation
 
-- April 9, 2026: `npm test`
-- April 9, 2026: `PORT=4173 npm run dev` (escalated local serve because sandbox blocked the default local bind)
-- April 9, 2026: `node /Users/thangnguyen/.codex/skills/develop-web-game/scripts/web_game_playwright_client.js --url http://127.0.0.1:4173 --click-selector '#start-btn' --actions-json '{"steps":[{"buttons":[],"frames":1}]}' --iterations 1 --pause-ms 250 --screenshot-dir output/web-game/crown-bridge-column-smoke/start`
-  - Visual artifact: `output/web-game/crown-bridge-column-smoke/start/shot-0.png`
-  - State artifact: `output/web-game/crown-bridge-column-smoke/start/state-0.json`
-- April 9, 2026: `node /Users/thangnguyen/.codex/skills/develop-web-game/scripts/web_game_playwright_client.js --url http://127.0.0.1:4173 --click-selector '#start-btn' --actions-json '{"steps":[{"buttons":["left_mouse_button"],"frames":1,"mouse_x":160,"mouse_y":610},{"buttons":[],"frames":2},{"buttons":["left_mouse_button"],"frames":1,"mouse_x":190,"mouse_y":535},{"buttons":[],"frames":20}]}' --iterations 1 --pause-ms 250 --screenshot-dir output/web-game/crown-bridge-column-smoke/back-row`
-  - Visual artifact: `output/web-game/crown-bridge-column-smoke/back-row/shot-0.png`
-  - State artifact: `output/web-game/crown-bridge-column-smoke/back-row/state-0.json`
+- April 10, 2026: `npm test`
 
 ## Risks / Notes
 
 - `ROYALE_TOWER_X.left/right` now intentionally match `ROYALE_LANE_X.left/right`; keep using the tower constants for tower layout so crown and king anchors can still diverge if needed.
 - Placement blocks tower footprint tiles even when a tower has been destroyed; movement/path blockers still apply only to live towers.
-- Collision/path tests still allow mild post-bridge drift while requiring river movement to stay inside the bridge corridor.
+- Enemy body-collision unlock is applied on the tick after collision because collision resolution still runs after combat targeting inside the engine step.
