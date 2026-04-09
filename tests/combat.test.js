@@ -211,7 +211,7 @@ test("troops keep their locked target when a closer enemy enters sight but not a
   assert.equal(blue.target_entity_id, "red_locked");
 });
 
-test("any-target troops retarget off tower objectives to visible troops before attack range", () => {
+test("early defensive drops can pull attackers before tower engagement", () => {
   const arena = createRoyaleArena({ minX: 0, maxX: 18, minY: 0, maxY: 32 });
   const engine = createEngine({
     seed: 155,
@@ -232,6 +232,53 @@ test("any-target troops retarget off tower objectives to visible troops before a
   engine.step([]);
 
   assert.equal(getEntity(engine, "blue").target_entity_id, "red_side");
+});
+
+test("late defensive drops do not pull attackers off towers once engaged", () => {
+  const arena = createArena({ minX: 0, maxX: 12, minY: 0, maxY: 12 });
+  const engine = createEngine({
+    seed: 156,
+    arena,
+    fireballConfig: FIREBALL_CONFIG,
+    initialEntities: [
+      createTroop({ id: "blue", cardId: "knight", team: "blue", x: 6, y: 5.8, hp: 1766 }),
+      createTower({ id: "red_t", team: "red", x: 6, y: 4.2, hp: 3052 }),
+    ],
+  });
+
+  engine.step([]);
+  assert.equal(getEntity(engine, "blue").target_entity_id, "red_t");
+
+  engine.state.entities.push(createTroop({ id: "red_late", cardId: "goblins", team: "red", x: 6.1, y: 5.35, hp: 202 }));
+  engine.step([]);
+
+  assert.equal(getEntity(engine, "blue").target_entity_id, "red_t");
+  assert.equal(getEntity(engine, "red_late").hp, 202);
+});
+
+test("destroyed towers break engaged locks and allow normal retargeting", () => {
+  const arena = createArena({ minX: 0, maxX: 12, minY: 0, maxY: 12 });
+  const engine = createEngine({
+    seed: 157,
+    arena,
+    fireballConfig: FIREBALL_CONFIG,
+    initialEntities: [
+      createTroop({ id: "blue", cardId: "knight", team: "blue", x: 6, y: 5.8, hp: 1766 }),
+      createTower({ id: "red_t", team: "red", x: 6, y: 4.2, hp: 3052 }),
+    ],
+  });
+
+  engine.step([]);
+  assert.equal(getEntity(engine, "blue").target_entity_id, "red_t");
+
+  engine.state.entities.push(createTroop({ id: "red_late", cardId: "knight", team: "red", x: 6.1, y: 5.35, hp: 1766 }));
+  engine.step([]);
+  assert.equal(getEntity(engine, "blue").target_entity_id, "red_t");
+
+  getEntity(engine, "red_t").hp = 0;
+  engine.step([]);
+
+  assert.equal(getEntity(engine, "blue").target_entity_id, "red_late");
 });
 
 test("troops only switch locks when a different target is already in attack range", () => {
@@ -296,6 +343,45 @@ test("forced motion clears the current lock until knockback ends, then troops re
   assert.equal(getEntity(engine, "blue").target_entity_id, "red_locked");
 });
 
+test("fireball clears engaged tower locks and troops reacquire normally after knockback", () => {
+  const arena = createArena({ minX: 0, maxX: 12, minY: 0, maxY: 12 });
+  const engine = createEngine({
+    seed: 158,
+    arena,
+    fireballConfig: FIREBALL_CONFIG,
+    initialEntities: [
+      createTroop({ id: "blue", cardId: "knight", team: "blue", x: 6, y: 5.8, hp: 1766 }),
+      createTower({ id: "red_t", team: "red", x: 6, y: 4.2, hp: 3052 }),
+    ],
+  });
+
+  engine.step([]);
+  assert.equal(getEntity(engine, "blue").target_entity_id, "red_t");
+
+  engine.state.entities.push(createTroop({ id: "red_late", cardId: "knight", team: "red", x: 6.2, y: 6.4, hp: 1766 }));
+  resolveFireballImpact({
+    tick: engine.state.tick,
+    impactX: 6,
+    impactY: 5.1,
+    entities: engine.state.entities,
+    arena,
+    sourceSpell: "fireball",
+    fireballConfig: {
+      ...FIREBALL_CONFIG,
+      troop_damage: 0,
+      tower_damage: 0,
+    },
+  });
+
+  for (let i = 0; i < FIREBALL_CONFIG.knockback_duration_ticks; i += 1) {
+    engine.step([]);
+    assert.equal(getEntity(engine, "blue").target_entity_id, null);
+  }
+
+  engine.step([]);
+  assert.equal(getEntity(engine, "blue").target_entity_id, "red_late");
+});
+
 test("towers keep their current lock until another troop is in range and the old lock is not", () => {
   const arena = createArena({ minX: 0, maxX: 12, minY: 0, maxY: 12 });
   const engine = createEngine({
@@ -321,4 +407,50 @@ test("towers keep their current lock until another troop is in range and the old
   engine.step([]);
 
   assert.equal(getEntity(engine, "blue_t").target_entity_id, "red_in_range");
+});
+
+test("enemy collision displacement breaks engaged tower locks on the following tick", () => {
+  const arena = createArena({ minX: 0, maxX: 12, minY: 0, maxY: 12 });
+  const engine = createEngine({
+    seed: 159,
+    arena,
+    fireballConfig: FIREBALL_CONFIG,
+    initialEntities: [
+      createTroop({ id: "blue", cardId: "knight", team: "blue", x: 6, y: 5.8, hp: 1766 }),
+      createTower({ id: "red_t", team: "red", x: 6, y: 4.2, hp: 3052 }),
+    ],
+  });
+
+  engine.step([]);
+  assert.equal(getEntity(engine, "blue").target_entity_id, "red_t");
+
+  engine.state.entities.push(createTroop({ id: "red_bump", cardId: "knight", team: "red", x: 6.12, y: 5.84, hp: 1766 }));
+  engine.step([]);
+
+  assert.equal(getEntity(engine, "blue").target_entity_id, "red_t");
+  engine.step([]);
+
+  assert.equal(getEntity(engine, "blue").target_entity_id, "red_bump");
+});
+
+test("allied compression does not break engaged tower locks", () => {
+  const arena = createArena({ minX: 0, maxX: 12, minY: 0, maxY: 12 });
+  const engine = createEngine({
+    seed: 160,
+    arena,
+    fireballConfig: FIREBALL_CONFIG,
+    initialEntities: [
+      createTroop({ id: "blue", cardId: "knight", team: "blue", x: 6, y: 5.8, hp: 1766 }),
+      createTower({ id: "red_t", team: "red", x: 6, y: 4.2, hp: 3052 }),
+    ],
+  });
+
+  engine.step([]);
+  assert.equal(getEntity(engine, "blue").target_entity_id, "red_t");
+
+  engine.state.entities.push(createTroop({ id: "blue_stack", cardId: "knight", team: "blue", x: 6.12, y: 5.84, hp: 1766 }));
+  engine.step([]);
+  engine.step([]);
+
+  assert.equal(getEntity(engine, "blue").target_entity_id, "red_t");
 });

@@ -685,7 +685,16 @@ export function createEngine({
     for (const entity of state.entities) {
       applyForcedMotion(entity, arena, state.entities);
     }
-    resolveTroopBodyCollisions({ entities: state.entities, arena });
+    const enemyCollisionDisplacedTroopIds = new Set(resolveTroopBodyCollisions({ entities: state.entities, arena }));
+    for (const entity of state.entities) {
+      if (entity.entity_type !== "troop") {
+        continue;
+      }
+
+      if (enemyCollisionDisplacedTroopIds.has(entity.id)) {
+        entity.enemy_collision_retarget_pending = true;
+      }
+    }
     updateEntityVelocities(state.entities, positionsAtTickStart);
 
     const result = evaluateMatchResult({
@@ -749,6 +758,7 @@ export function createEngine({
         collision_radius: entity.collision_radius ?? null,
         body_mass: entity.body_mass ?? null,
         attack_cooldown_ticks_remaining: entity.attack_cooldown_ticks_remaining,
+        enemy_collision_retarget_pending: entity.enemy_collision_retarget_pending ?? null,
         forced_motion_vector: entity.forced_motion_vector,
         forced_motion_ticks_remaining: entity.forced_motion_ticks_remaining,
       })),

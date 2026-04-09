@@ -31,6 +31,7 @@ export function createTroop({ id, cardId, team, x, y, hp = null }) {
     attack_cooldown_ticks_remaining: 0,
     targeting_mode: stats.targeting_mode,
     target_entity_id: null,
+    enemy_collision_retarget_pending: false,
     preferred_lane_x: x,
     velocity: { x: 0, y: 0 },
     forced_motion_vector: { x: 0, y: 0 },

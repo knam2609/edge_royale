@@ -174,6 +174,12 @@ function chooseTowerObjective(attacker, entities) {
 
 function resolveAnyTargetTroop(attacker, entities, entitiesById) {
   const lockedTarget = getLockedTarget(attacker, entitiesById);
+  if (lockedTarget?.entity_type === "tower") {
+    if (!attacker.enemy_collision_retarget_pending && isInRange(attacker, lockedTarget)) {
+      return lockedTarget;
+    }
+  }
+
   if (lockedTarget?.entity_type === "troop" && isWithinSight(attacker, lockedTarget)) {
     if (isInRange(attacker, lockedTarget)) {
       return lockedTarget;
@@ -415,11 +421,16 @@ function displaceTroop(entity, delta, arena) {
   return applied;
 }
 
+function hasMeaningfulDisplacement(delta) {
+  return Math.abs(delta.x) > EPSILON || Math.abs(delta.y) > EPSILON;
+}
+
 export function resolveTroopBodyCollisions({ entities, arena }) {
   const troops = entities
     .filter((entity) => entity.entity_type === "troop" && isAlive(entity))
     .sort((a, b) => a.id.localeCompare(b.id));
   const troopBuckets = buildTroopBuckets(troops);
+  const enemyCollisionDisplacedTroopIds = new Set();
 
   for (const first of troops) {
     for (const second of getNearbyTroops(first, troopBuckets)) {
@@ -448,10 +459,21 @@ export function resolveTroopBodyCollisions({ entities, arena }) {
       const firstShare = overlap * (secondMass / totalMass);
       const secondShare = overlap * (firstMass / totalMass);
 
-      displaceTroop(first, { x: -normal.x * firstShare, y: -normal.y * firstShare }, arena);
-      displaceTroop(second, { x: normal.x * secondShare, y: normal.y * secondShare }, arena);
+      const firstApplied = displaceTroop(first, { x: -normal.x * firstShare, y: -normal.y * firstShare }, arena);
+      const secondApplied = displaceTroop(second, { x: normal.x * secondShare, y: normal.y * secondShare }, arena);
+
+      if (first.team !== second.team) {
+        if (hasMeaningfulDisplacement(firstApplied)) {
+          enemyCollisionDisplacedTroopIds.add(first.id);
+        }
+        if (hasMeaningfulDisplacement(secondApplied)) {
+          enemyCollisionDisplacedTroopIds.add(second.id);
+        }
+      }
     }
   }
+
+  return [...enemyCollisionDisplacedTroopIds];
 }
 
 export function stepCombat({ entities, arena }) {
@@ -463,6 +485,7 @@ export function stepCombat({ entities, arena }) {
     if (!isAlive(entity)) {
       entity.velocity = { x: 0, y: 0 };
       entity.target_entity_id = null;
+      entity.enemy_collision_retarget_pending = false;
       continue;
     }
 
@@ -479,11 +502,15 @@ export function stepCombat({ entities, arena }) {
         y: entity.forced_motion_vector.y,
       };
       entity.target_entity_id = null;
+      entity.enemy_collision_retarget_pending = false;
       continue;
     }
 
     const target = resolveTarget(entity, ordered, entitiesById);
     entity.target_entity_id = target?.id ?? null;
+    if (entity.entity_type === "troop") {
+      entity.enemy_collision_retarget_pending = false;
+    }
 
     if (!target) {
       if (entity.entity_type === "troop") {
