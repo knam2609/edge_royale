@@ -116,6 +116,7 @@ Build a lightweight, single-player Clash Royale-inspired game where players figh
 - Serialize replay files (`.jsonl` or binary + index).
 - Build offline export script for training datasets.
 - Add schema versioning and validation checks.
+- Export deterministic training episodes with fair observations, legal actions, chosen action, reward, result, seed, replay hash, and state hash.
 
 ### Acceptance criteria
 - Every match generates valid telemetry + replay artifacts.
@@ -128,10 +129,13 @@ Build a lightweight, single-player Clash Royale-inspired game where players figh
 - Train baseline policy from logged player data (imitation stage).
 - Run self-play fine-tune (RL stage) with periodic evaluation.
 - Add safety gates to prevent deploying regressed models.
+- Train a model-backed fair Goat boss from generated rollout data before promoting stronger self-play variants.
+- Use TensorFlow.js for offline training and plain-JS MLP inference in gameplay/runtime benchmarks.
 
 ### Acceptance criteria
 - Self bot improves on benchmark suite over baseline.
 - Training outputs are reproducible from saved config + seed.
+- Saved neural Goat artifacts validate against schema, return only legal actions, and produce deterministic benchmark output for fixed model + seeds.
 
 ## Phase 7: Stabilization and Release (1 week)
 

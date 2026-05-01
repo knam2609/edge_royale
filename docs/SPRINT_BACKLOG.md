@@ -63,6 +63,7 @@ This backlog assumes 10 one-week sprints. IDs are stable so they can become GitH
 - `DATA-003` Define telemetry schema v1 and event emission.
 - `DATA-004` Build export script for offline dataset generation.
 - `DATA-005` Add schema validation and version checks.
+- `DATA-006` Export deterministic training episodes with fair observations, legal actions, rewards, replay hashes, and replayable action streams.
 - `QA-007` Add telemetry completeness checks per match.
 
 ## Sprint 9: Self-Play Foundation
@@ -70,6 +71,8 @@ This backlog assumes 10 one-week sprints. IDs are stable so they can become GitH
 - `AI-004` Implement self-play unlock conditions.
 - `ML-001` Build imitation-learning dataset builder from telemetry.
 - `ML-002` Integrate baseline policy training pipeline.
+- `ML-005` Add model-backed Goat legal-action scorer with deterministic plain-JS inference.
+- `ML-006` Add TensorFlow.js offline trainer that exports schema-validated Goat model artifacts.
 - `QA-008` Add offline benchmark harness for trained policy.
 
 ## Sprint 10: RL + Hardening

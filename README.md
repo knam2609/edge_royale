@@ -30,6 +30,7 @@ Learn how to implement UI here: https://github.com/Noisyboy-9/clash_royale_game
 - Game rules spec: `docs/GAME_RULES.md`
 - Card balance spec: `docs/CARD_SPECS.md`
 - Bot tiers spec: `docs/BOT_LEVELS.md`
+- Neural training pipeline: `docs/TRAINING_PIPELINE.md`
 - Sprint/task backlog: `docs/SPRINT_BACKLOG.md`
 
 ## Run prototype
@@ -58,3 +59,13 @@ Ladder + training:
 Automation hooks exposed in browser:
 - `window.render_game_to_text()`
 - `window.advanceTime(ms)`
+
+## Offline Goat training
+
+```bash
+npm run data:export -- --seed 303 --episodes 8 --tiers top,goat --out artifacts/training/datasets/goat-dataset.json
+npm run train:goat -- --dataset artifacts/training/datasets/goat-dataset.json --out artifacts/training/models/goat-model.json
+npm run model:bench -- --model artifacts/training/models/goat-model.json --tiers noob,mid,top --rounds 10
+```
+
+Generated training artifacts are ignored by git. The trained `goat` runtime uses deterministic plain-JS inference when a valid model artifact is supplied and falls back to the heuristic Goat policy otherwise.

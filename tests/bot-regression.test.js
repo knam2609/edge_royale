@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { runBenchmark, runBenchmarkMatrix, runLadderMatch } from "../src/ai/benchmark.js";
+import { createZeroNeuralPolicyModel } from "../src/ai/neuralModel.js";
 
 const SMOKE_MAX_TICKS = 120;
 
@@ -67,4 +68,22 @@ test("short benchmark smoke run preserves accounting invariants", () => {
   assert.equal(result.winsA + result.winsB + result.draws, 2);
   assert.ok(result.resolved >= 0);
   assert.ok(result.winRateA >= 0 && result.winRateA <= 1);
+});
+
+test("model-backed Goat benchmark is deterministic for fixed model and seed", () => {
+  const model = createZeroNeuralPolicyModel({ hiddenUnits: 2, seed: 606 });
+  const config = {
+    botA: "goat",
+    botB: "noob",
+    trainedModelA: model,
+    rounds: 2,
+    seed: 303,
+    maxTicks: SMOKE_MAX_TICKS,
+  };
+
+  const first = runBenchmark(config);
+  const second = runBenchmark(config);
+
+  assert.deepEqual(first, second);
+  assert.equal(first.winsA + first.winsB + first.draws, 2);
 });

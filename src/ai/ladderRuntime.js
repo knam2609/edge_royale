@@ -4,6 +4,7 @@ import { snapPositionToGrid } from "../sim/map.js";
 import { buildTroopPlacementCandidates, getTroopPlacementStatus } from "../sim/placement.js";
 import { selectCardFromModel } from "./training.js";
 import { getSpellDamageAgainstTarget } from "./spellHeuristics.js";
+import { selectActionFromNeuralModel } from "./neuralModel.js";
 
 const BOT_TIER_CONFIG = Object.freeze({
   noob: Object.freeze({
@@ -827,6 +828,20 @@ function chooseGoatAction({ legalActions, state, actor, phase, rng }) {
   };
 }
 
+function chooseModelBackedGoatAction({ legalActions, engine, actor, phase, rng, trainedModel }) {
+  const neuralAction = selectActionFromNeuralModel(trainedModel, {
+    engine,
+    actor,
+    legalActions,
+  });
+
+  if (neuralAction) {
+    return neuralAction;
+  }
+
+  return chooseGoatAction({ legalActions, state: engine.state, actor, phase, rng });
+}
+
 function chooseGodAction({ legalActions, state, actor }) {
   if (legalActions.length === 0) {
     return { type: "PASS" };
@@ -944,7 +959,7 @@ export function selectBotAction({
   }
 
   if (normalizedTier === "goat") {
-    return chooseGoatAction({ legalActions, state, actor, phase, rng });
+    return chooseModelBackedGoatAction({ legalActions, engine, actor, phase, rng, trainedModel });
   }
 
   if (normalizedTier === "god") {

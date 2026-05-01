@@ -6,12 +6,16 @@
   "scripts": {
     "dev": "node scripts/dev-server.mjs",
     "test": "node --test",
-    "bot:bench": "node scripts/bot-benchmark.mjs"
+    "bot:bench": "node scripts/bot-benchmark.mjs",
+    "data:export": "node scripts/data-export.mjs",
+    "train:goat": "node scripts/train-goat.mjs",
+    "model:bench": "node scripts/model-benchmark.mjs"
   },
   "engines": {
     "node": ">=20"
   },
   "devDependencies": {
+    "@tensorflow/tfjs": "^4.22.0",
     "playwright": "^1.58.2"
   }
 }
