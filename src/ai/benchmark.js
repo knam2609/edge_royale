@@ -9,11 +9,11 @@ import {
   selectBotAction,
 } from "./ladderRuntime.js";
 
-function makeArena() {
+export function makeBenchmarkArena() {
   return createArena({ minX: 0, maxX: 18, minY: 0, maxY: 32 });
 }
 
-function makeInitialEntities() {
+export function makeBenchmarkInitialEntities() {
   return [
     createTower({ id: "blue_tower", team: "blue", x: 9, y: 29 }),
     createTower({ id: "red_tower", team: "red", x: 9, y: 3 }),
@@ -70,12 +70,12 @@ export function runLadderMatch({
   trainedModelRed = null,
   maxTicks = MATCH_CONFIG.regulation_ticks + MATCH_CONFIG.overtime_ticks + 40,
 }) {
-  const arena = makeArena();
+  const arena = makeBenchmarkArena();
   const engine = createEngine({
     seed,
     arena,
     fireballConfig: FIREBALL_CONFIG,
-    initialEntities: makeInitialEntities(),
+    initialEntities: makeBenchmarkInitialEntities(),
   });
 
   const blue = makeBotController(seed ^ 0x9e3779b9);
@@ -119,7 +119,15 @@ export function runLadderMatch({
   };
 }
 
-export function runBenchmark({ botA, botB, seed = 1337, rounds = 100, maxTicks = undefined }) {
+export function runBenchmark({
+  botA,
+  botB,
+  seed = 1337,
+  rounds = 100,
+  maxTicks = undefined,
+  trainedModelA = null,
+  trainedModelB = null,
+}) {
   const rng = createRng(seed);
 
   let winsA = 0;
@@ -133,6 +141,8 @@ export function runBenchmark({ botA, botB, seed = 1337, rounds = 100, maxTicks =
     const match = runLadderMatch({
       blueTier: swapSides ? botB : botA,
       redTier: swapSides ? botA : botB,
+      trainedModelBlue: swapSides ? trainedModelB : trainedModelA,
+      trainedModelRed: swapSides ? trainedModelA : trainedModelB,
       seed: matchSeed,
       maxTicks,
     });
@@ -169,6 +179,7 @@ export function runBenchmarkMatrix({
   seed = 1337,
   roundsPerPair = 100,
   maxTicks = undefined,
+  trainedModelsByTier = {},
 } = {}) {
   const normalizedTiers = Array.isArray(tiers)
     ? tiers.filter((tierId, index) => typeof tierId === "string" && tiers.indexOf(tierId) === index)
@@ -187,6 +198,8 @@ export function runBenchmarkMatrix({
         seed: pairSeed,
         rounds: roundsPerPair,
         maxTicks,
+        trainedModelA: trainedModelsByTier[higher] ?? null,
+        trainedModelB: trainedModelsByTier[lower] ?? null,
       });
 
       pairs.push({
