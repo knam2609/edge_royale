@@ -66,7 +66,7 @@
   - Targeting rules.
 - Troops only acquire targets that are inside sight range; attack range still determines when attacks can fire.
 - Target selection priority:
-  - Closest valid enemy by path distance.
+  - Closest valid enemy by path distance to the attackable target surface, including bridge-corridor waypoints while crossing.
   - If tie: lower HP first, then lower entity id.
   - For `any`-target troops, this nearest-target priority applies during the approach to a tower, so an early defensive drop can still pull aggro.
   - Once an `any`-target troop already has its current tower target in attack range, that tower lock persists and late defensive drops do not peel it off.
@@ -92,6 +92,7 @@
 ## 8) Movement and Pathing
 
 - Troops follow shortest lane path toward opposing towers.
+- Bridge crossings preserve the troop's assigned bridge corridor with body-radius clearance, even if retargeting changes the active target mid-crossing.
 - Collision handling:
   - Soft separation to avoid exact overlap.
   - No advanced body-block simulation.

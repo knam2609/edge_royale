@@ -1,5 +1,6 @@
 import { TICK_RATE } from "./config.js";
 import { clampPositionToArenaAndPathable, getArenaSide, getNearestBridge } from "./map.js";
+import { clampGroundPosition, getEntityApproachGoal } from "./nav.js";
 
 const EPSILON = 1e-9;
 const TROOP_BUCKET_SIZE = 2;
@@ -15,6 +16,10 @@ function squaredDistance(a, b) {
   const dx = a.x - b.x;
   const dy = a.y - b.y;
   return dx * dx + dy * dy;
+}
+
+function distance(a, b) {
+  return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
 function normalizeVector(x, y) {
@@ -93,15 +98,55 @@ function getTargetRadius(target) {
   return target.radius ?? MOVE_COLLISION_RADIUS;
 }
 
-function sortTargetCandidates(attacker, entities, predicate = () => true) {
+function samePosition(a, b) {
+  return Math.abs(a.x - b.x) <= EPSILON && Math.abs(a.y - b.y) <= EPSILON;
+}
+
+function getRouteDistanceToGoal(attacker, goal, arena) {
+  let cursor = attacker;
+  let totalDistance = 0;
+
+  for (let segment = 0; segment < 4; segment += 1) {
+    const waypoint = getBridgeWaypoint(cursor, goal, arena);
+    const segmentDistance = distance(cursor, waypoint);
+    totalDistance += segmentDistance;
+
+    if (samePosition(waypoint, goal)) {
+      return totalDistance;
+    }
+
+    if (segmentDistance <= EPSILON) {
+      return totalDistance + distance(waypoint, goal);
+    }
+
+    cursor = {
+      ...attacker,
+      x: waypoint.x,
+      y: waypoint.y,
+    };
+  }
+
+  return totalDistance + distance(cursor, goal);
+}
+
+function getTargetSortDistance(attacker, target, arena) {
+  if (attacker.entity_type !== "troop" || !arena) {
+    return distance(attacker, target);
+  }
+
+  const approachGoal = getEntityApproachGoal(attacker, target);
+  return getRouteDistanceToGoal(attacker, approachGoal, arena);
+}
+
+function sortTargetCandidates(attacker, entities, arena, predicate = () => true) {
   const candidates = entities.filter((candidate) => isTargetable(attacker, candidate) && predicate(candidate));
   if (candidates.length === 0) {
     return candidates;
   }
 
   candidates.sort((a, b) => {
-    const distA = squaredDistance(attacker, a);
-    const distB = squaredDistance(attacker, b);
+    const distA = getTargetSortDistance(attacker, a, arena);
+    const distB = getTargetSortDistance(attacker, b, arena);
     if (Math.abs(distA - distB) > EPSILON) {
       return distA - distB;
     }
@@ -114,8 +159,8 @@ function sortTargetCandidates(attacker, entities, predicate = () => true) {
   return candidates;
 }
 
-function chooseTarget(attacker, entities, predicate = () => true) {
-  const candidates = sortTargetCandidates(attacker, entities, predicate);
+function chooseTarget(attacker, entities, arena, predicate = () => true) {
+  const candidates = sortTargetCandidates(attacker, entities, arena, predicate);
   if (candidates.length === 0) {
     return null;
   }
@@ -136,43 +181,46 @@ function getLockedTarget(attacker, entitiesById) {
   return target;
 }
 
-function chooseVisibleTarget(attacker, entities) {
-  return chooseTarget(attacker, entities, (candidate) => isWithinSight(attacker, candidate));
+function chooseVisibleTarget(attacker, entities, arena) {
+  return chooseTarget(attacker, entities, arena, (candidate) => isWithinSight(attacker, candidate));
 }
 
-function chooseVisibleTroopTarget(attacker, entities) {
+function chooseVisibleTroopTarget(attacker, entities, arena) {
   return chooseTarget(
     attacker,
     entities,
+    arena,
     (candidate) => candidate.entity_type === "troop" && isWithinSight(attacker, candidate),
   );
 }
 
-function chooseImmediateAttackTarget(attacker, entities, excludedId = null) {
+function chooseImmediateAttackTarget(attacker, entities, arena, excludedId = null) {
   return chooseTarget(
     attacker,
     entities,
+    arena,
     (candidate) => candidate.id !== excludedId && isInRange(attacker, candidate),
   );
 }
 
-function chooseImmediateAttackTroopTarget(attacker, entities, excludedId = null) {
+function chooseImmediateAttackTroopTarget(attacker, entities, arena, excludedId = null) {
   return chooseTarget(
     attacker,
     entities,
+    arena,
     (candidate) => candidate.id !== excludedId && candidate.entity_type === "troop" && isInRange(attacker, candidate),
   );
 }
 
-function chooseTowerObjective(attacker, entities) {
+function chooseTowerObjective(attacker, entities, arena) {
   if (attacker.entity_type !== "troop") {
     return null;
   }
 
-  return chooseTarget(attacker, entities, (candidate) => candidate.entity_type === "tower");
+  return chooseTarget(attacker, entities, arena, (candidate) => candidate.entity_type === "tower");
 }
 
-function resolveAnyTargetTroop(attacker, entities, entitiesById) {
+function resolveAnyTargetTroop(attacker, entities, entitiesById, arena) {
   const lockedTarget = getLockedTarget(attacker, entitiesById);
   if (lockedTarget?.entity_type === "tower") {
     if (!attacker.enemy_collision_retarget_pending && isInRange(attacker, lockedTarget)) {
@@ -185,15 +233,15 @@ function resolveAnyTargetTroop(attacker, entities, entitiesById) {
       return lockedTarget;
     }
 
-    return chooseImmediateAttackTroopTarget(attacker, entities, lockedTarget.id) ?? lockedTarget;
+    return chooseImmediateAttackTroopTarget(attacker, entities, arena, lockedTarget.id) ?? lockedTarget;
   }
 
-  const immediateTroopTarget = chooseImmediateAttackTroopTarget(attacker, entities);
+  const immediateTroopTarget = chooseImmediateAttackTroopTarget(attacker, entities, arena);
   if (immediateTroopTarget) {
     return immediateTroopTarget;
   }
 
-  const visibleTroopTarget = chooseVisibleTroopTarget(attacker, entities);
+  const visibleTroopTarget = chooseVisibleTroopTarget(attacker, entities, arena);
   if (visibleTroopTarget) {
     return visibleTroopTarget;
   }
@@ -202,33 +250,33 @@ function resolveAnyTargetTroop(attacker, entities, entitiesById) {
     return lockedTarget;
   }
 
-  return chooseTowerObjective(attacker, entities);
+  return chooseTowerObjective(attacker, entities, arena);
 }
 
-function resolveDefaultTarget(attacker, entities, entitiesById) {
+function resolveDefaultTarget(attacker, entities, entitiesById, arena) {
   const lockedTarget = getLockedTarget(attacker, entitiesById);
   if (lockedTarget) {
     if (isInRange(attacker, lockedTarget)) {
       return lockedTarget;
     }
 
-    return chooseImmediateAttackTarget(attacker, entities, lockedTarget.id) ?? lockedTarget;
+    return chooseImmediateAttackTarget(attacker, entities, arena, lockedTarget.id) ?? lockedTarget;
   }
 
-  const visibleTarget = chooseVisibleTarget(attacker, entities);
+  const visibleTarget = chooseVisibleTarget(attacker, entities, arena);
   if (visibleTarget) {
     return visibleTarget;
   }
 
-  return chooseTowerObjective(attacker, entities);
+  return chooseTowerObjective(attacker, entities, arena);
 }
 
-function resolveTarget(attacker, entities, entitiesById) {
+function resolveTarget(attacker, entities, entitiesById, arena) {
   if (attacker.entity_type === "troop" && attacker.targeting_mode === "any") {
-    return resolveAnyTargetTroop(attacker, entities, entitiesById);
+    return resolveAnyTargetTroop(attacker, entities, entitiesById, arena);
   }
 
-  return resolveDefaultTarget(attacker, entities, entitiesById);
+  return resolveDefaultTarget(attacker, entities, entitiesById, arena);
 }
 
 function isWithinSight(attacker, target) {
@@ -275,6 +323,20 @@ function getForwardDirection(entity, arena) {
   return normalizeVector(laneBiasX, laneBiasY);
 }
 
+function getForwardBridgeExitSide(entity) {
+  return entity.team === "blue" ? "north" : "south";
+}
+
+function getBridgeExitY(arena, side, clearance) {
+  if (side === "north") {
+    return roundCoord(arena.river.minY - clearance);
+  }
+  if (side === "south") {
+    return roundCoord(arena.river.maxY + clearance);
+  }
+  return arena.river.centerY;
+}
+
 function getBridgeWaypoint(entity, goal, arena) {
   if (!arena.river || !arena.bridges?.length) {
     return goal;
@@ -283,7 +345,22 @@ function getBridgeWaypoint(entity, goal, arena) {
   const entitySide = getArenaSide(arena, entity.y);
   const goalSide = getArenaSide(arena, goal.y);
 
-  if (entitySide === "river" || goalSide === "river" || entitySide === goalSide) {
+  if (entitySide === "river") {
+    const bridge = getNearestBridge(arena, entity.preferred_lane_x ?? entity.x);
+    if (!bridge) {
+      return goal;
+    }
+
+    const exitSide = goalSide === "north" || goalSide === "south"
+      ? goalSide
+      : getForwardBridgeExitSide(entity);
+    return {
+      x: bridge.x,
+      y: getBridgeExitY(arena, exitSide, getMovementBodyRadius(entity)),
+    };
+  }
+
+  if (goalSide === "river" || entitySide === goalSide) {
     return goal;
   }
 
@@ -296,6 +373,18 @@ function getBridgeWaypoint(entity, goal, arena) {
     x: bridge.x,
     y: arena.river.centerY,
   };
+}
+
+function clampTroopMovementPosition(entity, position, arena) {
+  if (!arena.river) {
+    return clampPositionToArenaAndPathable(position, arena);
+  }
+
+  return clampGroundPosition({
+    position,
+    arena,
+    clearance: getMovementBodyRadius(entity),
+  });
 }
 
 function activateKingTowers(entities) {
@@ -358,7 +447,7 @@ function moveTroop(entity, target, arena) {
     y: entity.y + direction.y * speedPerTick,
   };
 
-  const nextPosition = clampPositionToArenaAndPathable(desiredPosition, arena);
+  const nextPosition = clampTroopMovementPosition(entity, desiredPosition, arena);
   entity.velocity = {
     x: roundCoord(nextPosition.x - entity.x),
     y: roundCoord(nextPosition.y - entity.y),
@@ -403,7 +492,8 @@ function displaceTroop(entity, delta, arena) {
     x: clampLateralDelta(delta.x),
     y: delta.y,
   };
-  const nextPosition = clampPositionToArenaAndPathable(
+  const nextPosition = clampTroopMovementPosition(
+    entity,
     {
       x: entity.x + limitedDelta.x,
       y: entity.y + limitedDelta.y,
@@ -506,7 +596,7 @@ export function stepCombat({ entities, arena }) {
       continue;
     }
 
-    const target = resolveTarget(entity, ordered, entitiesById);
+    const target = resolveTarget(entity, ordered, entitiesById, arena);
     entity.target_entity_id = target?.id ?? null;
     if (entity.entity_type === "troop") {
       entity.enemy_collision_retarget_pending = false;

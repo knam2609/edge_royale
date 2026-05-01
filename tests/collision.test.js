@@ -177,6 +177,49 @@ test("body contact during retargeting does not push a giant off its assigned bri
   );
 });
 
+test("off-lane retarget during bridge crossing stays within body-clearance bridge bounds", () => {
+  const arena = createRoyaleArena({ minX: 0, maxX: 18, minY: 0, maxY: 32 });
+  const redSide = createTroop({ id: "red_side", cardId: "knight", team: "red", x: 8.8, y: 14.2, hp: 1766 });
+  redSide.move_speed = 0;
+
+  const engine = createEngine({
+    seed: 17,
+    arena,
+    fireballConfig: FIREBALL_CONFIG,
+    initialEntities: [
+      createTroop({ id: "blue", cardId: "knight", team: "blue", x: ROYALE_LANE_X.left, y: 18.2, hp: 1766 }),
+      redSide,
+      createTower({ id: "red_left", team: "red", x: ROYALE_TOWER_X.left, y: ROYALE_TOWER_Y.red.crown, hp: 3052, tower_role: "crown" }),
+    ],
+  });
+
+  const leftBridge = arena.bridges.find((bridge) => bridge.lane === "left");
+  const minClearX = leftBridge.minX + MOVE_BODY_RADIUS;
+  const maxClearX = leftBridge.maxX - MOVE_BODY_RADIUS;
+  const riverPositions = [];
+  let retargetedInRiver = false;
+
+  for (let tick = 0; tick < 120; tick += 1) {
+    engine.step([]);
+    const blue = engine.state.entities.find((entity) => entity.id === "blue");
+
+    if (blue.y >= arena.river.minY && blue.y <= arena.river.maxY) {
+      riverPositions.push({ x: blue.x, y: blue.y, target: blue.target_entity_id });
+      if (blue.target_entity_id === "red_side") {
+        retargetedInRiver = true;
+      }
+    }
+  }
+
+  const blue = engine.state.entities.find((entity) => entity.id === "blue");
+  assert.ok(retargetedInRiver, `expected blue troop to retarget to off-lane troop while in river, got ${JSON.stringify(riverPositions)}`);
+  assert.ok(blue.y < arena.river.minY, `expected blue troop to clear the far bridge exit, got y=${blue.y}`);
+  assert.ok(
+    riverPositions.every((position) => position.x >= minClearX - 1e-3 && position.x <= maxClearX + 1e-3),
+    `expected body-clear bridge x in [${minClearX}, ${maxClearX}], got ${JSON.stringify(riverPositions)}`,
+  );
+});
+
 test("fireball knockback stays outside tower blockers and resolves to a mildly compressed state", () => {
   const arena = createArena({ minX: 0, maxX: 12, minY: 0, maxY: 12 });
   const tower = createTower({ id: "tower", team: "red", x: 5, y: 5, hp: 3000, tower_role: "crown" });

@@ -189,6 +189,55 @@ test("side-pocket troops fall back to the enemy king instead of drifting to the 
   }
 });
 
+test("destroyed-lane bridge connector troops use route distance for tower objectives", () => {
+  const cases = [
+    { id: "knight", cardId: "knight" },
+    { id: "giant", cardId: "giant" },
+  ];
+
+  for (const troopCase of cases) {
+    const arena = createRoyaleArena({ minX: 0, maxX: 18, minY: 0, maxY: 32 });
+    const engine = createEngine({
+      seed: 158,
+      arena,
+      fireballConfig: FIREBALL_CONFIG,
+      initialEntities: [
+        createTower({ id: "red_left", team: "red", x: ROYALE_TOWER_X.left, y: ROYALE_TOWER_Y.red.crown, hp: 0, tower_role: "crown" }),
+        createTower({ id: "red_right", team: "red", x: ROYALE_TOWER_X.right, y: ROYALE_TOWER_Y.red.crown, hp: 3052, tower_role: "crown" }),
+        createTower({ id: "red_king", team: "red", x: ROYALE_TOWER_X.center, y: ROYALE_TOWER_Y.red.king, hp: 4824, tower_role: "king", is_active: false }),
+        createTroop({ id: troopCase.id, cardId: troopCase.cardId, team: "blue", x: 4.5, y: 16.5 }),
+      ],
+    });
+
+    engine.step([]);
+
+    assert.equal(
+      getEntity(engine, troopCase.id).target_entity_id,
+      "red_king",
+      `${troopCase.cardId} should choose the enemy king by bridge-route distance`,
+    );
+  }
+});
+
+test("destroyed-lane pocket troops can still choose a genuinely closer surviving crown tower", () => {
+  const arena = createRoyaleArena({ minX: 0, maxX: 18, minY: 0, maxY: 32 });
+  const engine = createEngine({
+    seed: 159,
+    arena,
+    fireballConfig: FIREBALL_CONFIG,
+    initialEntities: [
+      createTower({ id: "red_left", team: "red", x: ROYALE_TOWER_X.left, y: ROYALE_TOWER_Y.red.crown, hp: 0, tower_role: "crown" }),
+      createTower({ id: "red_right", team: "red", x: ROYALE_TOWER_X.right, y: ROYALE_TOWER_Y.red.crown, hp: 3052, tower_role: "crown" }),
+      createTower({ id: "red_king", team: "red", x: ROYALE_TOWER_X.center, y: ROYALE_TOWER_Y.red.king, hp: 4824, tower_role: "king", is_active: false }),
+      createTroop({ id: "knight", cardId: "knight", team: "blue", x: 8.5, y: 10.5 }),
+    ],
+  });
+
+  engine.step([]);
+
+  assert.equal(getEntity(engine, "knight").target_entity_id, "red_right");
+});
+
 test("troops keep their locked target when a closer enemy enters sight but not attack range", () => {
   const arena = createArena({ minX: 0, maxX: 12, minY: 0, maxY: 12 });
   const engine = createEngine({
