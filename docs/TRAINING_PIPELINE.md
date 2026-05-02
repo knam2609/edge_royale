@@ -4,12 +4,13 @@
 
 Train fair, model-backed ladder tiers (`noob`, `mid`, `top`, `pro`, `goat`) without giving them hidden opponent hand or exact opponent elixir.
 
-The first implementation is offline-first:
+The first implementation is offline-first with one automated daily training lane:
 
 - deterministic headless rollouts export full training episodes
 - TensorFlow.js trains a small legal-action MLP in Node
 - runtime inference uses plain JavaScript matrix math in `src/ai`
-- generated datasets and models live under ignored `artifacts/`
+- generated datasets and raw run models live under ignored `artifacts/training/runs/`
+- accepted daily models are copied to stable tracked paths under `artifacts/training/promoted/`
 
 ## Data Shape
 
@@ -75,6 +76,8 @@ Valid fair tiers are `noob`, `mid`, `top`, `pro`, and `goat`.
 `mode: "heuristic"` disables model usage for that tier.
 The browser and `bot:bench -- --model-config <path>` only use valid same-tier artifacts; missing, invalid, or mismatched models fall back to heuristic policies.
 
+The daily workflow writes a candidate manifest inside its ignored run directory first. Only a passing candidate is promoted into the checked-in shared manifest and stable promoted model paths.
+
 ## Model Artifact
 
 Model schema version: `1`
@@ -101,3 +104,35 @@ The current gate is pipeline correctness:
 - trained model is compared against heuristic same-tier and adjacent fair tiers before any gameplay promotion
 
 This gate is still about pipeline correctness first. Ladder ordering and stronger promotion thresholds remain follow-up work.
+
+## Daily Training Automation
+
+`.github/workflows/daily-ladder-training.yml` runs at `17:37 UTC` daily and supports manual `workflow_dispatch`.
+
+Daily training uses the balanced large preset:
+
+```bash
+LADDER_TIERS=noob,mid,top,pro,goat
+LADDER_SHARDS=4
+LADDER_EPISODES=500
+LADDER_MAX_TICKS=900
+LADDER_ITERATIONS=3
+LADDER_EPOCHS=8
+LADDER_BATCH_SIZE=64
+LADDER_MAX_NEGATIVES=8
+LADDER_EVAL_ROUNDS=50
+LADDER_EVAL_MAX_TICKS=900
+LADDER_BENCH_ROUNDS=25
+LADDER_BENCH_MAX_TICKS=900
+```
+
+After training, `scripts/compare-ladder-models.mjs` benchmarks the candidate manifest against the checked-in manifest with the same seeds. The daily improvement gate passes only when:
+
+- the candidate benchmark matrix is deterministic
+- every requested fair tier has a valid same-tier candidate model
+- average win-rate delta is at least `+0.02` after bootstrap
+- no adjacent tier pair regresses by more than `0.05`
+
+When the gate passes, `scripts/promote-ladder-models.mjs` copies accepted models and per-tier summaries to `artifacts/training/promoted/`, writes `artifacts/training/ladder-models.json`, and prepares the PR body. The workflow pushes branch `training/daily-ladder-models` and opens or updates a PR to `main`; it does not auto-merge.
+
+The first accepted run can bootstrap from a heuristic baseline if no checked-in models exist. This daily improvement gate is not the strict promotion gate in `docs/BOT_LEVELS.md`; it is a safe automatic refresh gate for candidate model artifacts.

@@ -1,0 +1,123 @@
+name: Daily Ladder Training
+
+on:
+  schedule:
+    - cron: "37 17 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: daily-ladder-training
+  cancel-in-progress: false
+
+env:
+  RUN_ROOT: artifacts/training/runs/daily-${{ github.run_id }}
+  CANDIDATE_MANIFEST: artifacts/training/runs/daily-${{ github.run_id }}/candidate-ladder-models.json
+  COMPARISON_SUMMARY: artifacts/training/runs/daily-${{ github.run_id }}/comparison-summary.json
+  PR_BODY: artifacts/training/runs/daily-${{ github.run_id }}/pull-request-body.md
+
+jobs:
+  train:
+    name: Train ladder models
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Train candidate ladder models
+        env:
+          LADDER_RUN_NAME: daily-${{ github.run_id }}
+          LADDER_OUTPUT_ROOT: ${{ env.RUN_ROOT }}
+          LADDER_MODEL_MANIFEST_PATH: ${{ env.CANDIDATE_MANIFEST }}
+          LADDER_TIERS: noob,mid,top,pro,goat
+          LADDER_SHARDS: 4
+          LADDER_EPISODES: 500
+          LADDER_MAX_TICKS: 900
+          LADDER_ITERATIONS: 3
+          LADDER_EPOCHS: 8
+          LADDER_BATCH_SIZE: 64
+          LADDER_LEARNING_RATE: 0.01
+          LADDER_MAX_NEGATIVES: 8
+          LADDER_EVAL_ROUNDS: 50
+          LADDER_EVAL_MAX_TICKS: 900
+          LADDER_BENCH_TIERS: noob,mid,top,pro,goat
+          LADDER_BENCH_ROUNDS: 25
+          LADDER_BENCH_MAX_TICKS: 900
+        run: bash scripts/train-bot-ladder.sh
+
+      - name: Compare candidate against checked-in model
+        id: compare
+        env:
+          SUMMARY_PATH: ${{ env.COMPARISON_SUMMARY }}
+        run: |
+          node scripts/compare-ladder-models.mjs \
+            --baseline-manifest artifacts/training/ladder-models.json \
+            --candidate-manifest "$CANDIDATE_MANIFEST" \
+            --out "$COMPARISON_SUMMARY" \
+            --tiers noob,mid,top,pro,goat \
+            --seed 909 \
+            --rounds 100 \
+            --max-ticks 900 \
+            --min-average-delta 0.02 \
+            --bootstrap-min-average-delta 0 \
+            --max-adjacent-regression 0.05
+          echo "comparison_passed=$(node --input-type=module -e "import { readFileSync } from 'node:fs'; const summary = JSON.parse(readFileSync(process.env.SUMMARY_PATH, 'utf8')); console.log(summary.passed ? 'true' : 'false');")" >> "$GITHUB_OUTPUT"
+
+      - name: Upload full training run
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ladder-training-${{ github.run_id }}
+          path: ${{ env.RUN_ROOT }}
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Promote passing candidate
+        id: promote
+        if: steps.compare.outputs.comparison_passed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -C training/daily-ladder-models
+          node scripts/promote-ladder-models.mjs \
+            --candidate-manifest "$CANDIDATE_MANIFEST" \
+            --comparison-summary "$COMPARISON_SUMMARY" \
+            --run-root "$RUN_ROOT" \
+            --pr-body-out "$PR_BODY"
+          git add artifacts/training/ladder-models.json artifacts/training/promoted
+          if git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            git commit -m "Update daily ladder models"
+            git push --force-with-lease origin training/daily-ladder-models
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open or update model PR
+        if: steps.promote.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          existing_pr="$(gh pr list --head training/daily-ladder-models --base main --state open --json number --jq '.[0].number')"
+          if [ -z "$existing_pr" ]; then
+            gh pr create --base main --head training/daily-ladder-models --title "Update daily ladder models" --body-file "$PR_BODY"
+          else
+            gh pr edit "$existing_pr" --title "Update daily ladder models" --body-file "$PR_BODY"
+          fi

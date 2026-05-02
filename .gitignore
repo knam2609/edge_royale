@@ -1,5 +1,10 @@
 node_modules/
 output/
-artifacts/
+artifacts/*
+!artifacts/training/
+artifacts/training/*
+!artifacts/training/ladder-models.json
+!artifacts/training/promoted/
+!artifacts/training/promoted/**
 .DS_Store
 .playwright-cli/
