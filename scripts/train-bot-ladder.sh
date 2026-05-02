@@ -7,6 +7,7 @@ cd "$REPO_ROOT"
 LADDER_RUN_NAME="${LADDER_RUN_NAME:-ladder-$(date +%Y%m%d-%H%M%S)}"
 LADDER_OUTPUT_ROOT="${LADDER_OUTPUT_ROOT:-artifacts/training/runs/${LADDER_RUN_NAME}}"
 LADDER_TIERS="${LADDER_TIERS:-noob,mid,top,pro,goat}"
+LADDER_MODEL_MANIFEST_PATH="${LADDER_MODEL_MANIFEST_PATH:-artifacts/training/ladder-models.json}"
 
 LADDER_SHARDS="${LADDER_SHARDS:-2}"
 LADDER_BASE_SEED="${LADDER_BASE_SEED:-303}"
@@ -56,6 +57,8 @@ episodes_for_tier() {
 }
 
 IFS=',' read -r -a TRAIN_TIERS <<< "$LADDER_TIERS"
+TRAINED_TIERS=()
+TRAINED_MODEL_PATHS=()
 
 mkdir -p "$LADDER_OUTPUT_ROOT"
 
@@ -120,8 +123,21 @@ for tier_index in "${!TRAIN_TIERS[@]}"; do
   echo
   echo "==> tier=${tier} benchmarking saved model"
   "${bench_cmd[@]}"
+
+  TRAINED_TIERS+=("$tier")
+  TRAINED_MODEL_PATHS+=("$model_path")
 done
+
+manifest_cmd=(node scripts/write-ladder-model-manifest.mjs --out "$LADDER_MODEL_MANIFEST_PATH")
+for tier_index in "${!TRAINED_TIERS[@]}"; do
+  manifest_cmd+=(--tier "${TRAINED_TIERS[$tier_index]}" "${TRAINED_MODEL_PATHS[$tier_index]}")
+done
+
+echo
+echo "==> writing ladder model manifest"
+"${manifest_cmd[@]}"
 
 echo
 echo "done"
 echo "artifacts_root=$LADDER_OUTPUT_ROOT"
+echo "ladder_model_manifest=$LADDER_MODEL_MANIFEST_PATH"

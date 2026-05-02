@@ -87,3 +87,34 @@ test("model-backed Goat benchmark is deterministic for fixed model and seed", ()
   assert.deepEqual(first, second);
   assert.equal(first.winsA + first.winsB + first.draws, 2);
 });
+
+test("benchmark matrix forwards configured trained models by tier", () => {
+  const model = createZeroNeuralPolicyModel({ hiddenUnits: 1, seed: 707 });
+  model.training_config.target_tier = "mid";
+
+  const matrix = runBenchmarkMatrix({
+    tiers: ["noob", "mid"],
+    seed: 515,
+    roundsPerPair: 2,
+    maxTicks: SMOKE_MAX_TICKS,
+    trainedModelsByTier: {
+      mid: model,
+    },
+  });
+
+  const pair = matrix.pairs[0];
+  const expected = runBenchmark({
+    botA: "mid",
+    botB: "noob",
+    seed: pair.seed,
+    rounds: pair.rounds,
+    maxTicks: SMOKE_MAX_TICKS,
+    trainedModelA: model,
+  });
+
+  assert.equal(pair.higher_tier, "mid");
+  assert.equal(pair.lower_tier, "noob");
+  assert.equal(pair.wins_higher, expected.winsA);
+  assert.equal(pair.wins_lower, expected.winsB);
+  assert.equal(pair.draws, expected.draws);
+});

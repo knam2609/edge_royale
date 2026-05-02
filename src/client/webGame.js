@@ -15,6 +15,13 @@ import {
   selectBotAction,
 } from "../ai/ladderRuntime.js";
 import {
+  DEFAULT_LADDER_MODEL_MANIFEST_PATH,
+  FAIR_LADDER_MODEL_TIERS,
+  getConfiguredLadderModelPath,
+  normalizeLadderModelManifest,
+  normalizeLoadedLadderModelsByTier,
+} from "../ai/ladderModelManifest.js";
+import {
   createDefaultProfile,
   getProfileProgress,
   normalizeProfile,
@@ -176,6 +183,10 @@ const appState = {
   profile: createDefaultProfile(),
   trainingStore: createEmptyTrainingStore(),
   selfModel: null,
+  ladderModelManifest: { version: 1, tiers: {}, warnings: [] },
+  ladderModelsByTier: {},
+  ladderModelWarnings: [],
+  ladderModelStatus: "missing",
   matchRecorded: false,
   pendingTrainingSamples: [],
   botRng: createRng(20260306),
@@ -249,6 +260,17 @@ function getTierLabel(tierId) {
   return getBotTierConfig(tierId).label;
 }
 
+function getOpponentModelSource(tierId = appState.selectedBotTier) {
+  return appState.ladderModelsByTier[tierId] ? "model" : "heuristic";
+}
+
+function getRuntimeBotModel(tierId = appState.selectedBotTier) {
+  if (tierId === "self") {
+    return appState.selfModel;
+  }
+  return appState.ladderModelsByTier[tierId] ?? null;
+}
+
 function syncTierSelectOptions() {
   const profile = normalizeProfile(appState.profile);
   const locked = new Set(
@@ -280,8 +302,9 @@ function refreshProfileSummary() {
   const selfStatus = progress.self_play_ready
     ? "Self unlock ready"
     : `Self unlock in ${progress.matches_needed_for_self} matches + ${progress.top_wins_needed_for_self} top wins`;
+  const botSource = getOpponentModelSource(appState.selectedBotTier);
 
-  profileSummary.textContent = `Tier: ${getTierLabel(appState.selectedBotTier)} | Matches: ${progress.total_matches} | Training samples: ${training.sample_count} | ${selfStatus} | Model: ${selfReady ? "ready" : "not trained"}`;
+  profileSummary.textContent = `Tier: ${getTierLabel(appState.selectedBotTier)} | Bot source: ${botSource} | Matches: ${progress.total_matches} | Training samples: ${training.sample_count} | ${selfStatus} | Self model: ${selfReady ? "ready" : "not trained"}`;
 }
 
 function syncSetupOverlay() {
@@ -317,6 +340,80 @@ function hydrateAppState() {
   appState.selectedBotTier = normalizeBotTierId(appState.profile.selected_tier);
   syncTierSelectOptions();
   refreshProfileSummary();
+}
+
+function manifestPathToFetchUrl(path) {
+  return `/${String(path).replace(/^\/+/, "")}`;
+}
+
+async function fetchJsonOrNull(url) {
+  const response = await fetch(url, { cache: "no-store" });
+  if (response.status === 404) {
+    return null;
+  }
+  if (!response.ok) {
+    throw new Error(`${response.status} ${response.statusText}`.trim());
+  }
+  return response.json();
+}
+
+async function hydrateLadderModels() {
+  appState.ladderModelStatus = "loading";
+  refreshProfileSummary();
+
+  let rawManifest = null;
+  try {
+    rawManifest = await fetchJsonOrNull(manifestPathToFetchUrl(DEFAULT_LADDER_MODEL_MANIFEST_PATH));
+  } catch (error) {
+    appState.ladderModelStatus = "error";
+    appState.ladderModelWarnings = [`could not load ladder model manifest: ${error.message}`];
+    refreshProfileSummary();
+    return;
+  }
+
+  if (!rawManifest) {
+    appState.ladderModelStatus = "missing";
+    appState.ladderModelManifest = { version: 1, tiers: {}, warnings: [] };
+    appState.ladderModelsByTier = {};
+    appState.ladderModelWarnings = [];
+    refreshProfileSummary();
+    return;
+  }
+
+  const manifest = normalizeLadderModelManifest(rawManifest);
+  const rawModelsByTier = {};
+  const fetchWarnings = [];
+
+  await Promise.all(
+    FAIR_LADDER_MODEL_TIERS.map(async (tierId) => {
+      const modelPath = getConfiguredLadderModelPath(manifest, tierId);
+      if (!modelPath) {
+        return;
+      }
+
+      try {
+        const rawModel = await fetchJsonOrNull(manifestPathToFetchUrl(modelPath));
+        if (rawModel) {
+          rawModelsByTier[tierId] = rawModel;
+        } else {
+          fetchWarnings.push(`tier ${tierId} model at ${modelPath} was not found; using heuristic`);
+        }
+      } catch (error) {
+        fetchWarnings.push(`tier ${tierId} model at ${modelPath} could not load: ${error.message}`);
+      }
+    }),
+  );
+
+  const loaded = normalizeLoadedLadderModelsByTier({ manifest, rawModelsByTier });
+  appState.ladderModelStatus = "loaded";
+  appState.ladderModelManifest = loaded.manifest;
+  appState.ladderModelsByTier = loaded.modelsByTier;
+  appState.ladderModelWarnings = [...fetchWarnings, ...loaded.warnings];
+  refreshProfileSummary();
+
+  if (appState.mode === "ready" && appState.ladderModelWarnings.length > 0) {
+    appState.statusMessage = `Ladder model config loaded with ${appState.ladderModelWarnings.length} warning(s); invalid tiers use heuristics.`;
+  }
 }
 
 let cachedBattleLayoutKey = "";
@@ -903,7 +1000,7 @@ function buildBotActions(tick) {
     actor: "red",
     legalActions,
     rng: appState.botRng,
-    trainedModel: appState.selfModel,
+    trainedModel: getRuntimeBotModel(appState.selectedBotTier),
   });
 
   if (!selected || selected.type !== "PLAY_CARD") {
@@ -3049,6 +3146,9 @@ window.render_game_to_text = () => {
       world_bounds: { min_x: arena.minX, max_x: arena.maxX, min_y: arena.minY, max_y: arena.maxY },
     },
     bot_tier: appState.selectedBotTier,
+    bot_source: getOpponentModelSource(appState.selectedBotTier),
+    ladder_model_status: appState.ladderModelStatus,
+    ladder_model_warnings: appState.ladderModelWarnings,
     unlocked_tiers: normalizeProfile(appState.profile).unlocked_tiers,
     training: {
       samples: appState.trainingStore.samples.length,
@@ -3114,6 +3214,7 @@ window.render_game_to_text = () => {
 
 hydrateAppState();
 resetGame();
+void hydrateLadderModels();
 resizeCanvasToDisplaySize();
 render();
 requestAnimationFrame(frame);

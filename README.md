@@ -77,3 +77,11 @@ LADDER_RUN_NAME=ladder-v2 LADDER_SHARDS=4 LADDER_EPISODES=500 LADDER_BENCH_ROUND
 Generated training artifacts are ignored by git. `data:export` still writes compact JSON shard files by default, and `train:bot` trains a specific fair ladder tier with `--target-tier <tier>`.
 
 Fair ladder tiers use deterministic plain-JS inference when a valid same-tier model artifact is supplied and fall back to their heuristic policies otherwise.
+`train:ladder` also writes `artifacts/training/ladder-models.json`, an ignored local manifest that points each trained fair tier at the latest run's saved model.
+The browser loads that manifest on startup; missing, invalid, or mismatched model entries fall back to heuristics.
+
+Benchmark the normal ladder matrix against the configured local models with:
+
+```bash
+npm run bot:bench -- --model-config artifacts/training/ladder-models.json
+```
