@@ -18,8 +18,8 @@ Dataset schema version: `1.0`
 Each exported dataset contains:
 
 - `dataset_hash`, `seed`, `tiers`, `episode_count`, `sample_count`
-- `episodes[]` with seed, tiers, final result, state hash, replay hash, replay actions, and samples
-- `samples[]` with actor, tier, tick, phase, fair observation vector, legal actions, chosen action index, and terminal reward from that actor's perspective
+- `episodes[]` with seed, tiers, final result, state hash, replay hash, replay actions, and `samples[]`
+- `episodes[].samples[]` with actor, tier, tick, phase, fair observation vector, legal actions, chosen action index, and terminal reward from that actor's perspective
 
 Observation schema: `goat_state_features_v1`
 
@@ -38,23 +38,21 @@ The action vector describes one legal `PLAY_CARD(cardId, x, y)` candidate. The m
 
 ## Commands
 
-Export deterministic rollout data:
+Run the full shard export, train, and benchmark flow:
 
 ```bash
-npm run data:export -- --seed 303 --episodes 8 --tiers top,goat --max-ticks 900 --out artifacts/training/datasets/goat-dataset.json
+bash scripts/train-goat-pipeline.sh
 ```
 
-Train a model:
+By default the script writes a timestamped run under `artifacts/training/runs/`, exports shard files, trains from the shard directory, then benchmarks the saved model.
+
+Customize the run with env vars when needed:
 
 ```bash
-npm run train:goat -- --dataset artifacts/training/datasets/goat-dataset.json --iterations 1 --epochs 4 --out artifacts/training/models/goat-model.json
+GOAT_RUN_NAME=goat-smoke GOAT_SHARDS=2 GOAT_EPISODES=2 GOAT_MAX_TICKS=120 GOAT_ITERATIONS=1 GOAT_EPOCHS=1 GOAT_EVAL_ROUNDS=1 GOAT_EVAL_MAX_TICKS=80 GOAT_BENCH_ROUNDS=2 GOAT_BENCH_MAX_TICKS=80 GOAT_BENCH_SEED=9001 bash scripts/train-goat-pipeline.sh
 ```
 
-Benchmark a saved model:
-
-```bash
-npm run model:bench -- --model artifacts/training/models/goat-model.json --tiers noob,mid,top,goat --rounds 10 --seed 404
-```
+The pipeline script wraps `data:export`, `train:goat`, and `model:bench`. `data:export` still writes compact JSON by default so large shard files stay within practical string sizes, and `train:goat` still supports repeated `--dataset <file>` flags for manual debugging. When multiple shard files are supplied, `train:goat` trains over the deterministic lexicographic union of those files, stores a corpus-level `dataset_hash` on the model artifact, and records the ordered shard metadata under `training_config.dataset_sources`.
 
 ## Model Artifact
 
@@ -65,7 +63,7 @@ Model artifacts contain:
 - `kind: "legal_action_mlp"`
 - feature/action schema versions
 - `input_size`
-- training config, seed, and dataset hash
+- training config, seed, dataset hash, and shard source metadata when training from multiple files
 - dense layer weights and biases exported from TensorFlow.js
 
 Saved-model evaluation is deterministic for a fixed model, seed, and benchmark config. Training records seed/config/hash metadata, but TensorFlow.js weight generation is not treated as a cross-platform bit-for-bit contract.

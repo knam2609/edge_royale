@@ -241,6 +241,17 @@ export function hashTrainingDataset(dataset) {
   return hashState(withoutHash);
 }
 
+export function hashTrainingDatasetCorpus(datasetHashes) {
+  const orderedHashes = Array.isArray(datasetHashes)
+    ? datasetHashes.filter((hash) => typeof hash === "string" && hash.length > 0)
+    : [];
+  return hashState({
+    schema_version: TRAINING_DATASET_SCHEMA_VERSION,
+    kind: "training_dataset_corpus_v1",
+    dataset_hashes: orderedHashes,
+  });
+}
+
 export function generateTrainingDataset({
   tiers = ["top", "goat"],
   seed = 303,

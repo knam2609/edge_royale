@@ -63,9 +63,17 @@ Automation hooks exposed in browser:
 ## Offline Goat training
 
 ```bash
-npm run data:export -- --seed 303 --episodes 8 --tiers top,goat --out artifacts/training/datasets/goat-dataset.json
-npm run train:goat -- --dataset artifacts/training/datasets/goat-dataset.json --out artifacts/training/models/goat-model.json
-npm run model:bench -- --model artifacts/training/models/goat-model.json --tiers noob,mid,top --rounds 10
+bash scripts/train-goat-pipeline.sh
 ```
 
-Generated training artifacts are ignored by git. The trained `goat` runtime uses deterministic plain-JS inference when a valid model artifact is supplied and falls back to the heuristic Goat policy otherwise.
+By default the script writes a timestamped run under `artifacts/training/runs/`, exports shard files, trains from the shard directory, and benchmarks the saved model.
+
+Customize a run with env vars when needed:
+
+```bash
+GOAT_RUN_NAME=goat-v2 GOAT_SHARDS=4 GOAT_EPISODES=500 GOAT_BENCH_ROUNDS=50 bash scripts/train-goat-pipeline.sh
+```
+
+Generated training artifacts are ignored by git. `data:export` still writes compact JSON shard files by default and `train:goat` still accepts repeated `--dataset <file>` inputs for manual debugging, but the primary documented workflow is the pipeline script above.
+
+The trained `goat` runtime uses deterministic plain-JS inference when a valid model artifact is supplied and falls back to the heuristic Goat policy otherwise.
