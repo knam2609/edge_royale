@@ -1,8 +1,8 @@
-# Neural Goat Training Pipeline
+# Neural Ladder Training Pipeline
 
 ## Goal
 
-Train a fair, model-backed `goat` boss without giving it hidden opponent hand or exact opponent elixir.
+Train fair, model-backed ladder tiers (`noob`, `mid`, `top`, `pro`, `goat`) without giving them hidden opponent hand or exact opponent elixir.
 
 The first implementation is offline-first:
 
@@ -34,25 +34,25 @@ It intentionally excludes hidden opponent hand and exact opponent elixir.
 
 Action schema: `goat_action_features_v1`
 
-The action vector describes one legal `PLAY_CARD(cardId, x, y)` candidate. The model scores every legal candidate and chooses the highest-scoring legal action. If no valid neural model is supplied, `goat` falls back to the existing heuristic policy.
+The action vector describes one legal `PLAY_CARD(cardId, x, y)` candidate. The model scores every legal candidate and chooses the highest-scoring legal action. If no valid neural model is supplied, the tier falls back to its existing heuristic policy.
 
 ## Commands
 
-Run the full shard export, train, and benchmark flow:
+Run the full fair-tier shard export, train, and benchmark flow:
 
 ```bash
-bash scripts/train-goat-pipeline.sh
+bash scripts/train-bot-ladder.sh
 ```
 
-By default the script writes a timestamped run under `artifacts/training/runs/`, exports shard files, trains from the shard directory, then benchmarks the saved model.
+By default the script writes a timestamped run under `artifacts/training/runs/`, exports shard files for each fair ladder tier, trains one saved model per tier, then benchmarks each saved model.
 
 Customize the run with env vars when needed:
 
 ```bash
-GOAT_RUN_NAME=goat-smoke GOAT_SHARDS=2 GOAT_EPISODES=2 GOAT_MAX_TICKS=120 GOAT_ITERATIONS=1 GOAT_EPOCHS=1 GOAT_EVAL_ROUNDS=1 GOAT_EVAL_MAX_TICKS=80 GOAT_BENCH_ROUNDS=2 GOAT_BENCH_MAX_TICKS=80 GOAT_BENCH_SEED=9001 bash scripts/train-goat-pipeline.sh
+LADDER_RUN_NAME=ladder-smoke LADDER_SHARDS=1 LADDER_EPISODES=2 LADDER_MAX_TICKS=120 LADDER_ITERATIONS=1 LADDER_EPOCHS=1 LADDER_EVAL_ROUNDS=1 LADDER_EVAL_MAX_TICKS=80 LADDER_BENCH_ROUNDS=2 LADDER_BENCH_MAX_TICKS=80 bash scripts/train-bot-ladder.sh
 ```
 
-The pipeline script wraps `data:export`, `train:goat`, and `model:bench`. `data:export` still writes compact JSON by default so large shard files stay within practical string sizes, and `train:goat` still supports repeated `--dataset <file>` flags for manual debugging. When multiple shard files are supplied, `train:goat` trains over the deterministic lexicographic union of those files, stores a corpus-level `dataset_hash` on the model artifact, and records the ordered shard metadata under `training_config.dataset_sources`.
+The ladder pipeline wraps `data:export`, `train:bot`, and `model:bench`. `data:export` still writes compact JSON by default so large shard files stay within practical string sizes, and `train:bot` still supports repeated `--dataset <file>` flags for manual debugging. When multiple shard files are supplied, the trainer runs over the deterministic lexicographic union of those files, stores a corpus-level `dataset_hash` on the model artifact, and records the ordered shard metadata under `training_config.dataset_sources`.
 
 ## Model Artifact
 
@@ -63,6 +63,7 @@ Model artifacts contain:
 - `kind: "legal_action_mlp"`
 - feature/action schema versions
 - `input_size`
+- `training_config.target_tier`
 - training config, seed, dataset hash, and shard source metadata when training from multiple files
 - dense layer weights and biases exported from TensorFlow.js
 
@@ -74,8 +75,8 @@ The current gate is pipeline correctness:
 
 - dataset export is replayable from saved actions
 - model artifact validates
-- model-backed Goat returns only legal actions
+- model-backed fair tier returns only legal actions
 - saved model benchmark output is deterministic
-- trained model is compared against Noob/Mid/Top and prior snapshots before any gameplay promotion
+- trained model is compared against heuristic same-tier and adjacent fair tiers before any gameplay promotion
 
-Beating Top is not required for this first pass because ladder ordering is still being stabilized separately.
+This gate is still about pipeline correctness first. Ladder ordering and stronger promotion thresholds remain follow-up work.

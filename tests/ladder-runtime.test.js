@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 
 import { enumerateLegalCardActions, evaluateSpellAction, rollDecisionDelayTicks, selectBotAction } from "../src/ai/ladderRuntime.js";
 import { trainSelfModel } from "../src/ai/training.js";
+import { STATE_FEATURE_SIZE } from "../src/ai/neuralFeatures.js";
+import { createZeroNeuralPolicyModel } from "../src/ai/neuralModel.js";
 import { FIREBALL_CONFIG } from "../src/sim/config.js";
 import { createEngine } from "../src/sim/engine.js";
 import { ROYALE_LANE_X, ROYALE_TOWER_X, ROYALE_TOWER_Y, createArena, createRoyaleArena } from "../src/sim/map.js";
@@ -182,6 +184,31 @@ test("self bot follows trained card preference when available", () => {
 
   const action = selectBotAction({
     tierId: "self",
+    engine,
+    actor: "red",
+    legalActions,
+    trainedModel: model,
+    rng: () => 0.9,
+  });
+
+  assert.equal(action.type, "PLAY_CARD");
+  assert.equal(action.cardId, "knight");
+});
+
+test("mid bot uses a matching trained ladder model when supplied", () => {
+  const engine = makeEngine(["knight", "giant", "arrows", "fireball"]);
+  const model = createZeroNeuralPolicyModel({ hiddenUnits: 1, seed: 707 });
+  model.training_config.target_tier = "mid";
+  model.layers[0].weights[STATE_FEATURE_SIZE + 1][0] = 6;
+  model.layers[1].weights[0][0] = 6;
+
+  const legalActions = [
+    { type: "PLAY_CARD", cardId: "giant", x: 9, y: 12 },
+    { type: "PLAY_CARD", cardId: "knight", x: 9, y: 12 },
+  ];
+
+  const action = selectBotAction({
+    tierId: "mid",
     engine,
     actor: "red",
     legalActions,

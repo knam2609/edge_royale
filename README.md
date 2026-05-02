@@ -53,27 +53,27 @@ Controls:
 Ladder + training:
 - Select bot difficulty from the `Bot Level` dropdown (locked levels show as disabled).
 - Beat a tier to unlock the next (`Noob` -> `Mid-ladder Menace` -> `Top Ladder`).
-- Click `Train Self Bot` to fit a local imitation model from logged player actions.
+- Click `Train Self Bot` to fit the current local self-play placeholder model from logged player actions.
 - Self-play unlock rule is enforced from profile data (`100` matches and `3` wins vs Top).
 
 Automation hooks exposed in browser:
 - `window.render_game_to_text()`
 - `window.advanceTime(ms)`
 
-## Offline Goat training
+## Offline Ladder training
 
 ```bash
-bash scripts/train-goat-pipeline.sh
+bash scripts/train-bot-ladder.sh
 ```
 
-By default the script writes a timestamped run under `artifacts/training/runs/`, exports shard files, trains from the shard directory, and benchmarks the saved model.
+By default the script writes a timestamped run under `artifacts/training/runs/`, exports shard files for each fair ladder tier (`noob`, `mid`, `top`, `pro`, `goat`), trains one saved model per tier, and benchmarks each saved model.
 
 Customize a run with env vars when needed:
 
 ```bash
-GOAT_RUN_NAME=goat-v2 GOAT_SHARDS=4 GOAT_EPISODES=500 GOAT_BENCH_ROUNDS=50 bash scripts/train-goat-pipeline.sh
+LADDER_RUN_NAME=ladder-v2 LADDER_SHARDS=4 LADDER_EPISODES=500 LADDER_BENCH_ROUNDS=50 bash scripts/train-bot-ladder.sh
 ```
 
-Generated training artifacts are ignored by git. `data:export` still writes compact JSON shard files by default and `train:goat` still accepts repeated `--dataset <file>` inputs for manual debugging, but the primary documented workflow is the pipeline script above.
+Generated training artifacts are ignored by git. `data:export` still writes compact JSON shard files by default, and `train:bot` trains a specific fair ladder tier with `--target-tier <tier>`.
 
-The trained `goat` runtime uses deterministic plain-JS inference when a valid model artifact is supplied and falls back to the heuristic Goat policy otherwise.
+Fair ladder tiers use deterministic plain-JS inference when a valid same-tier model artifact is supplied and fall back to their heuristic policies otherwise.

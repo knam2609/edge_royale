@@ -18,6 +18,8 @@ Bots can only choose legal placements and cards currently in hand with sufficien
 
 ## 3) Tier Definitions
 
+Noob/Mid/Top/Pro/Goat can all run through the same legal-action neural scorer when a valid same-tier artifact is supplied. If no valid artifact is loaded, they fall back to the current heuristic implementations.
+
 ## Noob (MVP)
 
 - Strategy:
@@ -65,7 +67,7 @@ Bots can only choose legal placements and cards currently in hand with sufficien
 ## Goat (Post-MVP)
 
 - Strategy:
-  - Can run as a model-backed fair boss when a valid neural Goat artifact is supplied.
+  - Can run as a model-backed fair boss when a valid same-tier neural artifact is supplied.
   - Scores every legal `PLAY_CARD(cardId, x, y)` candidate from fair public observations.
   - Falls back to the heuristic Goat policy when no valid model is loaded.
   - Keeps strong spell discipline and king-tower pressure choices as the fallback behavior.
@@ -98,12 +100,12 @@ Bots are promoted only if they meet both:
 - Stability threshold:
   - Standard deviation of win-rate under target tolerance across 5 seed batches.
 
-Neural Goat model artifacts additionally require:
+Neural fair-tier model artifacts additionally require:
 
 - Dataset/replay reproducibility from saved seed and actions.
 - Deterministic saved-model benchmark output for fixed seeds.
 - Legal-action-only runtime behavior.
-- Benchmark comparison against Noob, Mid, Top, heuristic Goat, and prior neural snapshots before replacing a playable boss model.
+- Benchmark comparison against heuristic same-tier, adjacent fair tiers, and prior neural snapshots before replacing a playable tier.
 
 ## 6) Anti-Cheat Constraints for Fair Tiers
 
@@ -112,6 +114,6 @@ For Noob/Mid/Top/Pro/Goat:
 - Must not read hidden opponent hand.
 - Must not read exact opponent elixir, only inferred estimate.
 - Must obey human-like reaction delay and placement legality.
-- Neural Goat feature encoders must preserve the same fair-observation boundary.
+- Neural fair-tier feature encoders must preserve the same fair-observation boundary.
 
 Only God tier can bypass these constraints for benchmark purposes.

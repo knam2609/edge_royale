@@ -94,7 +94,7 @@ export async function loadDatasetFile(datasetPath) {
   }
 
   const summary = summarizeDataset(rawDataset, resolvedPath);
-  if (summary.episode_count <= 0 || summary.sample_count <= 0) {
+  if (summary.episode_count <= 0) {
     throw new Error(`empty training dataset: ${resolvedPath}`);
   }
 

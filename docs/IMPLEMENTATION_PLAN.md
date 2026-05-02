@@ -126,16 +126,23 @@ Build a lightweight, single-player Clash Royale-inspired game where players figh
 
 ### Tasks
 - Define unlock rule (example: 100 completed matches minimum).
+- Train model-backed fair ladder tiers from deterministic rollout export (`noob`, `mid`, `top`, `pro`, `goat`) while keeping heuristic fallbacks.
 - Train baseline policy from logged player data (imitation stage).
 - Run self-play fine-tune (RL stage) with periodic evaluation.
 - Add safety gates to prevent deploying regressed models.
 - Train a model-backed fair Goat boss from generated rollout data before promoting stronger self-play variants.
 - Use TensorFlow.js for offline training and plain-JS MLP inference in gameplay/runtime benchmarks.
 
+### Next implementation slice for self bot
+- Log full public-observation decision samples from player matches, including legal action candidates and chosen action index.
+- Replace the current bucket-count self model with a legal-action scorer initialized from player imitation data.
+- Add a batched retrain flow: always collect samples, retrain only when enough new data exists and the player triggers training.
+- Fine-tune the self model with RL against frozen self checkpoints and nearby ladder opponents while preserving player style with held-out similarity gates.
+
 ### Acceptance criteria
 - Self bot improves on benchmark suite over baseline.
 - Training outputs are reproducible from saved config + seed.
-- Saved neural Goat artifacts validate against schema, return only legal actions, and produce deterministic benchmark output for fixed model + seeds.
+- Saved neural fair-tier artifacts validate against schema, return only legal actions, and produce deterministic benchmark output for fixed model + seeds.
 
 ## Phase 7: Stabilization and Release (1 week)
 
