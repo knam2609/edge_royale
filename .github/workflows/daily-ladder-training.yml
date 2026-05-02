@@ -113,11 +113,25 @@ jobs:
       - name: Open or update model PR
         if: steps.promote.outputs.changed == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.LADDER_MODEL_PR_TOKEN || github.token }}
         run: |
           existing_pr="$(gh pr list --head training/daily-ladder-models --base main --state open --json number --jq '.[0].number')"
+          pr_status=0
           if [ -z "$existing_pr" ]; then
-            gh pr create --base main --head training/daily-ladder-models --title "Update daily ladder models" --body-file "$PR_BODY"
+            pr_output="$(gh pr create --base main --head training/daily-ladder-models --title "Update daily ladder models" --body-file "$PR_BODY" 2>&1)" || pr_status=$?
           else
-            gh pr edit "$existing_pr" --title "Update daily ladder models" --body-file "$PR_BODY"
+            pr_output="$(gh pr edit "$existing_pr" --title "Update daily ladder models" --body-file "$PR_BODY" 2>&1)" || pr_status=$?
+          fi
+          if [ "$pr_status" -ne 0 ]; then
+            echo "$pr_output"
+            echo "::warning::Could not create or update the daily ladder model PR. Branch training/daily-ladder-models was pushed; enable Action-created PRs or configure LADDER_MODEL_PR_TOKEN."
+            {
+              echo "### Daily ladder model PR not opened"
+              echo
+              echo "The workflow pushed \`training/daily-ladder-models\`, but GitHub refused PR creation or update."
+              echo
+              echo "Configure repository workflow permissions to allow Action-created PRs, or add a \`LADDER_MODEL_PR_TOKEN\` secret with pull-request permissions."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "$pr_output"
           fi
