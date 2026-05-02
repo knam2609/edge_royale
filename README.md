@@ -88,7 +88,7 @@ npm run bot:bench -- --model-config artifacts/training/ladder-models.json
 
 ## Daily ladder training
 
-GitHub Actions runs `.github/workflows/daily-ladder-training.yml` every day at `17:37 UTC` and can also be started manually. The workflow runs tests, trains all fair ladder tiers at the balanced large preset, uploads the full ignored run directory as an Actions artifact, compares the candidate models against the checked-in manifest, and opens or updates a manual-review PR only when the candidate passes the daily improvement gate.
+GitHub Actions runs `.github/workflows/daily-ladder-training.yml` every day at `17:37 UTC` and can also be started manually. The workflow runs tests, trains all fair ladder tiers at the balanced large preset, uploads the full ignored run directory as an Actions artifact, compares the candidate models against the checked-in manifest, and opens or updates a manual-review PR only when the candidate passes the daily improvement gate. If repository settings block Action-created PRs, the workflow still pushes `training/daily-ladder-models` and reports a warning.
 
 The workflow commits only promoted runtime files:
 

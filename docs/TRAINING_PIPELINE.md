@@ -133,6 +133,6 @@ After training, `scripts/compare-ladder-models.mjs` benchmarks the candidate man
 - average win-rate delta is at least `+0.02` after bootstrap
 - no adjacent tier pair regresses by more than `0.05`
 
-When the gate passes, `scripts/promote-ladder-models.mjs` copies accepted models and per-tier summaries to `artifacts/training/promoted/`, writes `artifacts/training/ladder-models.json`, and prepares the PR body. The workflow pushes branch `training/daily-ladder-models` and opens or updates a PR to `main`; it does not auto-merge.
+When the gate passes, `scripts/promote-ladder-models.mjs` copies accepted models and per-tier summaries to `artifacts/training/promoted/`, writes `artifacts/training/ladder-models.json`, and prepares the PR body. The workflow pushes branch `training/daily-ladder-models` and opens or updates a PR to `main`; it does not auto-merge. If repository settings block Action-created PRs, the workflow leaves the branch pushed and emits a warning instead of failing. Configure `LADDER_MODEL_PR_TOKEN` with pull-request permissions when automatic PR creation is required without changing repository workflow permissions.
 
 The first accepted run can bootstrap from a heuristic baseline if no checked-in models exist. This daily improvement gate is not the strict promotion gate in `docs/BOT_LEVELS.md`; it is a safe automatic refresh gate for candidate model artifacts.
