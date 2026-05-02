@@ -1,6 +1,7 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
+import { loadDatasetFile, resolveDatasetInputPaths } from "./train-goat-lib.mjs";
 import { runBenchmark } from "../src/ai/benchmark.js";
 import {
   ACTION_SCHEMA_VERSION,
@@ -8,8 +9,8 @@ import {
   MODEL_INPUT_SIZE,
 } from "../src/ai/neuralFeatures.js";
 import { NEURAL_MODEL_KIND, NEURAL_MODEL_VERSION, normalizeNeuralPolicyModel } from "../src/ai/neuralModel.js";
-import { buildActionTrainingRows, summarizeTrainingRows } from "../src/ai/neuralTraining.js";
-import { generateTrainingDataset, hashTrainingDataset } from "../src/ai/trainingData.js";
+import { countActionTrainingRows, fillActionTrainingBuffers } from "../src/ai/neuralTraining.js";
+import { generateTrainingDataset, hashTrainingDatasetCorpus } from "../src/ai/trainingData.js";
 
 async function loadTensorflow() {
   try {
@@ -38,7 +39,8 @@ function parseArgs(argv) {
     maxNegatives: 4,
     hidden1: 32,
     hidden2: 16,
-    dataset: null,
+    dataset: [],
+    datasetDir: [],
     out: "artifacts/training/models/goat-model.json",
     summaryOut: "artifacts/training/models/goat-training-summary.json",
   };
@@ -57,7 +59,8 @@ function parseArgs(argv) {
     else if (arg === "--max-negatives" && argv[i + 1]) parsed.maxNegatives = Number.parseInt(argv[++i], 10);
     else if (arg === "--hidden1" && argv[i + 1]) parsed.hidden1 = Number.parseInt(argv[++i], 10);
     else if (arg === "--hidden2" && argv[i + 1]) parsed.hidden2 = Number.parseInt(argv[++i], 10);
-    else if (arg === "--dataset" && argv[i + 1]) parsed.dataset = argv[++i];
+    else if (arg === "--dataset" && argv[i + 1]) parsed.dataset.push(argv[++i]);
+    else if (arg === "--dataset-dir" && argv[i + 1]) parsed.datasetDir.push(argv[++i]);
     else if (arg === "--out" && argv[i + 1]) parsed.out = argv[++i];
     else if (arg === "--summary-out" && argv[i + 1]) parsed.summaryOut = argv[++i];
     else if (arg === "--tiers" && argv[i + 1]) {
@@ -87,6 +90,34 @@ function parseArgs(argv) {
   parsed.maxNegatives = Number.isFinite(parsed.maxNegatives) && parsed.maxNegatives >= 0 ? parsed.maxNegatives : 4;
 
   return parsed;
+}
+
+function createEmptyRowSummary() {
+  return {
+    rows: 0,
+    positives: 0,
+    negatives: 0,
+  };
+}
+
+function addRowSummary(total, current) {
+  return {
+    rows: total.rows + current.rows,
+    positives: total.positives + current.positives,
+    negatives: total.negatives + current.negatives,
+  };
+}
+
+function collectDatasetTiers(datasetSources) {
+  const seen = new Set();
+  for (const source of datasetSources) {
+    for (const tier of Array.isArray(source?.tiers) ? source.tiers : []) {
+      if (typeof tier === "string" && tier.length > 0) {
+        seen.add(tier);
+      }
+    }
+  }
+  return [...seen];
 }
 
 function makeModel(tf, args) {
@@ -145,7 +176,7 @@ function exportModelArtifact(model, args, dataset, rowSummary, iterationSummarie
     dataset_hash: dataset.dataset_hash,
     training_config: {
       algorithm: "psro_lite_supervised_v1",
-      tiers: args.tiers,
+      tiers: Array.isArray(dataset.tiers) && dataset.tiers.length > 0 ? dataset.tiers : args.tiers,
       episodes: dataset.episode_count,
       iterations: args.iterations,
       epochs_per_iteration: args.epochs,
@@ -153,6 +184,7 @@ function exportModelArtifact(model, args, dataset, rowSummary, iterationSummarie
       learning_rate: args.learningRate,
       max_ticks: args.maxTicks,
       max_negatives_per_decision: args.maxNegatives,
+      ...(Array.isArray(dataset.dataset_sources) ? { dataset_sources: dataset.dataset_sources } : {}),
       row_summary: rowSummary,
       iteration_summaries: iterationSummaries,
     },
@@ -160,21 +192,124 @@ function exportModelArtifact(model, args, dataset, rowSummary, iterationSummarie
   };
 }
 
-async function loadOrGenerateDataset(args) {
-  if (args.dataset) {
-    const dataset = JSON.parse(await readFile(resolve(process.cwd(), args.dataset), "utf8"));
-    return {
-      ...dataset,
-      dataset_hash: dataset.dataset_hash ?? hashTrainingDataset(dataset),
-    };
+function finalizeInputBuffers(tf, dataset, rowSummary, inputs, labels, rowCount) {
+  if (rowCount !== rowSummary.rows) {
+    throw new Error(`training row count mismatch: expected ${rowSummary.rows}, got ${rowCount}`);
+  }
+  return {
+    dataset,
+    rowSummary,
+    xs: tf.tensor2d(inputs, [rowSummary.rows, MODEL_INPUT_SIZE]),
+    ys: tf.tensor2d(labels, [rowSummary.rows, 1]),
+  };
+}
+
+async function loadOrGenerateTrainingInput(tf, args) {
+  const datasetPaths = await resolveDatasetInputPaths({
+    cwd: process.cwd(),
+    datasetPaths: args.dataset,
+    datasetDirs: args.datasetDir,
+  });
+
+  if (datasetPaths.length === 0) {
+    const dataset = generateTrainingDataset({
+      seed: args.seed,
+      tiers: args.tiers,
+      episodes: args.episodes,
+      maxTicks: args.maxTicks,
+    });
+    const rowSummary = countActionTrainingRows(dataset, {
+      maxNegativesPerDecision: args.maxNegatives,
+    });
+    if (rowSummary.rows === 0) {
+      throw new Error("training dataset produced no action rows");
+    }
+
+    const inputs = new Float32Array(rowSummary.rows * MODEL_INPUT_SIZE);
+    const labels = new Float32Array(rowSummary.rows);
+    const rowCount = fillActionTrainingBuffers(dataset, {
+      maxNegativesPerDecision: args.maxNegatives,
+      inputSize: MODEL_INPUT_SIZE,
+      inputs,
+      labels,
+    });
+
+    return finalizeInputBuffers(
+      tf,
+      {
+        dataset_hash: dataset.dataset_hash,
+        episode_count: dataset.episode_count,
+        sample_count: dataset.sample_count,
+        tiers: dataset.tiers,
+      },
+      rowSummary,
+      inputs,
+      labels,
+      rowCount,
+    );
   }
 
-  return generateTrainingDataset({
-    seed: args.seed,
-    tiers: args.tiers,
-    episodes: args.episodes,
-    maxTicks: args.maxTicks,
-  });
+  const datasetSources = [];
+  let rowSummary = createEmptyRowSummary();
+
+  for (const datasetPath of datasetPaths) {
+    const source = await loadDatasetFile(datasetPath);
+    const sourceRowSummary = countActionTrainingRows(source.dataset, {
+      maxNegativesPerDecision: args.maxNegatives,
+    });
+    if (sourceRowSummary.rows === 0) {
+      throw new Error(`training dataset produced no action rows: ${source.path}`);
+    }
+
+    datasetSources.push({
+      path: source.path,
+      dataset_hash: source.dataset_hash,
+      episode_count: source.episode_count,
+      sample_count: source.sample_count,
+      tiers: source.tiers,
+      row_summary: sourceRowSummary,
+    });
+    rowSummary = addRowSummary(rowSummary, sourceRowSummary);
+  }
+
+  const inputs = new Float32Array(rowSummary.rows * MODEL_INPUT_SIZE);
+  const labels = new Float32Array(rowSummary.rows);
+  let rowCount = 0;
+
+  for (const source of datasetSources) {
+    const loaded = await loadDatasetFile(source.path);
+    rowCount = fillActionTrainingBuffers(loaded.dataset, {
+      maxNegativesPerDecision: args.maxNegatives,
+      inputSize: MODEL_INPUT_SIZE,
+      inputs,
+      labels,
+      rowOffset: rowCount,
+    });
+  }
+
+  return finalizeInputBuffers(
+    tf,
+    {
+      dataset_hash:
+        datasetSources.length === 1
+          ? datasetSources[0].dataset_hash
+          : hashTrainingDatasetCorpus(datasetSources.map((source) => source.dataset_hash)),
+      episode_count: datasetSources.reduce((sum, source) => sum + source.episode_count, 0),
+      sample_count: datasetSources.reduce((sum, source) => sum + source.sample_count, 0),
+      tiers: collectDatasetTiers(datasetSources),
+      dataset_sources: datasetSources.map((source) => ({
+        path: source.path,
+        dataset_hash: source.dataset_hash,
+        episode_count: source.episode_count,
+        sample_count: source.sample_count,
+        row_summary: source.row_summary,
+      })),
+    },
+    rowSummary,
+    inputs,
+    labels,
+    rowCount,
+  );
 }
 
 function evaluateModel(modelArtifact, args, iteration) {
@@ -200,15 +335,7 @@ function evaluateModel(modelArtifact, args, iteration) {
 
 const args = parseArgs(process.argv.slice(2));
 const tf = await loadTensorflow();
-const dataset = await loadOrGenerateDataset(args);
-const rows = buildActionTrainingRows(dataset, { maxNegativesPerDecision: args.maxNegatives });
-const rowSummary = summarizeTrainingRows(rows);
-if (rows.length === 0) {
-  throw new Error("training dataset produced no action rows");
-}
-
-const xs = tf.tensor2d(rows.map((row) => row.input), [rows.length, MODEL_INPUT_SIZE]);
-const ys = tf.tensor2d(rows.map((row) => [row.label]), [rows.length, 1]);
+const { dataset, rowSummary, xs, ys } = await loadOrGenerateTrainingInput(tf, args);
 const model = makeModel(tf, args);
 const iterationSummaries = [];
 let finalArtifact = null;
@@ -235,7 +362,7 @@ for (let iteration = 1; iteration <= args.iterations; iteration += 1) {
     evaluation,
   });
   console.log(
-    `iteration=${iteration} loss=${Number(iterationSummaries.at(-1).loss ?? 0).toFixed(4)} rows=${rows.length}`,
+    `iteration=${iteration} loss=${Number(iterationSummaries.at(-1).loss ?? 0).toFixed(4)} rows=${rowSummary.rows}`,
   );
 }
 
@@ -245,6 +372,7 @@ const summaryPath = resolve(process.cwd(), args.summaryOut);
 const summary = {
   model_path: outPath,
   dataset_hash: dataset.dataset_hash,
+  ...(Array.isArray(dataset.dataset_sources) ? { dataset_sources: dataset.dataset_sources } : {}),
   row_summary: rowSummary,
   iteration_summaries: iterationSummaries,
 };

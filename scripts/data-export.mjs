@@ -9,6 +9,7 @@ function parseArgs(argv) {
     episodes: 8,
     maxTicks: 900,
     tiers: ["top", "goat"],
+    pretty: false,
     out: "artifacts/training/datasets/goat-dataset.json",
   };
 
@@ -35,6 +36,10 @@ function parseArgs(argv) {
     }
     if (arg === "--out" && argv[i + 1]) {
       parsed.out = argv[++i];
+      continue;
+    }
+    if (arg === "--pretty") {
+      parsed.pretty = true;
     }
   }
 
@@ -64,7 +69,8 @@ const dataset = generateTrainingDataset({
 
 const outPath = resolve(process.cwd(), args.out);
 await mkdir(dirname(outPath), { recursive: true });
-await writeFile(outPath, `${JSON.stringify(dataset, null, 2)}\n`, "utf8");
+const json = args.pretty ? JSON.stringify(dataset, null, 2) : JSON.stringify(dataset);
+await writeFile(outPath, `${json}\n`, "utf8");
 
 console.log(`wrote ${outPath}`);
 console.log(`dataset_hash=${dataset.dataset_hash} episodes=${dataset.episode_count} samples=${dataset.sample_count}`);

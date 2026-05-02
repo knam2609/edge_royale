@@ -1,7 +1,5 @@
-export function buildActionTrainingRows(dataset, { maxNegativesPerDecision = 4 } = {}) {
-  const rows = [];
+function forEachActionTrainingRow(dataset, { maxNegativesPerDecision = 4 } = {}, visitRow) {
   const negativeLimit = Math.max(0, Math.floor(maxNegativesPerDecision));
-
   for (const episode of Array.isArray(dataset?.episodes) ? dataset.episodes : []) {
     for (const sample of Array.isArray(episode.samples) ? episode.samples : []) {
       const observation = sample.observation?.vector;
@@ -14,8 +12,9 @@ export function buildActionTrainingRows(dataset, { maxNegativesPerDecision = 4 }
 
       const chosen = legalActions[chosenIndex];
       if (Array.isArray(chosen.action_features)) {
-        rows.push({
-          input: [...observation, ...chosen.action_features],
+        visitRow({
+          observation,
+          actionFeatures: chosen.action_features,
           label: 1,
           reward: Number(sample.reward) || 0,
         });
@@ -30,8 +29,9 @@ export function buildActionTrainingRows(dataset, { maxNegativesPerDecision = 4 }
         if (!Array.isArray(candidate.action_features)) {
           continue;
         }
-        rows.push({
-          input: [...observation, ...candidate.action_features],
+        visitRow({
+          observation,
+          actionFeatures: candidate.action_features,
           label: 0,
           reward: Number(sample.reward) || 0,
         });
@@ -39,8 +39,84 @@ export function buildActionTrainingRows(dataset, { maxNegativesPerDecision = 4 }
       }
     }
   }
+}
 
+export function buildActionTrainingRows(dataset, { maxNegativesPerDecision = 4 } = {}) {
+  const rows = [];
+  forEachActionTrainingRow(dataset, { maxNegativesPerDecision }, ({ observation, actionFeatures, label, reward }) => {
+    rows.push({
+      input: [...observation, ...actionFeatures],
+      label,
+      reward,
+    });
+  });
   return rows;
+}
+
+export function countActionTrainingRows(dataset, { maxNegativesPerDecision = 4 } = {}) {
+  const summary = {
+    rows: 0,
+    positives: 0,
+    negatives: 0,
+  };
+
+  forEachActionTrainingRow(dataset, { maxNegativesPerDecision }, ({ label }) => {
+    summary.rows += 1;
+    if (label === 1) {
+      summary.positives += 1;
+    } else {
+      summary.negatives += 1;
+    }
+  });
+
+  return summary;
+}
+
+export function fillActionTrainingBuffers(
+  dataset,
+  { maxNegativesPerDecision = 4, inputSize, inputs, labels, rowOffset = 0 } = {},
+) {
+  if (!Number.isInteger(inputSize) || inputSize <= 0) {
+    throw new Error(`invalid action training input size: ${inputSize}`);
+  }
+  if (!inputs || typeof inputs.length !== "number") {
+    throw new Error("missing action training input buffer");
+  }
+  if (!labels || typeof labels.length !== "number") {
+    throw new Error("missing action training label buffer");
+  }
+
+  let rowIndex = Math.max(0, Math.floor(Number(rowOffset) || 0));
+  forEachActionTrainingRow(
+    dataset,
+    { maxNegativesPerDecision },
+    ({ observation, actionFeatures, label }) => {
+      if (observation.length + actionFeatures.length !== inputSize) {
+        throw new Error(
+          `action training row size mismatch: expected ${inputSize}, got ${observation.length + actionFeatures.length}`,
+        );
+      }
+
+      const start = rowIndex * inputSize;
+      if (start + inputSize > inputs.length || rowIndex >= labels.length) {
+        throw new Error("action training buffers are too small for dataset rows");
+      }
+
+      let inputIndex = start;
+      for (const value of observation) {
+        inputs[inputIndex] = Number(value) || 0;
+        inputIndex += 1;
+      }
+      for (const value of actionFeatures) {
+        inputs[inputIndex] = Number(value) || 0;
+        inputIndex += 1;
+      }
+      labels[rowIndex] = label;
+      rowIndex += 1;
+    },
+  );
+
+  return rowIndex;
 }
 
 export function summarizeTrainingRows(rows) {
