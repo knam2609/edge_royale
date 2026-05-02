@@ -107,6 +107,8 @@ Neural fair-tier model artifacts additionally require:
 - Legal-action-only runtime behavior.
 - Benchmark comparison against heuristic same-tier, adjacent fair tiers, and prior neural snapshots before replacing a playable tier.
 
+Daily GitHub Actions training may open PRs for model refreshes under a lighter improvement gate: tests pass, candidate artifacts validate and benchmark deterministically, average fixed-seed matrix win-rate improves by at least `0.02` after bootstrap, and no adjacent tier pair regresses by more than `0.05`. That daily gate can update checked-in candidate runtime models, but it does not replace the strict promotion thresholds above.
+
 ## 6) Anti-Cheat Constraints for Fair Tiers
 
 For Noob/Mid/Top/Pro/Goat:
