@@ -101,6 +101,27 @@ export function isNeuralPolicyModel(rawModel) {
   return normalizeNeuralPolicyModel(rawModel) !== null;
 }
 
+export function getNeuralModelTargetTier(rawModel) {
+  const normalized = normalizeNeuralPolicyModel(rawModel);
+  if (!normalized) {
+    return null;
+  }
+
+  const targetTier = normalized.training_config?.target_tier;
+  if (typeof targetTier === "string" && targetTier.length > 0) {
+    return targetTier;
+  }
+
+  const legacyTiers = Array.isArray(normalized.training_config?.tiers)
+    ? normalized.training_config.tiers.filter((tier) => typeof tier === "string" && tier.length > 0)
+    : [];
+  if (legacyTiers.includes("goat")) {
+    return "goat";
+  }
+
+  return null;
+}
+
 function activate(value, activation) {
   if (activation === "relu") {
     return Math.max(0, value);

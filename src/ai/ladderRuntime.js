@@ -4,7 +4,7 @@ import { snapPositionToGrid } from "../sim/map.js";
 import { buildTroopPlacementCandidates, getTroopPlacementStatus } from "../sim/placement.js";
 import { selectCardFromModel } from "./training.js";
 import { getSpellDamageAgainstTarget } from "./spellHeuristics.js";
-import { selectActionFromNeuralModel } from "./neuralModel.js";
+import { getNeuralModelTargetTier, selectActionFromNeuralModel } from "./neuralModel.js";
 
 const BOT_TIER_CONFIG = Object.freeze({
   noob: Object.freeze({
@@ -529,6 +529,19 @@ function chooseRandomAction(actions, rng) {
   return actions[idx] ?? null;
 }
 
+function selectTierModelAction({ trainedModel, tierId, engine, actor, legalActions }) {
+  const targetTier = getNeuralModelTargetTier(trainedModel);
+  if (!targetTier || targetTier !== tierId) {
+    return null;
+  }
+
+  return selectActionFromNeuralModel(trainedModel, {
+    engine,
+    actor,
+    legalActions,
+  });
+}
+
 function chooseHeavyCommit({
   legalActions,
   state,
@@ -567,9 +580,20 @@ function chooseHeavyCommit({
   return heavy.action ?? null;
 }
 
-function chooseNoobAction({ legalActions, state, actor, phase, rng }) {
+function chooseNoobAction({ legalActions, state, actor, phase, rng, trainedModel = null, engine = null }) {
   if (legalActions.length === 0 || rng() < BOT_TIER_CONFIG.noob.pass_chance) {
     return { type: "PASS" };
+  }
+
+  const neuralAction = selectTierModelAction({
+    trainedModel,
+    tierId: "noob",
+    engine,
+    actor,
+    legalActions,
+  });
+  if (neuralAction) {
+    return neuralAction;
   }
 
   if (rng() < 0.82) {
@@ -593,7 +617,7 @@ function chooseNoobAction({ legalActions, state, actor, phase, rng }) {
   return chooseRandomAction(legalActions, rng) ?? { type: "PASS" };
 }
 
-function chooseMidAction({ legalActions, state, actor, phase, rng }) {
+function chooseMidAction({ legalActions, state, actor, phase, rng, trainedModel = null, engine = null }) {
   if (legalActions.length === 0 || rng() < BOT_TIER_CONFIG.mid.pass_chance) {
     return { type: "PASS" };
   }
@@ -609,6 +633,17 @@ function chooseMidAction({ legalActions, state, actor, phase, rng }) {
 
   if (threat.density === 0 && currentElixir < 6 && rng() < 0.3) {
     return { type: "PASS" };
+  }
+
+  const neuralAction = selectTierModelAction({
+    trainedModel,
+    tierId: "mid",
+    engine,
+    actor,
+    legalActions,
+  });
+  if (neuralAction) {
+    return neuralAction;
   }
 
   const best = chooseHighestScoreAction({ actions: legalActions, state, actor, tierId: "mid", phase });
@@ -637,7 +672,7 @@ function chooseMidAction({ legalActions, state, actor, phase, rng }) {
   return best.action;
 }
 
-function chooseTopAction({ legalActions, state, actor, phase, rng }) {
+function chooseTopAction({ legalActions, state, actor, phase, rng, trainedModel = null, engine = null }) {
   if (legalActions.length === 0 || rng() < BOT_TIER_CONFIG.top.pass_chance) {
     return { type: "PASS" };
   }
@@ -683,6 +718,17 @@ function chooseTopAction({ legalActions, state, actor, phase, rng }) {
     return heavyCommit;
   }
 
+  const neuralAction = selectTierModelAction({
+    trainedModel,
+    tierId: "top",
+    engine,
+    actor,
+    legalActions: filtered,
+  });
+  if (neuralAction) {
+    return neuralAction;
+  }
+
   const best = chooseHighestScoreAction({ actions: filtered, state, actor, tierId: "top", phase });
   if (!best.action) {
     return { type: "PASS" };
@@ -709,7 +755,7 @@ function chooseTopAction({ legalActions, state, actor, phase, rng }) {
   };
 }
 
-function chooseProAction({ legalActions, state, actor, phase, rng }) {
+function chooseProAction({ legalActions, state, actor, phase, rng, trainedModel = null, engine = null }) {
   const passiveRoll = BOT_TIER_CONFIG.pro.pass_chance;
   if (legalActions.length === 0 || rng() < passiveRoll) {
     return { type: "PASS" };
@@ -756,6 +802,17 @@ function chooseProAction({ legalActions, state, actor, phase, rng }) {
     }
   }
 
+  const neuralAction = selectTierModelAction({
+    trainedModel,
+    tierId: "pro",
+    engine,
+    actor,
+    legalActions: filtered,
+  });
+  if (neuralAction) {
+    return neuralAction;
+  }
+
   const best = chooseHighestScoreAction({ actions: filtered, state, actor, tierId: "pro", phase });
   if (!best.action) {
     return { type: "PASS" };
@@ -776,7 +833,7 @@ function chooseProAction({ legalActions, state, actor, phase, rng }) {
   return best.score >= troopThreshold ? best.action : { type: "PASS" };
 }
 
-function chooseGoatAction({ legalActions, state, actor, phase, rng }) {
+function chooseGoatAction({ legalActions, state, actor, phase, rng, trainedModel = null, engine = null }) {
   if (legalActions.length === 0 || rng() < BOT_TIER_CONFIG.goat.pass_chance) {
     return { type: "PASS" };
   }
@@ -800,6 +857,17 @@ function chooseGoatAction({ legalActions, state, actor, phase, rng }) {
   });
   if (heavyCommit) {
     return heavyCommit;
+  }
+
+  const neuralAction = selectTierModelAction({
+    trainedModel,
+    tierId: "goat",
+    engine,
+    actor,
+    legalActions: filtered,
+  });
+  if (neuralAction) {
+    return neuralAction;
   }
 
   const best = chooseHighestScoreAction({ actions: filtered, state, actor, tierId: "goat", phase });
@@ -826,20 +894,6 @@ function chooseGoatAction({ legalActions, state, actor, phase, rng }) {
   return chooseTroopFallback({ actions: filtered, state, actor, minScore: 80, tierId: "goat", phase }) ?? {
     type: "PASS",
   };
-}
-
-function chooseModelBackedGoatAction({ legalActions, engine, actor, phase, rng, trainedModel }) {
-  const neuralAction = selectActionFromNeuralModel(trainedModel, {
-    engine,
-    actor,
-    legalActions,
-  });
-
-  if (neuralAction) {
-    return neuralAction;
-  }
-
-  return chooseGoatAction({ legalActions, state: engine.state, actor, phase, rng });
 }
 
 function chooseGodAction({ legalActions, state, actor }) {
@@ -943,23 +997,23 @@ export function selectBotAction({
   const hand = engine.getHand(actor);
 
   if (normalizedTier === "noob") {
-    return chooseNoobAction({ legalActions, state, actor, phase, rng });
+    return chooseNoobAction({ legalActions, state, actor, phase, rng, trainedModel, engine });
   }
 
   if (normalizedTier === "mid") {
-    return chooseMidAction({ legalActions, state, actor, phase, rng });
+    return chooseMidAction({ legalActions, state, actor, phase, rng, trainedModel, engine });
   }
 
   if (normalizedTier === "top") {
-    return chooseTopAction({ legalActions, state, actor, phase, rng });
+    return chooseTopAction({ legalActions, state, actor, phase, rng, trainedModel, engine });
   }
 
   if (normalizedTier === "pro") {
-    return chooseProAction({ legalActions, state, actor, phase, rng });
+    return chooseProAction({ legalActions, state, actor, phase, rng, trainedModel, engine });
   }
 
   if (normalizedTier === "goat") {
-    return chooseModelBackedGoatAction({ legalActions, engine, actor, phase, rng, trainedModel });
+    return chooseGoatAction({ legalActions, state, actor, phase, rng, trainedModel, engine });
   }
 
   if (normalizedTier === "god") {

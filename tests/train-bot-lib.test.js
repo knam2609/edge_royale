@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 
-import { resolveDatasetInputPaths } from "../scripts/train-goat-lib.mjs";
+import { resolveDatasetInputPaths } from "../scripts/train-bot-lib.mjs";
 import { normalizeNeuralPolicyModel } from "../src/ai/neuralModel.js";
 import { generateTrainingDataset, hashTrainingDataset, hashTrainingDatasetCorpus } from "../src/ai/trainingData.js";
 
@@ -80,7 +80,7 @@ test("resolveDatasetInputPaths rejects empty dataset directories", async () => {
   });
 });
 
-test("train-goat consumes shard directories and writes a valid model artifact", async () => {
+test("train-bot consumes shard directories and writes a valid model artifact", async () => {
   await withTempDir(async (tempDir) => {
     const datasetDir = join(tempDir, "datasets");
     const outputDir = join(tempDir, "outputs");
@@ -103,7 +103,7 @@ test("train-goat consumes shard directories and writes a valid model artifact", 
     await execFileAsync(
       process.execPath,
       [
-        "scripts/train-goat.mjs",
+        "scripts/train-bot.mjs",
         "--dataset-dir",
         datasetDir,
         "--iterations",
@@ -132,6 +132,61 @@ test("train-goat consumes shard directories and writes a valid model artifact", 
     assert.ok(normalizeNeuralPolicyModel(model));
     assert.equal(model.dataset_hash, hashTrainingDatasetCorpus([shardOne.dataset_hash, shardTwo.dataset_hash]));
     assert.equal(model.training_config.dataset_sources.length, 2);
+    assert.equal(model.training_config.target_tier, "goat");
     assert.equal(summary.dataset_sources.length, 2);
+  });
+});
+
+test("train-bot supports generic ladder tiers via target-tier metadata", async () => {
+  await withTempDir(async (tempDir) => {
+    const datasetDir = join(tempDir, "datasets");
+    const outputDir = join(tempDir, "outputs");
+    await mkdir(datasetDir, { recursive: true });
+    await mkdir(outputDir, { recursive: true });
+
+    const dataset = generateTrainingDataset({
+      tiers: ["mid"],
+      seed: 2031,
+      episodes: 2,
+      maxTicks: 120,
+    });
+    await writeFile(join(datasetDir, "shard-001.json"), `${JSON.stringify(dataset)}\n`, "utf8");
+
+    const modelPath = join(outputDir, "mid-model.json");
+    const summaryPath = join(outputDir, "mid-summary.json");
+    await execFileAsync(
+      process.execPath,
+      [
+        "scripts/train-bot.mjs",
+        "--target-tier",
+        "mid",
+        "--dataset-dir",
+        datasetDir,
+        "--iterations",
+        "1",
+        "--epochs",
+        "1",
+        "--eval-rounds",
+        "1",
+        "--eval-max-ticks",
+        "80",
+        "--max-negatives",
+        "2",
+        "--out",
+        modelPath,
+        "--summary-out",
+        summaryPath,
+      ],
+      {
+        cwd: process.cwd(),
+      },
+    );
+
+    const model = JSON.parse(await readFile(modelPath, "utf8"));
+    const summary = JSON.parse(await readFile(summaryPath, "utf8"));
+
+    assert.ok(normalizeNeuralPolicyModel(model));
+    assert.equal(model.training_config.target_tier, "mid");
+    assert.equal(summary.target_tier, "mid");
   });
 });

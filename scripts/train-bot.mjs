@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
-import { loadDatasetFile, resolveDatasetInputPaths } from "./train-goat-lib.mjs";
+import { loadDatasetFile, resolveDatasetInputPaths } from "./train-bot-lib.mjs";
 import { runBenchmark } from "../src/ai/benchmark.js";
 import {
   ACTION_SCHEMA_VERSION,
@@ -11,6 +11,38 @@ import {
 import { NEURAL_MODEL_KIND, NEURAL_MODEL_VERSION, normalizeNeuralPolicyModel } from "../src/ai/neuralModel.js";
 import { countActionTrainingRows, fillActionTrainingBuffers } from "../src/ai/neuralTraining.js";
 import { generateTrainingDataset, hashTrainingDatasetCorpus } from "../src/ai/trainingData.js";
+
+const TIER_MODEL_SHAPES = Object.freeze({
+  noob: Object.freeze({ hidden1: 8, hidden2: 4 }),
+  mid: Object.freeze({ hidden1: 16, hidden2: 8 }),
+  top: Object.freeze({ hidden1: 32, hidden2: 16 }),
+  pro: Object.freeze({ hidden1: 48, hidden2: 24 }),
+  goat: Object.freeze({ hidden1: 64, hidden2: 32 }),
+});
+
+function normalizeTierId(tierId) {
+  return typeof tierId === "string" && tierId.length > 0 ? tierId.trim() : "";
+}
+
+function getDefaultModelShape(targetTier) {
+  return TIER_MODEL_SHAPES[normalizeTierId(targetTier)] ?? TIER_MODEL_SHAPES.goat;
+}
+
+function getDefaultEvalTiers(targetTier) {
+  if (targetTier === "noob") {
+    return ["noob", "mid"];
+  }
+  if (targetTier === "mid") {
+    return ["noob", "mid", "top"];
+  }
+  if (targetTier === "top") {
+    return ["mid", "top", "pro"];
+  }
+  if (targetTier === "pro") {
+    return ["top", "pro", "goat"];
+  }
+  return ["noob", "mid", "top"];
+}
 
 async function loadTensorflow() {
   try {
@@ -24,7 +56,9 @@ async function loadTensorflow() {
 }
 
 function parseArgs(argv) {
+  const defaultShape = getDefaultModelShape("goat");
   const parsed = {
+    targetTier: "goat",
     seed: 505,
     episodes: 8,
     iterations: 1,
@@ -32,22 +66,23 @@ function parseArgs(argv) {
     batchSize: 32,
     learningRate: 0.01,
     maxTicks: 900,
-    tiers: ["top", "goat"],
-    evalTiers: ["noob", "mid", "top"],
+    tiers: null,
+    evalTiers: null,
     evalRounds: 4,
     evalMaxTicks: 400,
     maxNegatives: 4,
-    hidden1: 32,
-    hidden2: 16,
+    hidden1: defaultShape.hidden1,
+    hidden2: defaultShape.hidden2,
     dataset: [],
     datasetDir: [],
-    out: "artifacts/training/models/goat-model.json",
-    summaryOut: "artifacts/training/models/goat-training-summary.json",
+    out: null,
+    summaryOut: null,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
-    if (arg === "--seed" && argv[i + 1]) parsed.seed = Number.parseInt(argv[++i], 10);
+    if (arg === "--target-tier" && argv[i + 1]) parsed.targetTier = normalizeTierId(argv[++i]) || "goat";
+    else if (arg === "--seed" && argv[i + 1]) parsed.seed = Number.parseInt(argv[++i], 10);
     else if (arg === "--episodes" && argv[i + 1]) parsed.episodes = Number.parseInt(argv[++i], 10);
     else if (arg === "--iterations" && argv[i + 1]) parsed.iterations = Number.parseInt(argv[++i], 10);
     else if (arg === "--epochs" && argv[i + 1]) parsed.epochs = Number.parseInt(argv[++i], 10);
@@ -85,9 +120,15 @@ function parseArgs(argv) {
   parsed.maxTicks = Number.isFinite(parsed.maxTicks) && parsed.maxTicks > 0 ? parsed.maxTicks : 900;
   parsed.evalRounds = Number.isFinite(parsed.evalRounds) && parsed.evalRounds > 0 ? parsed.evalRounds : 4;
   parsed.evalMaxTicks = Number.isFinite(parsed.evalMaxTicks) && parsed.evalMaxTicks > 0 ? parsed.evalMaxTicks : 400;
-  parsed.hidden1 = Number.isFinite(parsed.hidden1) && parsed.hidden1 > 0 ? parsed.hidden1 : 32;
-  parsed.hidden2 = Number.isFinite(parsed.hidden2) && parsed.hidden2 > 0 ? parsed.hidden2 : 16;
   parsed.maxNegatives = Number.isFinite(parsed.maxNegatives) && parsed.maxNegatives >= 0 ? parsed.maxNegatives : 4;
+  const shape = getDefaultModelShape(parsed.targetTier);
+  parsed.hidden1 = Number.isFinite(parsed.hidden1) && parsed.hidden1 > 0 ? parsed.hidden1 : shape.hidden1;
+  parsed.hidden2 = Number.isFinite(parsed.hidden2) && parsed.hidden2 > 0 ? parsed.hidden2 : shape.hidden2;
+  parsed.tiers = Array.isArray(parsed.tiers) && parsed.tiers.length > 0 ? parsed.tiers : [parsed.targetTier];
+  parsed.evalTiers =
+    Array.isArray(parsed.evalTiers) && parsed.evalTiers.length > 0 ? parsed.evalTiers : getDefaultEvalTiers(parsed.targetTier);
+  parsed.out = parsed.out || `artifacts/training/models/${parsed.targetTier}-model.json`;
+  parsed.summaryOut = parsed.summaryOut || `artifacts/training/models/${parsed.targetTier}-training-summary.json`;
 
   return parsed;
 }
@@ -175,7 +216,8 @@ function exportModelArtifact(model, args, dataset, rowSummary, iterationSummarie
     seed: args.seed,
     dataset_hash: dataset.dataset_hash,
     training_config: {
-      algorithm: "psro_lite_supervised_v1",
+      algorithm: "ladder_supervised_policy_v1",
+      target_tier: args.targetTier,
       tiers: Array.isArray(dataset.tiers) && dataset.tiers.length > 0 ? dataset.tiers : args.tiers,
       episodes: dataset.episode_count,
       iterations: args.iterations,
@@ -258,7 +300,7 @@ async function loadOrGenerateTrainingInput(tf, args) {
       maxNegativesPerDecision: args.maxNegatives,
     });
     if (sourceRowSummary.rows === 0) {
-      throw new Error(`training dataset produced no action rows: ${source.path}`);
+      continue;
     }
 
     datasetSources.push({
@@ -275,6 +317,10 @@ async function loadOrGenerateTrainingInput(tf, args) {
   const inputs = new Float32Array(rowSummary.rows * MODEL_INPUT_SIZE);
   const labels = new Float32Array(rowSummary.rows);
   let rowCount = 0;
+
+  if (datasetSources.length === 0 || rowSummary.rows === 0) {
+    throw new Error(`training dataset produced no action rows for target tier: ${args.targetTier}`);
+  }
 
   for (const source of datasetSources) {
     const loaded = await loadDatasetFile(source.path);
@@ -315,7 +361,7 @@ async function loadOrGenerateTrainingInput(tf, args) {
 function evaluateModel(modelArtifact, args, iteration) {
   return args.evalTiers.map((tier) => {
     const benchmark = runBenchmark({
-      botA: "goat",
+      botA: args.targetTier,
       botB: tier,
       trainedModelA: modelArtifact,
       seed: args.seed + iteration * 1009 + tier.length * 31,
@@ -351,7 +397,7 @@ for (let iteration = 1; iteration <= args.iterations; iteration += 1) {
   finalArtifact = exportModelArtifact(model, args, dataset, rowSummary, iterationSummaries);
   const normalized = normalizeNeuralPolicyModel(finalArtifact);
   if (!normalized) {
-    throw new Error("exported neural Goat model failed schema validation");
+    throw new Error(`exported neural ${args.targetTier} model failed schema validation`);
   }
 
   const evaluation = evaluateModel(finalArtifact, args, iteration);
@@ -362,7 +408,7 @@ for (let iteration = 1; iteration <= args.iterations; iteration += 1) {
     evaluation,
   });
   console.log(
-    `iteration=${iteration} loss=${Number(iterationSummaries.at(-1).loss ?? 0).toFixed(4)} rows=${rowSummary.rows}`,
+    `target_tier=${args.targetTier} iteration=${iteration} loss=${Number(iterationSummaries.at(-1).loss ?? 0).toFixed(4)} rows=${rowSummary.rows}`,
   );
 }
 
@@ -371,6 +417,7 @@ const outPath = resolve(process.cwd(), args.out);
 const summaryPath = resolve(process.cwd(), args.summaryOut);
 const summary = {
   model_path: outPath,
+  target_tier: args.targetTier,
   dataset_hash: dataset.dataset_hash,
   ...(Array.isArray(dataset.dataset_sources) ? { dataset_sources: dataset.dataset_sources } : {}),
   row_summary: rowSummary,

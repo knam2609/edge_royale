@@ -2,51 +2,53 @@
 
 ## Current State
 
-- As of May 2, 2026, the offline Goat pipeline is shard-native for file-backed training.
-- The primary documented Goat workflow is now `bash scripts/train-goat-pipeline.sh`.
-- `data:export` now writes compact JSON by default and supports `--pretty` for small inspection exports.
-- `train:goat` now accepts repeated `--dataset <file>` inputs and `--dataset-dir <dir>`, loads shard files in deterministic lexicographic order, recomputes shard hashes, and records ordered shard metadata in model artifacts.
+- As of May 2, 2026, fair ladder training is no longer Goat-only and the public training surface has been cleaned to `train:bot` and `train:ladder`.
+- `train:bot` now trains a model-backed fair tier with `--target-tier <noob|mid|top|pro|goat>`.
+- `bash scripts/train-bot-ladder.sh` now exports shard data, trains one model per fair tier, and benchmarks each saved artifact.
+- Runtime selection now accepts same-tier neural artifacts for `noob`, `mid`, `top`, `pro`, and `goat` while preserving the existing delay/pass heuristic overlays.
+- Legacy `train-goat` file/script naming has been removed from the working surface; the generic trainer now lives at `scripts/train-bot.mjs`.
+- The self bot is still the old local bucket-count placeholder; the next-run self imitation + RL plan is now recorded in `docs/IMPLEMENTATION_PLAN.md`.
 
 ## Source of Truth
 
 - Product overview and run instructions: `README.md`
-- Roadmap and phase intent: `docs/IMPLEMENTATION_PLAN.md`
+- Roadmap and next AI slices: `docs/IMPLEMENTATION_PLAN.md`
 - Gameplay rules and engine behavior: `docs/GAME_RULES.md`
 - Card stats and contracts: `docs/CARD_SPECS.md`
 - Bot tier expectations and promotion targets: `docs/BOT_LEVELS.md`
-- Neural training workflow and schemas: `docs/TRAINING_PIPELINE.md`
+- Ladder training workflow and schemas: `docs/TRAINING_PIPELINE.md`
 - Backlog and milestone framing: `docs/SPRINT_BACKLOG.md`
 - Durable agent workflow and handoff rules: `AGENTS.md`
 
 ## What Works
 
-- Deterministic rollout export still produces replayable training episodes with fair observations, legal action candidates, chosen labels, rewards, replay hashes, and state hashes.
-- `scripts/train-goat-pipeline.sh` now wraps shard export, model training, and saved-model benchmarking behind one bash entrypoint.
-- Single-file training still works when `train:goat` is pointed at one dataset file or generates data inline with no dataset flags.
-- Multi-shard training now does a two-pass file-backed ingest: first pass counts rows and records shard metadata, second pass fills flat numeric buffers before TensorFlow.js training.
-- Saved models still validate against the legal-action MLP schema and benchmark through the normal Goat runtime.
+- `scripts/train-bot.mjs` is now the generic fair-tier trainer behind the `train:bot` script, with tier-specific default hidden sizes and `training_config.target_tier` metadata.
+- `model:bench` now benchmarks any saved fair-tier model and infers the target tier from artifact metadata when possible.
+- `scripts/train-bot-ladder.sh` runs shard export, model training, and saved-model benchmarking across `noob`, `mid`, `top`, `pro`, and `goat`.
+- Fair-tier runtime selection can use same-tier neural artifacts and falls back to heuristics when no valid artifact is supplied.
+- Empty shard files no longer poison multi-shard training; zero-row shards are skipped, and the trainer only fails when every shard is empty.
 
 ## Known Gaps
 
-- Compact JSON avoids the immediate `Invalid string length` failure mode from pretty-printed large exports, but extremely large monolithic dataset files can still outgrow one-shot JSON serialization. JSONL/streaming is still future work if shard sizes grow further.
-- The neural Goat pipeline is operational, but smoke-trained models are still not promotion-ready bosses.
-- Bot strength ordering is still not reliable enough to serve as a promotion gate.
-- Browser validation is still an ad hoc workflow rather than a single repo command.
+- Ladder artifacts are benchmark-ready, but the browser client still does not load per-tier saved model files for normal play. Live matches still default to heuristic ladder bots unless a model is passed in explicitly.
+- Tiny smoke-trained ladder models mostly draw under short `max_ticks`; promotion-ready quality still needs larger exports, longer benchmarks, and real gating.
+- God RL and playable God model work are still not implemented.
+- The self bot still uses the old local bucket model and has not been migrated to legal-action imitation + RL yet.
 
 ## Next 3 Tasks
 
-1. Run larger shard sweeps with fixed seeds, compare model artifacts against heuristic Goat and prior snapshots, and record payoff summaries.
-2. Add corpus-level tooling for shard inspection and optional merge/report flows without reintroducing giant intermediate JSON files.
-3. Stabilize ladder ordering by tuning `top` and `pro` heuristics against `mid`, then add stronger adjacent-tier benchmark assertions.
+1. Add artifact loading/config so local play and benchmarks can switch specific ladder tiers between heuristic and saved-model policies without code edits.
+2. Run larger fixed-seed ladder training sweeps, compare each saved tier against heuristic same-tier and adjacent tiers, and record promotion-ready benchmark thresholds.
+3. Implement the self bot next slice from `docs/IMPLEMENTATION_PLAN.md`: full player decision logging, legal-action imitation model, and batched RL fine-tune.
 
 ## Validation
 
-- May 2, 2026: `npm test` -> 101 tests passed.
-- May 2, 2026: `bash -n scripts/train-goat-pipeline.sh` -> shell syntax OK.
-- May 2, 2026: `GOAT_OUTPUT_ROOT=/private/tmp/edge_royale_goat_pipeline_smoke GOAT_SHARDS=2 GOAT_EPISODES=2 GOAT_MAX_TICKS=120 GOAT_ITERATIONS=1 GOAT_EPOCHS=1 GOAT_EVAL_ROUNDS=1 GOAT_EVAL_MAX_TICKS=80 GOAT_MAX_NEGATIVES=2 GOAT_BENCH_ROUNDS=2 GOAT_BENCH_MAX_TICKS=80 GOAT_BENCH_SEED=9001 bash scripts/train-goat-pipeline.sh` -> exported 2 shards, trained `rows=45`, wrote model and summary, and completed deterministic smoke benchmarking with `0-0` draws vs `noob`, `mid`, `top`, and `goat`.
+- May 2, 2026: `npm test` -> 103 tests passed.
+- May 2, 2026: `bash -n scripts/train-bot-ladder.sh` -> shell syntax OK.
+- May 2, 2026: `npm run train:bot -- --target-tier mid --episodes 1 --max-ticks 120 --iterations 1 --epochs 1 --eval-rounds 1 --eval-max-ticks 80 --max-negatives 2 --out /private/tmp/edge_royale_train_bot_smoke/model.json --summary-out /private/tmp/edge_royale_train_bot_smoke/summary.json` -> trained a smoke `mid` artifact and wrote model + summary outputs.
 
 ## Risks / Notes
 
-- Multi-file model artifacts now carry a corpus hash plus ordered `training_config.dataset_sources`; downstream tooling should treat that as the primary provenance source for shard-backed training runs.
-- The current shard loader expects one JSON dataset object per file and scans only the specified directory, not nested subdirectories.
-- TensorFlow.js still prints the Node backend advisory during training; this is expected in the current setup.
+- `noob` has a very high pass rate, so tiny shard exports can still produce sparse data; the ladder script now floors Noob smoke exports to at least 4 episodes, but serious Noob training should use materially larger episode counts.
+- `train:bot` is now the single-tier entrypoint and `train:ladder` is the full fair-tier sweep entrypoint.
+- The current fair-tier training path imitates existing heuristic tier behavior. It does not yet implement God-teacher distillation or RL for ladder tiers.

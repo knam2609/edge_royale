@@ -2,12 +2,15 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import { runBenchmark } from "../src/ai/benchmark.js";
-import { normalizeNeuralPolicyModel } from "../src/ai/neuralModel.js";
+import { getNeuralModelTargetTier, normalizeNeuralPolicyModel } from "../src/ai/neuralModel.js";
+
+const FAIR_LADDER_TIERS = Object.freeze(["noob", "mid", "top", "pro", "goat"]);
 
 function parseArgs(argv) {
   const parsed = {
     model: null,
-    tiers: ["noob", "mid", "top", "goat"],
+    targetTier: null,
+    tiers: null,
     seed: 404,
     rounds: 10,
     maxTicks: undefined,
@@ -17,6 +20,10 @@ function parseArgs(argv) {
     const arg = argv[i];
     if (arg === "--model" && argv[i + 1]) {
       parsed.model = argv[++i];
+      continue;
+    }
+    if (arg === "--target-tier" && argv[i + 1]) {
+      parsed.targetTier = argv[++i].trim();
       continue;
     }
     if (arg === "--tiers" && argv[i + 1]) {
@@ -48,9 +55,6 @@ function parseArgs(argv) {
   if (!Number.isFinite(parsed.rounds) || parsed.rounds <= 0) {
     parsed.rounds = 10;
   }
-  if (!Array.isArray(parsed.tiers) || parsed.tiers.length === 0) {
-    parsed.tiers = ["noob", "mid", "top", "goat"];
-  }
 
   return parsed;
 }
@@ -59,17 +63,23 @@ const args = parseArgs(process.argv.slice(2));
 const modelPath = resolve(process.cwd(), args.model);
 const model = normalizeNeuralPolicyModel(JSON.parse(await readFile(modelPath, "utf8")));
 if (!model) {
-  throw new Error(`invalid neural Goat model: ${modelPath}`);
+  throw new Error(`invalid neural ladder model: ${modelPath}`);
 }
+const targetTier = args.targetTier || getNeuralModelTargetTier(model) || "goat";
+const opponentTiers =
+  Array.isArray(args.tiers) && args.tiers.length > 0
+    ? args.tiers
+    : FAIR_LADDER_TIERS.filter((tier) => tier !== targetTier);
 
 console.log(`model=${modelPath}`);
+console.log(`target_tier=${targetTier}`);
 console.log(`seed=${args.seed} rounds=${args.rounds}`);
-console.log("model_goat | opponent | win_rate | wins-losses | draws");
+console.log("model_tier | opponent | win_rate | wins-losses | draws");
 console.log("---------- | -------- | -------- | ----------- | -----");
 
-for (const tier of args.tiers) {
+for (const tier of opponentTiers) {
   const result = runBenchmark({
-    botA: "goat",
+    botA: targetTier,
     botB: tier,
     trainedModelA: model,
     seed: args.seed + tier.length * 17,
@@ -77,6 +87,6 @@ for (const tier of args.tiers) {
     maxTicks: args.maxTicks,
   });
   console.log(
-    `${"goat".padEnd(10)} | ${tier.padEnd(8)} | ${result.winRateA.toFixed(3).padEnd(8)} | ${`${result.winsA}-${result.winsB}`.padEnd(11)} | ${result.draws}`,
+    `${targetTier.padEnd(10)} | ${tier.padEnd(8)} | ${result.winRateA.toFixed(3).padEnd(8)} | ${`${result.winsA}-${result.winsB}`.padEnd(11)} | ${result.draws}`,
   );
 }
