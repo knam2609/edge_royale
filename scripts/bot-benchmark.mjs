@@ -1,4 +1,13 @@
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+
 import { runBenchmarkMatrix } from "../src/ai/benchmark.js";
+import {
+  FAIR_LADDER_MODEL_TIERS,
+  getConfiguredLadderModelPath,
+  normalizeLadderModelManifest,
+  normalizeLoadedLadderModelsByTier,
+} from "../src/ai/ladderModelManifest.js";
 
 const DEFAULT_TIERS = ["noob", "mid", "top", "pro", "goat", "god"];
 
@@ -7,6 +16,8 @@ function parseArgs(argv) {
     seed: 202,
     roundsPerPair: 120,
     tiers: DEFAULT_TIERS,
+    maxTicks: undefined,
+    modelConfig: null,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -23,11 +34,23 @@ function parseArgs(argv) {
       continue;
     }
 
+    if (arg === "--max-ticks" && argv[i + 1]) {
+      parsed.maxTicks = Number.parseInt(argv[i + 1], 10);
+      i += 1;
+      continue;
+    }
+
     if (arg === "--tiers" && argv[i + 1]) {
       parsed.tiers = argv[i + 1]
         .split(",")
         .map((tier) => tier.trim())
         .filter((tier) => tier.length > 0);
+      i += 1;
+      continue;
+    }
+
+    if (arg === "--model-config" && argv[i + 1]) {
+      parsed.modelConfig = argv[i + 1];
       i += 1;
     }
   }
@@ -41,8 +64,53 @@ function parseArgs(argv) {
   if (!Array.isArray(parsed.tiers) || parsed.tiers.length < 2) {
     parsed.tiers = DEFAULT_TIERS;
   }
+  if (!Number.isFinite(parsed.maxTicks) || parsed.maxTicks <= 0) {
+    parsed.maxTicks = undefined;
+  }
 
   return parsed;
+}
+
+async function readJsonFile(path) {
+  try {
+    return JSON.parse(await readFile(path, "utf8"));
+  } catch (error) {
+    console.warn(`warning: could not read ${path}: ${error.message}`);
+    return null;
+  }
+}
+
+async function loadModelsFromConfig(modelConfigPath) {
+  if (!modelConfigPath) {
+    return {};
+  }
+
+  const resolvedConfigPath = resolve(process.cwd(), modelConfigPath);
+  const rawManifest = await readJsonFile(resolvedConfigPath);
+  const manifest = normalizeLadderModelManifest(rawManifest);
+  const rawModelsByTier = {};
+  const readWarnings = [];
+
+  for (const tierId of FAIR_LADDER_MODEL_TIERS) {
+    const modelPath = getConfiguredLadderModelPath(manifest, tierId);
+    if (!modelPath) {
+      continue;
+    }
+
+    const rawModel = await readJsonFile(resolve(process.cwd(), modelPath));
+    if (rawModel) {
+      rawModelsByTier[tierId] = rawModel;
+    } else {
+      readWarnings.push(`tier ${tierId} model at ${modelPath} could not be loaded; using heuristic`);
+    }
+  }
+
+  const loaded = normalizeLoadedLadderModelsByTier({ manifest, rawModelsByTier });
+  for (const warning of [...readWarnings, ...loaded.warnings]) {
+    console.warn(`warning: ${warning}`);
+  }
+
+  return loaded.modelsByTier;
 }
 
 function printMatrix(matrix) {
@@ -60,9 +128,16 @@ function printMatrix(matrix) {
 }
 
 const args = parseArgs(process.argv.slice(2));
+const trainedModelsByTier = await loadModelsFromConfig(args.modelConfig);
+if (args.modelConfig) {
+  console.log(`model_config=${resolve(process.cwd(), args.modelConfig)}`);
+  console.log(`model_tiers=${Object.keys(trainedModelsByTier).join(",") || "none"}`);
+}
 const matrix = runBenchmarkMatrix({
   tiers: args.tiers,
   seed: args.seed,
   roundsPerPair: args.roundsPerPair,
+  maxTicks: args.maxTicks,
+  trainedModelsByTier,
 });
 printMatrix(matrix);

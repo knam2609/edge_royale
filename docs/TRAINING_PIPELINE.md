@@ -45,6 +45,7 @@ bash scripts/train-bot-ladder.sh
 ```
 
 By default the script writes a timestamped run under `artifacts/training/runs/`, exports shard files for each fair ladder tier, trains one saved model per tier, then benchmarks each saved model.
+It also writes `artifacts/training/ladder-models.json`, an ignored local manifest that enables the newly trained model for each completed fair tier.
 
 Customize the run with env vars when needed:
 
@@ -53,6 +54,26 @@ LADDER_RUN_NAME=ladder-smoke LADDER_SHARDS=1 LADDER_EPISODES=2 LADDER_MAX_TICKS=
 ```
 
 The ladder pipeline wraps `data:export`, `train:bot`, and `model:bench`. `data:export` still writes compact JSON by default so large shard files stay within practical string sizes, and `train:bot` still supports repeated `--dataset <file>` flags for manual debugging. When multiple shard files are supplied, the trainer runs over the deterministic lexicographic union of those files, stores a corpus-level `dataset_hash` on the model artifact, and records the ordered shard metadata under `training_config.dataset_sources`.
+
+## Local Model Manifest
+
+The shared manifest lives at `artifacts/training/ladder-models.json` by default:
+
+```json
+{
+  "version": 1,
+  "tiers": {
+    "mid": {
+      "mode": "model",
+      "model_path": "artifacts/training/runs/ladder-smoke/models/mid-model.json"
+    }
+  }
+}
+```
+
+Valid fair tiers are `noob`, `mid`, `top`, `pro`, and `goat`.
+`mode: "heuristic"` disables model usage for that tier.
+The browser and `bot:bench -- --model-config <path>` only use valid same-tier artifacts; missing, invalid, or mismatched models fall back to heuristic policies.
 
 ## Model Artifact
 
