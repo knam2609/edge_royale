@@ -1,4 +1,25 @@
 {
   "version": 1,
-  "tiers": {}
+  "tiers": {
+    "noob": {
+      "mode": "model",
+      "model_path": "artifacts/training/promoted/models/noob-model.json"
+    },
+    "mid": {
+      "mode": "model",
+      "model_path": "artifacts/training/promoted/models/mid-model.json"
+    },
+    "top": {
+      "mode": "model",
+      "model_path": "artifacts/training/promoted/models/top-model.json"
+    },
+    "pro": {
+      "mode": "model",
+      "model_path": "artifacts/training/promoted/models/pro-model.json"
+    },
+    "goat": {
+      "mode": "model",
+      "model_path": "artifacts/training/promoted/models/goat-model.json"
+    }
+  }
 }
