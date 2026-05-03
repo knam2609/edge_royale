@@ -1,0 +1,151 @@
+{
+  "model_path": "/home/runner/work/edge_royale/edge_royale/artifacts/training/runs/daily-25276131849/models/goat-model.json",
+  "target_tier": "goat",
+  "dataset_hash": "1c4771ea",
+  "dataset_sources": [
+    {
+      "path": "/home/runner/work/edge_royale/edge_royale/artifacts/training/runs/daily-25276131849/datasets/goat/shard-001.json",
+      "dataset_hash": "26d32375",
+      "episode_count": 500,
+      "sample_count": 6438,
+      "row_summary": {
+        "rows": 47130,
+        "positives": 6438,
+        "negatives": 40692
+      }
+    },
+    {
+      "path": "/home/runner/work/edge_royale/edge_royale/artifacts/training/runs/daily-25276131849/datasets/goat/shard-002.json",
+      "dataset_hash": "ced51994",
+      "episode_count": 500,
+      "sample_count": 6440,
+      "row_summary": {
+        "rows": 47163,
+        "positives": 6440,
+        "negatives": 40723
+      }
+    },
+    {
+      "path": "/home/runner/work/edge_royale/edge_royale/artifacts/training/runs/daily-25276131849/datasets/goat/shard-003.json",
+      "dataset_hash": "34d2ea10",
+      "episode_count": 500,
+      "sample_count": 6468,
+      "row_summary": {
+        "rows": 47348,
+        "positives": 6468,
+        "negatives": 40880
+      }
+    },
+    {
+      "path": "/home/runner/work/edge_royale/edge_royale/artifacts/training/runs/daily-25276131849/datasets/goat/shard-004.json",
+      "dataset_hash": "17a7a866",
+      "episode_count": 500,
+      "sample_count": 6422,
+      "row_summary": {
+        "rows": 47031,
+        "positives": 6422,
+        "negatives": 40609
+      }
+    }
+  ],
+  "row_summary": {
+    "rows": 188672,
+    "positives": 25768,
+    "negatives": 162904
+  },
+  "iteration_summaries": [
+    {
+      "iteration": 1,
+      "loss": 0.14189283549785614,
+      "accuracy": 0.9080891609191895,
+      "evaluation": [
+        {
+          "tier": "noob",
+          "rounds": 50,
+          "wins": 0,
+          "losses": 0,
+          "draws": 50,
+          "win_rate": 0
+        },
+        {
+          "tier": "mid",
+          "rounds": 50,
+          "wins": 0,
+          "losses": 0,
+          "draws": 50,
+          "win_rate": 0
+        },
+        {
+          "tier": "top",
+          "rounds": 50,
+          "wins": 0,
+          "losses": 0,
+          "draws": 50,
+          "win_rate": 0
+        }
+      ]
+    },
+    {
+      "iteration": 2,
+      "loss": 0.13705769181251526,
+      "accuracy": 0.9100131392478943,
+      "evaluation": [
+        {
+          "tier": "noob",
+          "rounds": 50,
+          "wins": 0,
+          "losses": 0,
+          "draws": 50,
+          "win_rate": 0
+        },
+        {
+          "tier": "mid",
+          "rounds": 50,
+          "wins": 0,
+          "losses": 0,
+          "draws": 50,
+          "win_rate": 0
+        },
+        {
+          "tier": "top",
+          "rounds": 50,
+          "wins": 0,
+          "losses": 0,
+          "draws": 50,
+          "win_rate": 0
+        }
+      ]
+    },
+    {
+      "iteration": 3,
+      "loss": 0.13460087776184082,
+      "accuracy": 0.9103894829750061,
+      "evaluation": [
+        {
+          "tier": "noob",
+          "rounds": 50,
+          "wins": 0,
+          "losses": 0,
+          "draws": 50,
+          "win_rate": 0
+        },
+        {
+          "tier": "mid",
+          "rounds": 50,
+          "wins": 0,
+          "losses": 0,
+          "draws": 50,
+          "win_rate": 0
+        },
+        {
+          "tier": "top",
+          "rounds": 50,
+          "wins": 0,
+          "losses": 0,
+          "draws": 50,
+          "win_rate": 0
+        }
+      ]
+    }
+  ]
+}
