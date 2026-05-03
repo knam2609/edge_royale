@@ -109,24 +109,26 @@ This gate is still about pipeline correctness first. Ladder ordering and stronge
 
 `.github/workflows/daily-ladder-training.yml` runs at `17:37 UTC` daily and supports manual `workflow_dispatch`.
 
-Daily training uses the balanced large preset:
+Daily training uses the full-match signal preset:
 
 ```bash
 LADDER_TIERS=noob,mid,top,pro,goat
 LADDER_SHARDS=4
-LADDER_EPISODES=500
-LADDER_MAX_TICKS=900
+LADDER_EPISODES=150
+LADDER_MAX_TICKS=6040
 LADDER_ITERATIONS=3
 LADDER_EPOCHS=8
 LADDER_BATCH_SIZE=64
 LADDER_MAX_NEGATIVES=8
 LADDER_EVAL_ROUNDS=50
-LADDER_EVAL_MAX_TICKS=900
+LADDER_EVAL_MAX_TICKS=6040
 LADDER_BENCH_ROUNDS=25
-LADDER_BENCH_MAX_TICKS=900
+LADDER_BENCH_MAX_TICKS=6040
 ```
 
-After training, `scripts/compare-ladder-models.mjs` benchmarks the candidate manifest against the checked-in manifest with the same seeds. The daily improvement gate passes only when:
+`6040` ticks covers one full match: 180 seconds of regulation, 120 seconds of overtime, and a 40-tick buffer at 20 ticks per second. The reduced `150` episodes per shard keeps the daily workflow under the current 180-minute runtime budget while avoiding the all-draw benchmark signal produced by short 900-tick runs.
+
+After training, `scripts/compare-ladder-models.mjs` benchmarks the candidate manifest against the checked-in manifest with the same seeds and full-match `6040` tick cap. The daily improvement gate passes only when:
 
 - the candidate benchmark matrix is deterministic
 - every requested fair tier has a valid same-tier candidate model

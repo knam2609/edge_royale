@@ -50,6 +50,48 @@ test("daily comparison gate blocks adjacent regression", () => {
   assert.ok(summary.reasons.some((reason) => reason.includes("regressed more than")));
 });
 
+test("daily comparison gate blocks zero-delta non-bootstrap candidates", () => {
+  const summary = summarizeComparison({
+    baselineMatrix: makeMatrix({ mid_noob: 0.5, top_mid: 0.5, pro_top: 0.5, goat_pro: 0.5 }),
+    candidateMatrix: makeMatrix({ mid_noob: 0.5, top_mid: 0.5, pro_top: 0.5, goat_pro: 0.5 }),
+    baselineModelTiers: ["noob", "mid", "top", "pro", "goat"],
+    candidateModelTiers: ["noob", "mid", "top", "pro", "goat"],
+    deterministic: true,
+  });
+
+  assert.equal(summary.passed, false);
+  assert.equal(summary.bootstrap, false);
+  assert.equal(summary.metrics.average_delta, 0);
+  assert.ok(summary.reasons.some((reason) => reason.includes("below required 0.02")));
+});
+
+test("daily comparison gate allows zero-delta bootstrap candidates", () => {
+  const summary = summarizeComparison({
+    baselineMatrix: makeMatrix({ mid_noob: 0.5, top_mid: 0.5, pro_top: 0.5, goat_pro: 0.5 }),
+    candidateMatrix: makeMatrix({ mid_noob: 0.5, top_mid: 0.5, pro_top: 0.5, goat_pro: 0.5 }),
+    baselineModelTiers: [],
+    candidateModelTiers: ["noob", "mid", "top", "pro", "goat"],
+    deterministic: true,
+  });
+
+  assert.equal(summary.passed, true);
+  assert.equal(summary.bootstrap, true);
+  assert.equal(summary.thresholds.effective_min_average_delta, 0);
+  assert.equal(summary.metrics.average_delta, 0);
+});
+
+test("daily workflow uses full-match preset for training, eval, bench, and compare", async () => {
+  const workflow = await readFile(".github/workflows/daily-ladder-training.yml", "utf8");
+
+  assert.match(workflow, /LADDER_SHARDS:\s*4/);
+  assert.match(workflow, /LADDER_EPISODES:\s*150/);
+  assert.match(workflow, /LADDER_MAX_TICKS:\s*6040/);
+  assert.match(workflow, /LADDER_EVAL_MAX_TICKS:\s*6040/);
+  assert.match(workflow, /LADDER_BENCH_MAX_TICKS:\s*6040/);
+  assert.match(workflow, /--rounds 100/);
+  assert.match(workflow, /--max-ticks 6040/);
+});
+
 test("promoteLadderModels copies valid tier models to stable tracked paths", async () => {
   const tmpRoot = await mkdtemp(join(tmpdir(), "edge-royale-promote-"));
   const modelPath = "run/models/mid-model.json";
