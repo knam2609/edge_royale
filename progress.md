@@ -2,14 +2,12 @@
 
 ## Current State
 
-- As of May 3, 2026, fair ladder model selection is manifest-driven and daily GitHub Actions training is wired.
-- `bash scripts/train-bot-ladder.sh` exports shard data, trains one model per requested fair tier, benchmarks each saved artifact, and writes `artifacts/training/ladder-models.json`.
-- The browser loads `artifacts/training/ladder-models.json` on startup and uses valid same-tier saved models for `noob`, `mid`, `top`, `pro`, and `goat`; missing, invalid, or mismatched entries fall back to heuristics.
-- `npm run bot:bench -- --model-config artifacts/training/ladder-models.json` runs the ladder matrix with configured per-tier saved models.
-- `model:bench` remains the one-artifact smoke benchmark, and `train:bot` remains the single-tier trainer.
-- `.github/workflows/daily-ladder-training.yml` runs daily at `17:37 UTC`, trains the balanced large preset on GitHub-hosted Ubuntu, uploads the full ignored run, compares candidate models against the checked-in manifest, and opens/updates branch `training/daily-ladder-models` only when the improvement gate passes.
-- The checked-in baseline manifest is currently empty, so fresh checkout falls back to heuristic ladder bots until a passing daily model PR is merged.
-- The self bot is still the old local bucket-count placeholder; the next-run self imitation + RL plan remains in `docs/IMPLEMENTATION_PLAN.md`.
+- As of May 3, 2026, the full daily ladder training workflow has been manually validated on GitHub Actions.
+- `main` is pushed at `310ba27` with workflow hardening for repeated runs: it fetches `training/daily-ladder-models` before `--force-with-lease`, supports optional `LADDER_MODEL_PR_TOKEN`, and treats blocked PR creation as a warning after the model branch is pushed.
+- Run `25266882500` completed successfully on GitHub Actions in `47m47s` at head `310ba27`.
+- The full preset trained `noob`, `mid`, `top`, `pro`, and `goat`, uploaded the full run artifact, promoted the passing candidate artifacts, and pushed branch `training/daily-ladder-models`.
+- Downloaded artifact validation showed all five candidate model tiers, `passed=true`, `bootstrap=true`, `average_delta=0`, and `worst_adjacent_delta=0`.
+- No PR was opened because repository settings currently block Action-created PRs; the workflow now leaves the branch pushed and emits an expected warning.
 
 ## Source of Truth
 
@@ -24,42 +22,42 @@
 
 ## What Works
 
-- `src/ai/ladderModelManifest.js` validates manifest version, tier ids, model mode, safe relative artifact paths, and same-tier neural artifact metadata.
-- The browser setup summary reports `Bot source: heuristic` or `Bot source: model` for the selected tier.
-- `scripts/write-ladder-model-manifest.mjs` writes enabled model manifests from trained tier outputs.
-- `scripts/train-bot-ladder.sh` writes the configured ladder manifest path at the end of each successful sweep.
-- `scripts/bot-benchmark.mjs` accepts `--model-config`, loads valid configured artifacts, warns on invalid entries, and falls back per tier.
-- `scripts/compare-ladder-models.mjs` runs deterministic fixed-seed candidate-vs-baseline matrix comparisons and enforces the daily full-requested-tier / `+0.02` average / `0.05` adjacent-regression gate.
-- `scripts/promote-ladder-models.mjs` copies passing models and summaries to stable promoted paths, writes the runtime manifest, and prepares the daily PR body.
+- `.github/workflows/daily-ladder-training.yml` runs from `workflow_dispatch`, installs deps, runs tests, trains the balanced large preset, compares candidates, uploads artifacts, promotes passing candidates, and pushes `training/daily-ladder-models`.
+- `scripts/train-bot-ladder.sh` exports shard data, trains one model per requested fair tier, benchmarks each saved artifact, and writes a candidate manifest for the workflow.
+- `scripts/compare-ladder-models.mjs` enforces full requested-tier coverage, deterministic benchmark output, average delta, and adjacent-regression gates.
+- `scripts/promote-ladder-models.mjs` copies passing models and summaries to stable promoted paths, writes `artifacts/training/ladder-models.json`, and prepares the PR body.
+- The browser and benchmark paths still load valid same-tier saved models from `artifacts/training/ladder-models.json` and fall back to heuristics for missing or invalid entries.
 
 ## Known Gaps
 
-- The daily workflow has not yet been run on GitHub Actions; artifact upload, branch push, and PR upsert still need one real `workflow_dispatch` check.
-- The balanced large preset may need tuning after the first hosted run reports wall time, artifact size, and benchmark signal.
-- Tiny smoke-trained ladder models still are not promotion-ready; short `max_ticks` runs can mostly draw or produce unstable ordering.
-- Promotion thresholds for model-backed ladder tiers still need larger fixed-seed sweeps and comparison against heuristic same-tier and adjacent tiers.
+- Automatic PR creation still needs repository workflow settings changed to allow Action-created PRs, or a `LADDER_MODEL_PR_TOKEN` secret with pull-request permissions.
+- The successful hosted run produced a safe bootstrap pass with `average_delta=0`, not a stronger promotion signal.
+- The balanced large preset took about `48` minutes on GitHub-hosted Ubuntu; future tuning should balance runtime, artifact size, and benchmark signal.
+- GitHub Actions emitted a Node.js 20 action deprecation warning for `actions/checkout@v4`, `actions/setup-node@v4`, and `actions/upload-artifact@v4`.
 - God RL and playable God model work are still not implemented.
 - The self bot still uses the old local bucket model and has not been migrated to legal-action imitation + RL.
 
 ## Next 3 Tasks
 
-1. Trigger `.github/workflows/daily-ladder-training.yml` with `workflow_dispatch`, then verify uploaded artifact, comparison summary, branch update, and PR body.
-2. Use the first full hosted run to tune `LADDER_SHARDS`, `LADDER_EPISODES`, benchmark rounds, and the improvement gate if runtime or signal is poor.
+1. Enable Action-created PRs in repository settings or add `LADDER_MODEL_PR_TOKEN`, rerun `.github/workflows/daily-ladder-training.yml`, and verify a PR is opened or updated from `training/daily-ladder-models`.
+2. Review the promoted artifacts on `training/daily-ladder-models`; decide whether to open/merge a manual PR, then tune the preset/gate from the `47m47s` runtime and zero-delta bootstrap result.
 3. Implement the self bot next slice from `docs/IMPLEMENTATION_PLAN.md`: full player decision logging, legal-action imitation model, and batched RL fine-tune.
 
 ## Validation
 
+- May 3, 2026: `npm test` -> 111 tests passed.
 - May 3, 2026: `node --check scripts/compare-ladder-models.mjs` -> syntax OK.
 - May 3, 2026: `node --check scripts/promote-ladder-models.mjs` -> syntax OK.
 - May 3, 2026: `bash -n scripts/train-bot-ladder.sh` -> shell syntax OK.
-- May 3, 2026: `npm test` -> 111 tests passed.
-- May 3, 2026: `LADDER_RUN_NAME=daily-smoke LADDER_OUTPUT_ROOT=artifacts/training/runs/daily-smoke LADDER_MODEL_MANIFEST_PATH=artifacts/training/runs/daily-smoke/candidate-ladder-models.json LADDER_TIERS=noob,mid LADDER_SHARDS=1 LADDER_EPISODES=1 LADDER_MAX_TICKS=80 LADDER_ITERATIONS=1 LADDER_EPOCHS=1 LADDER_BATCH_SIZE=8 LADDER_MAX_NEGATIVES=1 LADDER_EVAL_ROUNDS=1 LADDER_EVAL_MAX_TICKS=60 LADDER_BENCH_TIERS=noob,mid LADDER_BENCH_ROUNDS=1 LADDER_BENCH_MAX_TICKS=60 bash scripts/train-bot-ladder.sh` -> trained smoke `noob` and `mid` candidate artifacts under ignored `artifacts/training/runs/daily-smoke/`.
-- May 3, 2026: `node scripts/compare-ladder-models.mjs --baseline-manifest artifacts/training/ladder-models.json --candidate-manifest artifacts/training/runs/daily-smoke/candidate-ladder-models.json --out artifacts/training/runs/daily-smoke/comparison-summary.json --tiers noob,mid --seed 909 --rounds 1 --max-ticks 60 --min-average-delta 0.02 --bootstrap-min-average-delta 0 --max-adjacent-regression 0.05` -> `comparison_passed=true`, `average_delta=0`, `worst_adjacent_delta=0`.
-- May 3, 2026: `node scripts/promote-ladder-models.mjs --candidate-manifest artifacts/training/runs/daily-smoke/candidate-ladder-models.json --comparison-summary artifacts/training/runs/daily-smoke/comparison-summary.json --run-root artifacts/training/runs/daily-smoke --out-dir artifacts/training/runs/daily-smoke/promoted --manifest-out artifacts/training/runs/daily-smoke/promoted-ladder-models.json --summary-out artifacts/training/runs/daily-smoke/latest-training-summary.json --pr-body-out artifacts/training/runs/daily-smoke/pull-request-body.md` -> promoted smoke `noob,mid` into ignored smoke output and wrote PR body.
+- May 3, 2026: `gh workflow run daily-ladder-training.yml --ref main` -> run `25266882500` succeeded at `https://github.com/knam2609/edge_royale/actions/runs/25266882500`.
+- May 3, 2026: `gh run download 25266882500 --name ladder-training-25266882500 --dir /private/tmp/edge_royale-ladder-25266882500` -> full artifact downloaded.
+- May 3, 2026: downloaded `candidate-ladder-models.json` and `comparison-summary.json` check -> `candidateTiers=noob,mid,top,pro,goat`, `passed=true`, `bootstrap=true`, `averageDelta=0`, `worstAdjacentDelta=0`.
+- May 3, 2026: `git ls-remote --heads origin training/daily-ladder-models` -> branch exists at `e7b4d098a113c5b0dcff2e638e8192fd2fae17bd`.
+- May 3, 2026: `gh pr list --head training/daily-ladder-models --base main --state open --json number,title,url` -> `[]`; expected until repo settings or `LADDER_MODEL_PR_TOKEN` allow PR creation.
 
 ## Risks / Notes
 
-- Raw training artifacts stay ignored under `artifacts/training/runs/`; only `artifacts/training/ladder-models.json` and `artifacts/training/promoted/**` are intended to be tracked.
-- Local `train:ladder` still writes the default runtime manifest unless `LADDER_MODEL_MANIFEST_PATH` is overridden; use a run-local candidate manifest for scratch experiments that should not dirty tracked model config.
-- `noob` has a very high pass rate, so tiny shard exports can still produce sparse data; serious Noob training should use materially larger episode counts.
-- The current fair-tier training path imitates existing heuristic tier behavior. It does not yet implement God-teacher distillation, GPU-backed training, or RL for ladder tiers.
+- Raw training artifacts stay ignored under `artifacts/training/runs/`; only `artifacts/training/ladder-models.json` and `artifacts/training/promoted/**` are intended to be tracked on the promoted branch.
+- `training/daily-ladder-models` currently contains promoted runtime artifacts but has no open PR.
+- The daily workflow now succeeds when PR creation is blocked, so future reviewers must watch the warning and branch state until automatic PR creation is enabled.
+- The current fair-tier training path imitates existing heuristic tier behavior. It does not yet implement God-teacher distillation, GPU-backed training, or RL for ladder/self tiers.
