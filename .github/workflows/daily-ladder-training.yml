@@ -95,6 +95,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin training/daily-ladder-models || true
           git switch -C training/daily-ladder-models
           node scripts/promote-ladder-models.mjs \
             --candidate-manifest "$CANDIDATE_MANIFEST" \
