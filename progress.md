@@ -2,13 +2,10 @@
 
 ## Current State
 
-- As of May 3, 2026, the full daily ladder training workflow has been manually validated end-to-end on GitHub Actions, including automatic PR creation.
-- `main` is pushed at `532eacb` with workflow hardening for repeated runs: it fetches `training/daily-ladder-models` before `--force-with-lease`, supports optional `LADDER_MODEL_PR_TOKEN`, and treats blocked PR creation as a warning after the model branch is pushed.
-- Repository workflow permissions now allow GitHub Actions to create pull requests, so no `LADDER_MODEL_PR_TOKEN` secret is currently needed.
-- Run `25276131849` completed successfully on GitHub Actions in `47m30s` at head `532eacb`.
-- The full preset trained `noob`, `mid`, `top`, `pro`, and `goat`, uploaded the full run artifact, promoted the passing candidate artifacts, pushed branch `training/daily-ladder-models`, and opened PR #4.
-- Downloaded artifact validation showed all five candidate model tiers, `passed=true`, `bootstrap=true`, `average_delta=0`, and `worst_adjacent_delta=0`.
-- Open model PR: `https://github.com/knam2609/edge_royale/pull/4`.
+- As of May 3, 2026, PR #4 (`https://github.com/knam2609/edge_royale/pull/4`) is merged into `main` at `38ee3ddca14773a1f66b89398f9ebc898eab581b`.
+- The daily ladder workflow has been tuned locally from short 900-tick runs to full-match 6040-tick training, eval, saved-model bench, and compare caps.
+- The daily preset now uses `LADDER_SHARDS=4`, `LADDER_EPISODES=150`, and keeps the existing gate thresholds: average delta `+0.02`, bootstrap delta `0`, adjacent regression `0.05`.
+- Local validation shows same-manifest non-bootstrap candidates now fail the gate with `average_delta=0`, while bootstrap zero-delta behavior remains allowed only when no baseline model tiers exist.
 
 ## Source of Truth
 
@@ -23,41 +20,37 @@
 
 ## What Works
 
-- `.github/workflows/daily-ladder-training.yml` runs from `workflow_dispatch`, installs deps, runs tests, trains the balanced large preset, compares candidates, uploads artifacts, promotes passing candidates, pushes `training/daily-ladder-models`, and opens/updates the model PR.
-- `scripts/train-bot-ladder.sh` exports shard data, trains one model per requested fair tier, benchmarks each saved artifact, and writes a candidate manifest for the workflow.
-- `scripts/compare-ladder-models.mjs` enforces full requested-tier coverage, deterministic benchmark output, average delta, and adjacent-regression gates.
-- `scripts/promote-ladder-models.mjs` copies passing models and summaries to stable promoted paths, writes `artifacts/training/ladder-models.json`, and prepares the PR body.
+- `.github/workflows/daily-ladder-training.yml` still runs tests, trains all fair tiers, compares candidates, uploads artifacts, promotes passing candidates, pushes `training/daily-ladder-models`, and opens/updates the model PR.
+- Daily training now exports/evaluates/benchmarks full matches with a 6040-tick cap while reducing per-shard episodes to keep the run within the 180-minute budget.
+- `scripts/compare-ladder-models.mjs` still enforces full requested-tier coverage, deterministic benchmark output, average delta, and adjacent-regression gates.
+- Tests cover non-bootstrap zero-delta rejection, bootstrap zero-delta allowance, and workflow full-match preset values.
 - The browser and benchmark paths still load valid same-tier saved models from `artifacts/training/ladder-models.json` and fall back to heuristics for missing or invalid entries.
 
 ## Known Gaps
 
-- The successful hosted run produced a safe bootstrap pass with `average_delta=0`, not a stronger promotion signal.
-- The balanced large preset took about `48` minutes on GitHub-hosted Ubuntu; future tuning should balance runtime, artifact size, and benchmark signal.
-- GitHub Actions emitted a Node.js 20 action deprecation warning for `actions/checkout@v4`, `actions/setup-node@v4`, and `actions/upload-artifact@v4`.
+- The full-match daily preset has not yet been validated on GitHub Actions; hosted runtime and artifact size need inspection against the 180-minute target.
+- Ladder ordering is still not stable enough to serve as a strict promotion gate.
+- The currently promoted models are the merged bootstrap artifacts and did not prove strength improvement.
+- GitHub Actions previously emitted Node.js 20 action deprecation warnings for `actions/checkout@v4`, `actions/setup-node@v4`, and `actions/upload-artifact@v4`.
 - God RL and playable God model work are still not implemented.
 - The self bot still uses the old local bucket model and has not been migrated to legal-action imitation + RL.
 
 ## Next 3 Tasks
 
-1. Review PR #4 (`https://github.com/knam2609/edge_royale/pull/4`) and decide whether to merge the promoted bootstrap models into `main`.
-2. Tune the daily preset/gate from the `47m30s` runtime and zero-delta bootstrap result.
+1. Run `.github/workflows/daily-ladder-training.yml` manually on `main` after this full-match preset lands, then inspect runtime, artifact size, candidate matrix, and PR behavior.
+2. Tune the daily preset/gate from the first hosted full-match result if runtime exceeds budget or signal remains noisy.
 3. Implement the self bot next slice from `docs/IMPLEMENTATION_PLAN.md`: full player decision logging, legal-action imitation model, and batched RL fine-tune.
 
 ## Validation
 
-- May 3, 2026: `npm test` -> 111 tests passed.
-- May 3, 2026: `node --check scripts/compare-ladder-models.mjs` -> syntax OK.
-- May 3, 2026: `node --check scripts/promote-ladder-models.mjs` -> syntax OK.
-- May 3, 2026: `bash -n scripts/train-bot-ladder.sh` -> shell syntax OK.
-- May 3, 2026: `gh workflow run daily-ladder-training.yml --ref main` -> run `25276131849` succeeded at `https://github.com/knam2609/edge_royale/actions/runs/25276131849`.
-- May 3, 2026: `gh run download 25276131849 --name ladder-training-25276131849 --dir /private/tmp/edge_royale-ladder-25276131849` -> full artifact downloaded.
-- May 3, 2026: downloaded run `25276131849` `candidate-ladder-models.json` and `comparison-summary.json` check -> `candidateTiers=noob,mid,top,pro,goat`, `passed=true`, `bootstrap=true`, `averageDelta=0`, `worstAdjacentDelta=0`.
-- May 3, 2026: `git ls-remote --heads origin training/daily-ladder-models` -> branch exists at `e4ce4ee1544f0fd5f3ab5d736f9fa4be7e5c0b52`.
-- May 3, 2026: `gh pr list --head training/daily-ladder-models --base main --state open --json number,title,url,headRefOid` -> PR #4 open at `https://github.com/knam2609/edge_royale/pull/4`, head `e4ce4ee1544f0fd5f3ab5d736f9fa4be7e5c0b52`.
+- May 3, 2026: `npm test` -> 114 tests passed.
+- May 3, 2026: `npm run bot:bench -- --tiers noob,mid,top,pro,goat --rounds 2 --seed 909 --max-ticks 6040` -> completed with resolved full-match outcomes instead of an all-draw matrix.
+- May 3, 2026: `npm run bot:bench -- --model-config artifacts/training/ladder-models.json --tiers noob,mid,top,pro,goat --rounds 2 --seed 909 --max-ticks 6040` -> completed with `model_tiers=noob,mid,top,pro,goat` and resolved full-match outcomes.
+- May 3, 2026: `node scripts/compare-ladder-models.mjs --baseline-manifest artifacts/training/ladder-models.json --candidate-manifest artifacts/training/ladder-models.json --out /private/tmp/edge-royale-same-manifest-compare.json --tiers noob,mid,top,pro,goat --seed 909 --rounds 2 --max-ticks 6040 --min-average-delta 0.02 --bootstrap-min-average-delta 0 --max-adjacent-regression 0.05` -> `comparison_passed=false`, `average_delta=0`, `gate_reason=average win-rate delta 0 is below required 0.02`.
+- May 3, 2026: `env LADDER_RUN_NAME=full-match-smoke LADDER_OUTPUT_ROOT=/private/tmp/edge-royale-full-match-smoke LADDER_MODEL_MANIFEST_PATH=/private/tmp/edge-royale-full-match-smoke/candidate-ladder-models.json LADDER_TIERS=mid LADDER_SHARDS=1 LADDER_EPISODES=1 LADDER_MAX_TICKS=6040 LADDER_ITERATIONS=1 LADDER_EPOCHS=1 LADDER_BATCH_SIZE=8 LADDER_MAX_NEGATIVES=2 LADDER_EVAL_ROUNDS=1 LADDER_EVAL_MAX_TICKS=6040 LADDER_BENCH_TIERS=noob,mid LADDER_BENCH_ROUNDS=1 LADDER_BENCH_MAX_TICKS=6040 bash scripts/train-bot-ladder.sh` -> completed under `/private/tmp`, exported `samples=112`, trained `rows=336`, wrote candidate manifest.
 
 ## Risks / Notes
 
-- Raw training artifacts stay ignored under `artifacts/training/runs/`; only `artifacts/training/ladder-models.json` and `artifacts/training/promoted/**` are intended to be tracked on the promoted branch.
-- `training/daily-ladder-models` currently contains promoted runtime artifacts and has open PR #4.
-- The workflow still has a blocked-PR warning fallback, but repository settings now allow normal Action-created PRs.
+- Raw training artifacts stay ignored under `artifacts/training/runs/`; only `artifacts/training/ladder-models.json` and `artifacts/training/promoted/**` are intended to be tracked on promoted branches.
+- Full-match training increases per-episode sample count; `LADDER_EPISODES=150` is a budgeted starting point, not a proven hosted optimum.
 - The current fair-tier training path imitates existing heuristic tier behavior. It does not yet implement God-teacher distillation, GPU-backed training, or RL for ladder/self tiers.
