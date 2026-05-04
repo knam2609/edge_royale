@@ -3,7 +3,7 @@ import { dirname, resolve } from "node:path";
 
 import {
   DEFAULT_LADDER_MODEL_MANIFEST_PATH,
-  FAIR_LADDER_MODEL_TIERS,
+  PLAYABLE_MODEL_TIERS,
   createEnabledLadderModelManifest,
 } from "../src/ai/ladderModelManifest.js";
 
@@ -22,7 +22,7 @@ function parseArgs(argv) {
     if (arg === "--tier" && argv[i + 2]) {
       const tierId = argv[++i].trim();
       const modelPath = argv[++i].trim();
-      if (FAIR_LADDER_MODEL_TIERS.includes(tierId)) {
+      if (PLAYABLE_MODEL_TIERS.includes(tierId)) {
         parsed.modelsByTier[tierId] = modelPath;
       }
     }

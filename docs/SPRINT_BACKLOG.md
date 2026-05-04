@@ -73,12 +73,14 @@ This backlog assumes 10 one-week sprints. IDs are stable so they can become GitH
 - `ML-002` Integrate baseline policy training pipeline.
 - `ML-005` Add model-backed Goat legal-action scorer with deterministic plain-JS inference.
 - `ML-006` Add TensorFlow.js offline trainer that exports schema-validated Goat model artifacts.
+- `ML-007` Add playable God model lane with hidden-info features and a separate promotion gate.
 - `QA-008` Add offline benchmark harness for trained policy.
 
 ## Sprint 10: RL + Hardening
 
 - `ML-003` Integrate self-play RL fine-tuning pipeline.
 - `ML-004` Add model promotion gates based on benchmark deltas.
+- `ML-008` Add held-out self-style and benchmark non-regression gates for local self RL.
 - `PERF-001` Run performance and memory profiling pass.
 - `REL-001` Final release checklist and cut MVP tag.
 

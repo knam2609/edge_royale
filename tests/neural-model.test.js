@@ -5,9 +5,13 @@ import { makeBenchmarkArena, makeBenchmarkInitialEntities } from "../src/ai/benc
 import { enumerateLegalCardActions, selectBotAction } from "../src/ai/ladderRuntime.js";
 import {
   ACTION_FEATURE_SIZE,
+  GOD_FEATURE_SCHEMA_VERSION,
+  GOD_MODEL_INPUT_SIZE,
+  GOD_STATE_FEATURE_SIZE,
   MODEL_INPUT_SIZE,
   STATE_FEATURE_SIZE,
   encodeActionFeatures,
+  encodeGodStateFeatures,
   encodeModelInput,
   encodeStateFeatures,
 } from "../src/ai/neuralFeatures.js";
@@ -34,8 +38,13 @@ test("neural feature encoders produce stable vector sizes", () => {
   const action = enumerateLegalCardActions({ engine, actor: "red" })[0];
 
   assert.equal(encodeStateFeatures({ engine, actor: "red" }).length, STATE_FEATURE_SIZE);
+  assert.equal(encodeGodStateFeatures({ engine, actor: "red" }).length, GOD_STATE_FEATURE_SIZE);
   assert.equal(encodeActionFeatures({ engine, actor: "red", action }).length, ACTION_FEATURE_SIZE);
   assert.equal(encodeModelInput({ engine, actor: "red", action }).length, MODEL_INPUT_SIZE);
+  assert.equal(
+    encodeModelInput({ engine, actor: "red", action, featureSchemaVersion: GOD_FEATURE_SCHEMA_VERSION }).length,
+    GOD_MODEL_INPUT_SIZE,
+  );
 });
 
 test("neural policy model validates and scores deterministically", () => {
@@ -65,4 +74,27 @@ test("neural selector returns a legal action and Goat runtime accepts model-back
     rng: () => 0.9,
   });
   assert.ok(legalActions.some((action) => JSON.stringify(action) === JSON.stringify(runtimeAction)));
+});
+
+test("God runtime accepts hidden-schema model-backed policy", () => {
+  const engine = makeEngine();
+  const legalActions = enumerateLegalCardActions({ engine, actor: "red" });
+  const model = createZeroNeuralPolicyModel({
+    hiddenUnits: 2,
+    seed: 303,
+    featureSchemaVersion: GOD_FEATURE_SCHEMA_VERSION,
+    targetTier: "god",
+  });
+
+  assert.ok(normalizeNeuralPolicyModel(model));
+  const action = selectBotAction({
+    tierId: "god",
+    engine,
+    actor: "red",
+    legalActions,
+    trainedModel: model,
+    rng: () => 0.9,
+  });
+
+  assert.ok(legalActions.some((candidate) => JSON.stringify(candidate) === JSON.stringify(action)));
 });

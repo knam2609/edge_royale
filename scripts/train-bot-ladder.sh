@@ -42,6 +42,7 @@ default_eval_tiers() {
     mid) echo "noob,mid,top" ;;
     top) echo "mid,top,pro" ;;
     pro) echo "top,pro,goat" ;;
+    god) echo "goat,god" ;;
     *) echo "noob,mid,top" ;;
   esac
 }

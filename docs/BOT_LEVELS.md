@@ -15,10 +15,13 @@ Every bot implements:
 - `PASS`
 
 Bots can only choose legal placements and cards currently in hand with sufficient elixir.
+The model action space is `full_snapped_grid_v1`: troops use every legal deploy grid cell, and spells use every snapped arena grid cell.
 
 ## 3) Tier Definitions
 
 Noob/Mid/Top/Pro/Goat can all run through the same legal-action neural scorer when a valid same-tier artifact is supplied. If no valid artifact is loaded, they fall back to the current heuristic implementations.
+
+Self Play uses a local `legal_action_mlp` trained from the player's public-observation decision samples. It scores only currently legal actions, runs a reward-weighted RL v1 fine-tune after imitation, and falls back to Top-style heuristics when no ready self model is available.
 
 ## Noob (MVP)
 
@@ -77,8 +80,11 @@ Noob/Mid/Top/Pro/Goat can all run through the same legal-action neural scorer wh
 ## God (Post-MVP)
 
 - Strategy:
-  - Oracle baseline with full opponent hand/elixir access (non-human constraint).
-  - Used for upper-bound benchmarking only.
+  - Playable boss tier after Goat.
+  - Uses a same-tier `legal_action_mlp` when a valid God artifact is supplied.
+  - Uses `god_state_features_v1`, which adds exact opponent elixir, opponent hand, and opponent deck queue to the fair public feature vector.
+  - Falls back to the internal God oracle heuristic when no valid model is loaded.
+  - `god_oracle` is an internal teacher/benchmark path, not a UI-selectable tier.
 - Reaction delay:
   - 50-120ms.
 
@@ -109,6 +115,8 @@ Neural fair-tier model artifacts additionally require:
 
 Daily GitHub Actions training may open PRs for model refreshes under a lighter improvement gate: tests pass, candidate artifacts validate and benchmark deterministically, average fixed-seed matrix win-rate improves by at least `0.02` after bootstrap, and no adjacent tier pair regresses by more than `0.05`. That daily gate can update checked-in candidate runtime models, but it does not replace the strict promotion thresholds above.
 
+God model artifacts use a separate daily gate. Bootstrap accepts the first valid deterministic same-tier God model. After a baseline God model exists, a candidate must avoid regression versus Goat and score at least `50%` resolved win rate against the prior God model on the fixed-seed comparison.
+
 ## 6) Anti-Cheat Constraints for Fair Tiers
 
 For Noob/Mid/Top/Pro/Goat:
@@ -118,4 +126,4 @@ For Noob/Mid/Top/Pro/Goat:
 - Must obey human-like reaction delay and placement legality.
 - Neural fair-tier feature encoders must preserve the same fair-observation boundary.
 
-Only God tier can bypass these constraints for benchmark purposes.
+Only playable God and internal `god_oracle` can bypass these constraints. They must still return legal actions only.

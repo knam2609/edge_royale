@@ -4,14 +4,16 @@ import { hashState } from "../sim/hash.js";
 import { createRng } from "../sim/random.js";
 import {
   enumerateLegalCardActions,
+  ACTION_SPACE_VERSION,
   rollDecisionDelayTicks,
   selectBotAction,
 } from "./ladderRuntime.js";
 import {
   ACTION_SCHEMA_VERSION,
   FEATURE_SCHEMA_VERSION,
+  GOD_FEATURE_SCHEMA_VERSION,
   encodeActionFeatures,
-  encodeStateFeatures,
+  encodeStateFeaturesForSchema,
 } from "./neuralFeatures.js";
 import { makeBenchmarkArena, makeBenchmarkInitialEntities } from "./benchmark.js";
 
@@ -65,6 +67,14 @@ function makeMatchAction({ tick, actor, action }) {
   };
 }
 
+function getFeatureSchemaForTier(tierId) {
+  return tierId === "god" || tierId === "god_oracle" ? GOD_FEATURE_SCHEMA_VERSION : FEATURE_SCHEMA_VERSION;
+}
+
+function getSampleTier(tierId) {
+  return tierId === "god_oracle" ? "god" : tierId;
+}
+
 function maybeSelectActionAndSample({
   engine,
   actor,
@@ -99,21 +109,23 @@ function maybeSelectActionAndSample({
   const chosenIndex = legalActions.findIndex((candidate) => sameAction(candidate, chosenAction));
   if (chosenIndex >= 0) {
     const phase = getMatchPhase({ tick: engine.state.tick, isOvertime: engine.state.isOvertime });
-    const observation = encodeStateFeatures({ engine, actor });
+    const featureSchemaVersion = getFeatureSchemaForTier(tierId);
+    const observation = encodeStateFeaturesForSchema({ engine, actor, featureSchemaVersion });
     samples.push({
       schema_version: TRAINING_EPISODE_SCHEMA_VERSION,
       episode_seed: episodeSeed,
       actor,
-      tier: tierId,
+      tier: getSampleTier(tierId),
       tick,
       phase,
       observation: {
-        feature_schema_version: FEATURE_SCHEMA_VERSION,
+        feature_schema_version: featureSchemaVersion,
         vector: observation,
       },
       legal_actions: legalActions.map((action, index) => ({
         index,
         action: normalizeAction(action),
+        action_space_version: ACTION_SPACE_VERSION,
         action_schema_version: ACTION_SCHEMA_VERSION,
         action_features: encodeActionFeatures({ engine, actor, action }),
       })),
@@ -283,6 +295,7 @@ export function generateTrainingDataset({
     tiers: [...normalizedTiers],
     episodes_requested: episodes,
     max_ticks: maxTicks,
+    action_space_version: ACTION_SPACE_VERSION,
     episode_count: generatedEpisodes.length,
     sample_count: generatedEpisodes.reduce((sum, episode) => sum + episode.samples.length, 0),
     episodes: generatedEpisodes,

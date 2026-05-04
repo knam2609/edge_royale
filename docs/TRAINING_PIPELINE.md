@@ -2,7 +2,7 @@
 
 ## Goal
 
-Train fair, model-backed ladder tiers (`noob`, `mid`, `top`, `pro`, `goat`) without giving them hidden opponent hand or exact opponent elixir.
+Train fair, model-backed ladder tiers (`noob`, `mid`, `top`, `pro`, `goat`) without giving them hidden opponent hand or exact opponent elixir, and train playable God with a separate hidden-info schema.
 
 The first implementation is offline-first with one automated daily training lane:
 
@@ -11,6 +11,7 @@ The first implementation is offline-first with one automated daily training lane
 - runtime inference uses plain JavaScript matrix math in `src/ai`
 - generated datasets and raw run models live under ignored `artifacts/training/runs/`
 - accepted daily models are copied to stable tracked paths under `artifacts/training/promoted/`
+- local self-play trains a browser-side `legal_action_mlp` from player decisions and a small reward-weighted RL fine-tune
 
 ## Data Shape
 
@@ -22,7 +23,10 @@ Each exported dataset contains:
 - `episodes[]` with seed, tiers, final result, state hash, replay hash, replay actions, and `samples[]`
 - `episodes[].samples[]` with actor, tier, tick, phase, fair observation vector, legal actions, chosen action index, and terminal reward from that actor's perspective
 
-Observation schema: `goat_state_features_v1`
+Observation schemas:
+
+- `goat_state_features_v1` for fair ladder and self models.
+- `god_state_features_v1` for playable God; it appends exact opponent elixir, opponent hand, and opponent deck queue.
 
 The fair observation vector includes:
 
@@ -34,8 +38,9 @@ The fair observation vector includes:
 It intentionally excludes hidden opponent hand and exact opponent elixir.
 
 Action schema: `goat_action_features_v1`
+Action space: `full_snapped_grid_v1`
 
-The action vector describes one legal `PLAY_CARD(cardId, x, y)` candidate. The model scores every legal candidate and chooses the highest-scoring legal action. If no valid neural model is supplied, the tier falls back to its existing heuristic policy.
+The action vector describes one legal `PLAY_CARD(cardId, x, y)` candidate. Troops enumerate every legal deploy grid cell; spells enumerate every snapped arena grid cell. The model scores every legal candidate and chooses the highest-scoring legal action. If no valid neural model is supplied, the tier falls back to its existing heuristic policy.
 
 ## Commands
 
@@ -72,7 +77,7 @@ The shared manifest lives at `artifacts/training/ladder-models.json` by default:
 }
 ```
 
-Valid fair tiers are `noob`, `mid`, `top`, `pro`, and `goat`.
+Valid fair tiers are `noob`, `mid`, `top`, `pro`, and `goat`. The same manifest can also include playable `god`; fair gates ignore God and the God gate handles it separately.
 `mode: "heuristic"` disables model usage for that tier.
 The browser and `bot:bench -- --model-config <path>` only use valid same-tier artifacts; missing, invalid, or mismatched models fall back to heuristic policies.
 
@@ -93,6 +98,8 @@ Model artifacts contain:
 
 Saved-model evaluation is deterministic for a fixed model, seed, and benchmark config. Training records seed/config/hash metadata, but TensorFlow.js weight generation is not treated as a cross-platform bit-for-bit contract.
 
+God artifacts use `training_config.target_tier: "god"` and `feature_schema_version: "god_state_features_v1"`.
+
 ## Promotion Gate
 
 The current gate is pipeline correctness:
@@ -104,6 +111,8 @@ The current gate is pipeline correctness:
 - trained model is compared against heuristic same-tier and adjacent fair tiers before any gameplay promotion
 
 This gate is still about pipeline correctness first. Ladder ordering and stronger promotion thresholds remain follow-up work.
+
+Playable God uses `scripts/compare-god-models.mjs`. Bootstrap accepts a valid deterministic same-tier God model. After bootstrap, the candidate God model must avoid regression versus Goat and score at least `0.5` resolved win rate against the prior God model.
 
 ## Daily Training Automation
 
@@ -126,6 +135,19 @@ LADDER_BENCH_ROUNDS=25
 LADDER_BENCH_MAX_TICKS=6040
 ```
 
+The same workflow also trains a capped God lane:
+
+```bash
+LADDER_TIERS=god
+LADDER_SHARDS=1
+LADDER_EPISODES=50
+LADDER_MAX_TICKS=6040
+LADDER_ITERATIONS=2
+LADDER_EPOCHS=6
+LADDER_BENCH_ROUNDS=25
+LADDER_BENCH_MAX_TICKS=6040
+```
+
 `6040` ticks covers one full match: 180 seconds of regulation, 120 seconds of overtime, and a 40-tick buffer at 20 ticks per second. The reduced `150` episodes per shard keeps the daily workflow under the current 180-minute runtime budget while avoiding the all-draw benchmark signal produced by short 900-tick runs.
 
 After training, `scripts/compare-ladder-models.mjs` benchmarks the candidate manifest against the checked-in manifest with the same seeds and full-match `6040` tick cap. The daily improvement gate passes only when:
@@ -135,6 +157,12 @@ After training, `scripts/compare-ladder-models.mjs` benchmarks the candidate man
 - average win-rate delta is at least `+0.02` after bootstrap
 - no adjacent tier pair regresses by more than `0.05`
 
-When the gate passes, `scripts/promote-ladder-models.mjs` copies accepted models and per-tier summaries to `artifacts/training/promoted/`, writes `artifacts/training/ladder-models.json`, and prepares the PR body. The workflow pushes branch `training/daily-ladder-models` and opens or updates a PR to `main`; it does not auto-merge. If repository settings block Action-created PRs, the workflow leaves the branch pushed and emits a warning instead of failing. Configure `LADDER_MODEL_PR_TOKEN` with pull-request permissions when automatic PR creation is required without changing repository workflow permissions.
+When either fair or God gate passes, `scripts/promote-ladder-models.mjs` copies accepted models and per-tier summaries to `artifacts/training/promoted/`, preserves unchanged manifest entries, writes `artifacts/training/ladder-models.json`, and prepares the PR body. The workflow pushes branch `training/daily-ladder-models` and opens or updates a PR to `main`; it does not auto-merge. If repository settings block Action-created PRs, the workflow leaves the branch pushed and emits a warning instead of failing. Configure `LADDER_MODEL_PR_TOKEN` with pull-request permissions when automatic PR creation is required without changing repository workflow permissions.
 
 The first accepted run can bootstrap from a heuristic baseline if no checked-in models exist. This daily improvement gate is not the strict promotion gate in `docs/BOT_LEVELS.md`; it is a safe automatic refresh gate for candidate model artifacts.
+
+## Local Self Bot Training
+
+Player matches append local public-observation decision samples whenever the player plays a card. Each sample records the legal action candidates, chosen action index, state feature vector, action feature vectors, phase, elixir, hand, tick, and opponent tier context.
+
+`Train Self Bot` fits a deterministic one-layer `legal_action_mlp` from those samples. It then runs a small reward-weighted RL v1 fine-tune from deterministic self rollouts against Top and the highest unlocked fair tier. The RL candidate is accepted only if held-out imitation top-1 accuracy stays within `0.05` of the imitation baseline and benchmark win rate does not regress. Retraining is batched: samples are always collected, but an existing ready self model is not retrained until enough new legal decision samples have accumulated.

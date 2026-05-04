@@ -5,7 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createEnabledLadderModelManifest } from "../src/ai/ladderModelManifest.js";
+import { GOD_FEATURE_SCHEMA_VERSION } from "../src/ai/neuralFeatures.js";
 import { createZeroNeuralPolicyModel } from "../src/ai/neuralModel.js";
+import { compareGodModels } from "../scripts/compare-god-models.mjs";
 import { summarizeComparison } from "../scripts/compare-ladder-models.mjs";
 import { promoteLadderModels } from "../scripts/promote-ladder-models.mjs";
 
@@ -90,6 +92,49 @@ test("daily workflow uses full-match preset for training, eval, bench, and compa
   assert.match(workflow, /LADDER_BENCH_MAX_TICKS:\s*6040/);
   assert.match(workflow, /--rounds 100/);
   assert.match(workflow, /--max-ticks 6040/);
+  assert.match(workflow, /LADDER_TIERS:\s*god/);
+  assert.match(workflow, /LADDER_SHARDS:\s*1/);
+  assert.match(workflow, /LADDER_EPISODES:\s*50/);
+  assert.match(workflow, /compare-god-models\.mjs/);
+});
+
+test("God comparison gate bootstraps valid same-tier God model", async () => {
+  const tmpRoot = await mkdtemp(join(tmpdir(), "edge-royale-god-compare-"));
+  const previousCwd = process.cwd();
+  const candidateModelPath = "run/models/god-model.json";
+  const candidateManifestPath = "run/candidate.json";
+  const baselineManifestPath = "baseline.json";
+  const model = createZeroNeuralPolicyModel({
+    hiddenUnits: 1,
+    seed: 1009,
+    targetTier: "god",
+    featureSchemaVersion: GOD_FEATURE_SCHEMA_VERSION,
+  });
+
+  await mkdir(join(tmpRoot, "run", "models"), { recursive: true });
+  await writeFile(join(tmpRoot, candidateModelPath), `${JSON.stringify(model, null, 2)}\n`, "utf8");
+  await writeFile(
+    join(tmpRoot, candidateManifestPath),
+    `${JSON.stringify(createEnabledLadderModelManifest({ god: candidateModelPath }), null, 2)}\n`,
+    "utf8",
+  );
+  await writeFile(join(tmpRoot, baselineManifestPath), `${JSON.stringify({ version: 1, tiers: {} }, null, 2)}\n`, "utf8");
+
+  try {
+    process.chdir(tmpRoot);
+    const summary = await compareGodModels({
+      baselineManifest: baselineManifestPath,
+      candidateManifest: candidateManifestPath,
+      seed: 1009,
+      rounds: 1,
+      maxTicks: 40,
+      minPriorGodWinRate: 0.5,
+    });
+    assert.equal(summary.bootstrap, true);
+    assert.equal(summary.passed, true);
+  } finally {
+    process.chdir(previousCwd);
+  }
 });
 
 test("promoteLadderModels copies valid tier models to stable tracked paths", async () => {

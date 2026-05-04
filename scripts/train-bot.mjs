@@ -6,7 +6,9 @@ import { runBenchmark } from "../src/ai/benchmark.js";
 import {
   ACTION_SCHEMA_VERSION,
   FEATURE_SCHEMA_VERSION,
+  GOD_FEATURE_SCHEMA_VERSION,
   MODEL_INPUT_SIZE,
+  GOD_MODEL_INPUT_SIZE,
 } from "../src/ai/neuralFeatures.js";
 import { NEURAL_MODEL_KIND, NEURAL_MODEL_VERSION, normalizeNeuralPolicyModel } from "../src/ai/neuralModel.js";
 import { countActionTrainingRows, fillActionTrainingBuffers } from "../src/ai/neuralTraining.js";
@@ -18,6 +20,7 @@ const TIER_MODEL_SHAPES = Object.freeze({
   top: Object.freeze({ hidden1: 32, hidden2: 16 }),
   pro: Object.freeze({ hidden1: 48, hidden2: 24 }),
   goat: Object.freeze({ hidden1: 64, hidden2: 32 }),
+  god: Object.freeze({ hidden1: 72, hidden2: 36 }),
 });
 
 function normalizeTierId(tierId) {
@@ -41,7 +44,18 @@ function getDefaultEvalTiers(targetTier) {
   if (targetTier === "pro") {
     return ["top", "pro", "goat"];
   }
+  if (targetTier === "god") {
+    return ["goat", "god"];
+  }
   return ["noob", "mid", "top"];
+}
+
+function getFeatureSchemaForTarget(targetTier) {
+  return targetTier === "god" ? GOD_FEATURE_SCHEMA_VERSION : FEATURE_SCHEMA_VERSION;
+}
+
+function getInputSizeForTarget(targetTier) {
+  return targetTier === "god" ? GOD_MODEL_INPUT_SIZE : MODEL_INPUT_SIZE;
 }
 
 async function loadTensorflow() {
@@ -129,6 +143,8 @@ function parseArgs(argv) {
     Array.isArray(parsed.evalTiers) && parsed.evalTiers.length > 0 ? parsed.evalTiers : getDefaultEvalTiers(parsed.targetTier);
   parsed.out = parsed.out || `artifacts/training/models/${parsed.targetTier}-model.json`;
   parsed.summaryOut = parsed.summaryOut || `artifacts/training/models/${parsed.targetTier}-training-summary.json`;
+  parsed.featureSchemaVersion = getFeatureSchemaForTarget(parsed.targetTier);
+  parsed.inputSize = getInputSizeForTarget(parsed.targetTier);
 
   return parsed;
 }
@@ -165,7 +181,7 @@ function makeModel(tf, args) {
   const model = tf.sequential();
   model.add(
     tf.layers.dense({
-      inputShape: [MODEL_INPUT_SIZE],
+      inputShape: [args.inputSize],
       units: args.hidden1,
       activation: "relu",
       kernelInitializer: tf.initializers.glorotUniform({ seed: args.seed }),
@@ -210,9 +226,9 @@ function exportModelArtifact(model, args, dataset, rowSummary, iterationSummarie
   return {
     version: NEURAL_MODEL_VERSION,
     kind: NEURAL_MODEL_KIND,
-    feature_schema_version: FEATURE_SCHEMA_VERSION,
+    feature_schema_version: args.featureSchemaVersion,
     action_schema_version: ACTION_SCHEMA_VERSION,
-    input_size: MODEL_INPUT_SIZE,
+    input_size: args.inputSize,
     seed: args.seed,
     dataset_hash: dataset.dataset_hash,
     training_config: {
@@ -241,7 +257,7 @@ function finalizeInputBuffers(tf, dataset, rowSummary, inputs, labels, rowCount)
   return {
     dataset,
     rowSummary,
-    xs: tf.tensor2d(inputs, [rowSummary.rows, MODEL_INPUT_SIZE]),
+    xs: tf.tensor2d(inputs, [rowSummary.rows, dataset.input_size]),
     ys: tf.tensor2d(labels, [rowSummary.rows, 1]),
   };
 }
@@ -267,11 +283,11 @@ async function loadOrGenerateTrainingInput(tf, args) {
       throw new Error("training dataset produced no action rows");
     }
 
-    const inputs = new Float32Array(rowSummary.rows * MODEL_INPUT_SIZE);
+    const inputs = new Float32Array(rowSummary.rows * args.inputSize);
     const labels = new Float32Array(rowSummary.rows);
     const rowCount = fillActionTrainingBuffers(dataset, {
       maxNegativesPerDecision: args.maxNegatives,
-      inputSize: MODEL_INPUT_SIZE,
+      inputSize: args.inputSize,
       inputs,
       labels,
     });
@@ -283,6 +299,7 @@ async function loadOrGenerateTrainingInput(tf, args) {
         episode_count: dataset.episode_count,
         sample_count: dataset.sample_count,
         tiers: dataset.tiers,
+        input_size: args.inputSize,
       },
       rowSummary,
       inputs,
@@ -314,7 +331,7 @@ async function loadOrGenerateTrainingInput(tf, args) {
     rowSummary = addRowSummary(rowSummary, sourceRowSummary);
   }
 
-  const inputs = new Float32Array(rowSummary.rows * MODEL_INPUT_SIZE);
+  const inputs = new Float32Array(rowSummary.rows * args.inputSize);
   const labels = new Float32Array(rowSummary.rows);
   let rowCount = 0;
 
@@ -326,7 +343,7 @@ async function loadOrGenerateTrainingInput(tf, args) {
     const loaded = await loadDatasetFile(source.path);
     rowCount = fillActionTrainingBuffers(loaded.dataset, {
       maxNegativesPerDecision: args.maxNegatives,
-      inputSize: MODEL_INPUT_SIZE,
+      inputSize: args.inputSize,
       inputs,
       labels,
       rowOffset: rowCount,
@@ -343,6 +360,7 @@ async function loadOrGenerateTrainingInput(tf, args) {
       episode_count: datasetSources.reduce((sum, source) => sum + source.episode_count, 0),
       sample_count: datasetSources.reduce((sum, source) => sum + source.sample_count, 0),
       tiers: collectDatasetTiers(datasetSources),
+      input_size: args.inputSize,
       dataset_sources: datasetSources.map((source) => ({
         path: source.path,
         dataset_hash: source.dataset_hash,
