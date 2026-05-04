@@ -121,7 +121,11 @@ async function loadModelsFromManifest(manifestPath) {
     rawModelsByTier[tierId] = rawModelResult;
   }
 
-  const loaded = normalizeLoadedLadderModelsByTier({ manifest, rawModelsByTier });
+  const loaded = normalizeLoadedLadderModelsByTier({
+    manifest,
+    rawModelsByTier,
+    tiers: FAIR_LADDER_MODEL_TIERS,
+  });
   warnings.push(...loaded.warnings);
 
   return {

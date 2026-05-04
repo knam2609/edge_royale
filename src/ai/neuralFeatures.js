@@ -3,13 +3,16 @@ import { MATCH_CONFIG, getMatchPhase } from "../sim/config.js";
 import { getTowerStats } from "../sim/stats.js";
 
 export const FEATURE_SCHEMA_VERSION = "goat_state_features_v1";
+export const GOD_FEATURE_SCHEMA_VERSION = "god_state_features_v1";
 export const ACTION_SCHEMA_VERSION = "goat_action_features_v1";
 export const CARD_FEATURE_ORDER = Object.freeze([...DEFAULT_DECK]);
 export const PHASE_FEATURE_ORDER = Object.freeze(["normal", "double", "overtime"]);
 
 export const STATE_FEATURE_SIZE = 74;
+export const GOD_STATE_FEATURE_SIZE = STATE_FEATURE_SIZE + 17;
 export const ACTION_FEATURE_SIZE = 17;
 export const MODEL_INPUT_SIZE = STATE_FEATURE_SIZE + ACTION_FEATURE_SIZE;
+export const GOD_MODEL_INPUT_SIZE = GOD_STATE_FEATURE_SIZE + ACTION_FEATURE_SIZE;
 
 const LANE_KEYS = Object.freeze(["left", "center", "right"]);
 const TROOP_SUMMARY_TEAMS = Object.freeze(["own", "enemy"]);
@@ -200,6 +203,43 @@ export function encodeStateFeatures({ engine, actor = "red" }) {
   return features;
 }
 
+export function encodeGodStateFeatures({ engine, actor = "red" }) {
+  const features = encodeStateFeatures({ engine, actor });
+  const { enemy } = getTeam(actor);
+
+  features.push(norm(engine.state.elixir[enemy]?.elixir ?? 0, 10));
+  pushCardPresence(features, engine.getHand(enemy));
+  pushDeckPositions(features, engine.getDeckQueue(enemy));
+
+  if (features.length !== GOD_STATE_FEATURE_SIZE) {
+    throw new Error(`god state feature size mismatch: expected ${GOD_STATE_FEATURE_SIZE}, got ${features.length}`);
+  }
+
+  return features;
+}
+
+export function getStateFeatureSizeForSchema(featureSchemaVersion = FEATURE_SCHEMA_VERSION) {
+  if (featureSchemaVersion === GOD_FEATURE_SCHEMA_VERSION) {
+    return GOD_STATE_FEATURE_SIZE;
+  }
+  return STATE_FEATURE_SIZE;
+}
+
+export function getModelInputSizeForFeatureSchema(featureSchemaVersion = FEATURE_SCHEMA_VERSION) {
+  return getStateFeatureSizeForSchema(featureSchemaVersion) + ACTION_FEATURE_SIZE;
+}
+
+export function encodeStateFeaturesForSchema({
+  engine,
+  actor = "red",
+  featureSchemaVersion = FEATURE_SCHEMA_VERSION,
+}) {
+  if (featureSchemaVersion === GOD_FEATURE_SCHEMA_VERSION) {
+    return encodeGodStateFeatures({ engine, actor });
+  }
+  return encodeStateFeatures({ engine, actor });
+}
+
 export function encodeActionFeatures({ engine, actor = "red", action }) {
   const state = engine.state;
   const card = getCard(action?.cardId);
@@ -223,6 +263,14 @@ export function encodeActionFeatures({ engine, actor = "red", action }) {
   return features;
 }
 
-export function encodeModelInput({ engine, actor = "red", action }) {
-  return [...encodeStateFeatures({ engine, actor }), ...encodeActionFeatures({ engine, actor, action })];
+export function encodeModelInput({
+  engine,
+  actor = "red",
+  action,
+  featureSchemaVersion = FEATURE_SCHEMA_VERSION,
+}) {
+  return [
+    ...encodeStateFeaturesForSchema({ engine, actor, featureSchemaVersion }),
+    ...encodeActionFeatures({ engine, actor, action }),
+  ];
 }

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { enumerateLegalCardActions, evaluateSpellAction, rollDecisionDelayTicks, selectBotAction } from "../src/ai/ladderRuntime.js";
-import { trainSelfModel } from "../src/ai/training.js";
+import { createDecisionSample, trainSelfModel } from "../src/ai/training.js";
 import { STATE_FEATURE_SIZE } from "../src/ai/neuralFeatures.js";
 import { createZeroNeuralPolicyModel } from "../src/ai/neuralModel.js";
 import { FIREBALL_CONFIG } from "../src/sim/config.js";
@@ -69,7 +69,9 @@ test("enumerateLegalCardActions includes the full front row on your side", () =>
   const spellActions = actions.filter((action) => action.cardId === "fireball" || action.cardId === "arrows");
 
   assert.ok(troopActions.length > 0);
-  assert.ok(spellActions.length > 0);
+  assert.equal(spellActions.length, 18 * 32 * 2);
+  assert.ok(spellActions.some((action) => action.cardId === "fireball" && action.x === 0.5 && action.y === 0.5));
+  assert.ok(spellActions.some((action) => action.cardId === "arrows" && action.x === 17.5 && action.y === 31.5));
   for (const action of troopActions) {
     assert.ok(action.y <= 14.5, `red troop action crossed river: y=${action.y}`);
   }
@@ -168,19 +170,16 @@ test("pro/goat/god tiers produce legal outputs", () => {
 
 test("self bot follows trained card preference when available", () => {
   const engine = makeEngine(["knight", "giant", "arrows", "fireball"]);
-  const model = trainSelfModel(
-    [
-      { phase: "normal", elixir: 4, card_id: "knight", hand: ["knight", "giant"], tick: 1 },
-      { phase: "normal", elixir: 4, card_id: "knight", hand: ["knight", "giant"], tick: 2 },
-      { phase: "normal", elixir: 4, card_id: "giant", hand: ["knight", "giant"], tick: 3 },
-    ],
-    { minSamples: 1 },
-  );
-
   const legalActions = [
     { type: "PLAY_CARD", cardId: "giant", x: 9, y: 12 },
     { type: "PLAY_CARD", cardId: "knight", x: 9, y: 12 },
   ];
+  const samples = [
+    createDecisionSample({ engine, actor: "red", legalActions, chosenAction: legalActions[1], tick: 1 }),
+    createDecisionSample({ engine, actor: "red", legalActions, chosenAction: legalActions[1], tick: 2 }),
+    createDecisionSample({ engine, actor: "red", legalActions, chosenAction: legalActions[0], tick: 3 }),
+  ];
+  const model = trainSelfModel(samples, { minSamples: 1 });
 
   const action = selectBotAction({
     tierId: "self",

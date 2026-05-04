@@ -53,12 +53,14 @@ Controls:
 Ladder + training:
 - Select bot difficulty from the `Bot Level` dropdown (locked levels show as disabled).
 - Beat a tier to unlock the next (`Noob` -> `Mid-ladder Menace` -> `Top Ladder`).
-- Click `Train Self Bot` to fit the current local self-play placeholder model from logged player actions.
+- Click `Train Self Bot` to fit the local self-play legal-action MLP from logged player decisions, then run a small reward-weighted RL fine-tune.
 - Self-play unlock rule is enforced from profile data (`100` matches and `3` wins vs Top).
 
 Automation hooks exposed in browser:
 - `window.render_game_to_text()`
 - `window.advanceTime(ms)`
+
+Self bot training stores public-observation decision samples locally: legal action candidates, chosen action index, action features, and match reward. The self model retrains only when enough legal decision samples have accumulated, and RL output is accepted only when held-out imitation similarity and benchmark win rate do not regress.
 
 ## Offline Ladder training
 
@@ -66,7 +68,7 @@ Automation hooks exposed in browser:
 bash scripts/train-bot-ladder.sh
 ```
 
-By default the script writes a timestamped run under `artifacts/training/runs/`, exports shard files for each fair ladder tier (`noob`, `mid`, `top`, `pro`, `goat`), trains one saved model per tier, and benchmarks each saved model.
+By default the script writes a timestamped run under `artifacts/training/runs/`, exports shard files for each requested tier, trains one saved model per tier, and benchmarks each saved model. Fair ladder tiers are `noob`, `mid`, `top`, `pro`, and `goat`; `god` uses a hidden-info feature schema for the playable boss model.
 
 Customize a run with env vars when needed:
 
@@ -76,7 +78,7 @@ LADDER_RUN_NAME=ladder-v2 LADDER_SHARDS=4 LADDER_EPISODES=500 LADDER_BENCH_ROUND
 
 Generated training artifacts are ignored by git. `data:export` still writes compact JSON shard files by default, and `train:bot` trains a specific fair ladder tier with `--target-tier <tier>`.
 
-Fair ladder tiers use deterministic plain-JS inference when a valid same-tier model artifact is supplied and fall back to their heuristic policies otherwise.
+Fair ladder tiers and playable God use deterministic plain-JS inference when a valid same-tier model artifact is supplied and fall back to their heuristic policies otherwise.
 `train:ladder` also writes `artifacts/training/ladder-models.json`, the local manifest that points each trained fair tier at a saved model.
 The browser loads that manifest on startup; missing, invalid, or mismatched model entries fall back to heuristics.
 
@@ -88,7 +90,7 @@ npm run bot:bench -- --model-config artifacts/training/ladder-models.json
 
 ## Daily ladder training
 
-GitHub Actions runs `.github/workflows/daily-ladder-training.yml` every day at `17:37 UTC` and can also be started manually. The workflow runs tests, trains all fair ladder tiers at the balanced large preset, uploads the full ignored run directory as an Actions artifact, compares the candidate models against the checked-in manifest, and opens or updates a manual-review PR only when the candidate passes the daily improvement gate. If repository settings block Action-created PRs, the workflow still pushes `training/daily-ladder-models` and reports a warning.
+GitHub Actions runs `.github/workflows/daily-ladder-training.yml` every day at `17:37 UTC` and can also be started manually. The workflow runs tests, trains all fair ladder tiers at the balanced large preset, trains a capped God model lane, uploads the full ignored run directory as an Actions artifact, compares fair candidates and God candidates against separate gates, and opens or updates a manual-review PR when either gate passes. If repository settings block Action-created PRs, the workflow still pushes `training/daily-ladder-models` and reports a warning.
 
 The workflow commits only promoted runtime files:
 

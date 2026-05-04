@@ -2,9 +2,11 @@ import { ARROWS_CONFIG, FIREBALL_CONFIG, getMatchPhase } from "../sim/config.js"
 import { getCard } from "../sim/cards.js";
 import { snapPositionToGrid } from "../sim/map.js";
 import { buildTroopPlacementCandidates, getTroopPlacementStatus } from "../sim/placement.js";
-import { selectCardFromModel } from "./training.js";
+import { selectActionFromSelfModel, selectCardFromModel } from "./training.js";
 import { getSpellDamageAgainstTarget } from "./spellHeuristics.js";
 import { getNeuralModelTargetTier, selectActionFromNeuralModel } from "./neuralModel.js";
+
+export const ACTION_SPACE_VERSION = "full_snapped_grid_v1";
 
 const BOT_TIER_CONFIG = Object.freeze({
   noob: Object.freeze({
@@ -50,10 +52,19 @@ const BOT_TIER_CONFIG = Object.freeze({
   god: Object.freeze({
     id: "god",
     label: "God",
-    description: "Oracle benchmark tier with near-perfect reaction.",
+    description: "Playable hidden-info model boss with near-perfect reaction.",
     min_delay_ticks: 1,
     max_delay_ticks: 3,
     pass_chance: 0,
+  }),
+  god_oracle: Object.freeze({
+    id: "god_oracle",
+    label: "God Oracle",
+    description: "Internal hidden-info teacher and benchmark tier.",
+    min_delay_ticks: 1,
+    max_delay_ticks: 3,
+    pass_chance: 0,
+    internal: true,
   }),
   self: Object.freeze({
     id: "self",
@@ -65,7 +76,7 @@ const BOT_TIER_CONFIG = Object.freeze({
   }),
 });
 
-export const BOT_TIERS = Object.freeze(Object.values(BOT_TIER_CONFIG));
+export const BOT_TIERS = Object.freeze(Object.values(BOT_TIER_CONFIG).filter((tier) => !tier.internal));
 
 const TROOP_BASE_SCORE = Object.freeze({
   giant: 165,
@@ -191,62 +202,33 @@ function buildTroopPlacements(state, actor) {
   });
 }
 
-function buildSpellTargets(state, actor) {
-  const { enemy } = getTeam(actor);
-  const enemies = state.entities.filter((entity) => entity.team === enemy && entity.hp > 0);
-
-  const aliveEnemyTowers = enemies.filter((entity) => entity.entity_type === "tower");
-  const enemyTroops = enemies.filter((entity) => entity.entity_type === "troop");
-
-  const ownTowerY = actor === "blue" ? state.arena.maxY : state.arena.minY;
-  enemyTroops.sort((a, b) => {
-    const da = Math.abs(a.y - ownTowerY);
-    const db = Math.abs(b.y - ownTowerY);
-    if (Math.abs(da - db) > EPSILON) {
-      return da - db;
-    }
-    if (a.hp !== b.hp) {
-      return b.hp - a.hp;
-    }
-    return a.id.localeCompare(b.id);
-  });
-
-  const targetPositions = [];
-
-  for (const troop of enemyTroops.slice(0, 3)) {
-    targetPositions.push({ x: troop.x, y: troop.y });
-  }
-
-  for (const tower of aliveEnemyTowers) {
-    targetPositions.push({ x: tower.x, y: tower.y });
-  }
-
-  const centerX = (state.arena.minX + state.arena.maxX) / 2;
-  const midY = getMidY(state.arena);
-  const pressureY = actor === "blue" ? midY - 1.5 : midY + 1.5;
-  targetPositions.push({ x: centerX, y: pressureY });
-
+function buildFullArenaSpellTargets(state) {
+  const { arena } = state;
+  const step = Math.max(0.1, Number(arena.grid?.step) || 1);
   const deduped = new Set();
   const result = [];
-  for (const position of targetPositions) {
-    const snapped = snapPositionToGrid(
-      {
-        x: clamp(position.x, state.arena.minX, state.arena.maxX),
-        y: clamp(position.y, state.arena.minY, state.arena.maxY),
-      },
-      state.arena,
-    );
-    const x = roundPlacement(snapped.x);
-    const y = roundPlacement(snapped.y);
-    const key = `${x.toFixed(2)}|${y.toFixed(2)}`;
-    if (deduped.has(key)) {
-      continue;
+
+  for (let x = arena.minX; x <= arena.maxX + EPSILON; x += step) {
+    for (let y = arena.minY; y <= arena.maxY + EPSILON; y += step) {
+      const snapped = snapPositionToGrid(
+        {
+          x: clamp(x, arena.minX, arena.maxX),
+          y: clamp(y, arena.minY, arena.maxY),
+        },
+        arena,
+      );
+      const sx = roundPlacement(snapped.x);
+      const sy = roundPlacement(snapped.y);
+      const key = `${sx.toFixed(2)}|${sy.toFixed(2)}`;
+      if (deduped.has(key)) {
+        continue;
+      }
+      deduped.add(key);
+      result.push({ x: sx, y: sy });
     }
-    deduped.add(key);
-    result.push({ x, y });
   }
 
-  return result;
+  return result.sort((a, b) => (a.x !== b.x ? a.x - b.x : a.y - b.y));
 }
 
 function isLegalTroopPlacement(actor, state, placement) {
@@ -260,6 +242,10 @@ function isLegalTroopPlacement(actor, state, placement) {
 
 function cardCost(action) {
   return getCard(action.cardId)?.cost ?? 0;
+}
+
+function actionSortKey(action) {
+  return `${action.cardId}|${Number(action.x).toFixed(2)}|${Number(action.y).toFixed(2)}`;
 }
 
 function getTierStrategy(tierId) {
@@ -287,12 +273,12 @@ export function enumerateLegalCardActions({ engine, actor = "red" }) {
       continue;
     }
 
-    for (const target of buildSpellTargets(engine.state, actor)) {
+    for (const target of buildFullArenaSpellTargets(engine.state)) {
       actions.push({ type: "PLAY_CARD", cardId, x: target.x, y: target.y });
     }
   }
 
-  return actions;
+  return actions.sort((left, right) => actionSortKey(left).localeCompare(actionSortKey(right)));
 }
 
 function getEnemiesInRadius(state, actor, x, y, radius) {
@@ -896,12 +882,25 @@ function chooseGoatAction({ legalActions, state, actor, phase, rng, trainedModel
   };
 }
 
-function chooseGodAction({ legalActions, state, actor }) {
+function chooseGodAction({ legalActions, state, actor, trainedModel = null, engine = null, useModel = true }) {
   if (legalActions.length === 0) {
     return { type: "PASS" };
   }
 
   const phase = getMatchPhase({ tick: state.tick, isOvertime: state.isOvertime });
+  if (useModel) {
+    const neuralAction = selectTierModelAction({
+      trainedModel,
+      tierId: "god",
+      engine,
+      actor,
+      legalActions,
+    });
+    if (neuralAction) {
+      return neuralAction;
+    }
+  }
+
   const heavyCommit = chooseHeavyCommit({
     legalActions,
     state,
@@ -935,9 +934,18 @@ function chooseGodAction({ legalActions, state, actor }) {
   return best.action;
 }
 
-function chooseSelfAction({ legalActions, state, actor, phase, hand, rng, trainedModel }) {
+function chooseSelfAction({ legalActions, state, actor, phase, hand, rng, trainedModel, engine }) {
   if (legalActions.length === 0) {
     return { type: "PASS" };
+  }
+
+  const modelAction = selectActionFromSelfModel(trainedModel, {
+    engine,
+    actor,
+    legalActions,
+  });
+  if (modelAction && rng() > 0.1) {
+    return modelAction;
   }
 
   const preferredCard = selectCardFromModel(trainedModel, {
@@ -1017,8 +1025,12 @@ export function selectBotAction({
   }
 
   if (normalizedTier === "god") {
-    return chooseGodAction({ legalActions, state, actor });
+    return chooseGodAction({ legalActions, state, actor, trainedModel, engine, useModel: true });
   }
 
-  return chooseSelfAction({ legalActions, state, actor, phase, hand, rng, trainedModel });
+  if (normalizedTier === "god_oracle") {
+    return chooseGodAction({ legalActions, state, actor, trainedModel: null, engine, useModel: false });
+  }
+
+  return chooseSelfAction({ legalActions, state, actor, phase, hand, rng, trainedModel, engine });
 }

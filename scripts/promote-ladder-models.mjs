@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import {
   DEFAULT_LADDER_MODEL_MANIFEST_PATH,
   FAIR_LADDER_MODEL_TIERS,
+  PLAYABLE_MODEL_TIERS,
   createEnabledLadderModelManifest,
   getConfiguredLadderModelPath,
   normalizeLadderModelManifest,
@@ -18,7 +19,9 @@ function parseArgs(argv) {
   const parsed = {
     candidateManifest: null,
     comparisonSummary: null,
+    godComparisonSummary: null,
     outDir: DEFAULT_PROMOTED_DIR,
+    existingManifest: DEFAULT_LADDER_MODEL_MANIFEST_PATH,
     manifestOut: DEFAULT_LADDER_MODEL_MANIFEST_PATH,
     summaryOut: DEFAULT_SUMMARY_OUT,
     prBodyOut: null,
@@ -30,7 +33,9 @@ function parseArgs(argv) {
     const arg = argv[i];
     if (arg === "--candidate-manifest" && argv[i + 1]) parsed.candidateManifest = argv[++i];
     else if (arg === "--comparison-summary" && argv[i + 1]) parsed.comparisonSummary = argv[++i];
+    else if (arg === "--god-comparison-summary" && argv[i + 1]) parsed.godComparisonSummary = argv[++i];
     else if (arg === "--out-dir" && argv[i + 1]) parsed.outDir = argv[++i];
+    else if (arg === "--existing-manifest" && argv[i + 1]) parsed.existingManifest = argv[++i];
     else if (arg === "--manifest-out" && argv[i + 1]) parsed.manifestOut = argv[++i];
     else if (arg === "--summary-out" && argv[i + 1]) parsed.summaryOut = argv[++i];
     else if (arg === "--pr-body-out" && argv[i + 1]) parsed.prBodyOut = argv[++i];
@@ -77,6 +82,7 @@ function buildPrBody({ promoted, comparison, promotedAt }) {
     `Gate passed: ${comparison?.passed === true ? "true" : "unknown"}`,
     `Average delta: ${comparison?.gate?.metrics?.average_delta ?? "unknown"}`,
     `Worst adjacent delta: ${comparison?.gate?.metrics?.worst_adjacent_delta ?? "unknown"}`,
+    `God gate passed: ${promoted.god_gate_passed ?? "unknown"}`,
     "",
     "Promoted tiers:",
     ...promoted.tiers.map((tier) => `- ${tier.tier_id}: ${tier.model_path}`),
@@ -96,11 +102,41 @@ export async function promoteLadderModels(args) {
   const rawManifest = await readJson(args.candidateManifest, cwd);
   const manifest = normalizeLadderModelManifest(rawManifest);
   const comparison = args.comparisonSummary ? await readJson(args.comparisonSummary, cwd) : null;
+  const godComparison = args.godComparisonSummary ? await readJson(args.godComparisonSummary, cwd) : null;
+  let existingManifest = { version: 1, tiers: {} };
+  try {
+    existingManifest = normalizeLadderModelManifest(await readJson(args.existingManifest, cwd));
+  } catch {
+    existingManifest = { version: 1, tiers: {} };
+  }
   const modelsByTier = {};
+  for (const tierId of PLAYABLE_MODEL_TIERS) {
+    const existingPath = getConfiguredLadderModelPath(existingManifest, tierId);
+    if (existingPath) {
+      modelsByTier[tierId] = existingPath;
+    }
+  }
   const tiers = [];
   const warnings = [...manifest.warnings];
+  const acceptedTierSet = new Set();
 
-  for (const tierId of FAIR_LADDER_MODEL_TIERS) {
+  if (!comparison) {
+    for (const tierId of FAIR_LADDER_MODEL_TIERS) {
+      acceptedTierSet.add(tierId);
+    }
+  } else if (comparison.passed === true) {
+    for (const tierId of FAIR_LADDER_MODEL_TIERS) {
+      acceptedTierSet.add(tierId);
+    }
+  }
+  if (godComparison?.passed === true) {
+    acceptedTierSet.add("god");
+  }
+
+  for (const tierId of PLAYABLE_MODEL_TIERS) {
+    if (!acceptedTierSet.has(tierId)) {
+      continue;
+    }
     const modelPath = getConfiguredLadderModelPath(manifest, tierId);
     if (!modelPath) {
       continue;
@@ -152,8 +188,11 @@ export async function promoteLadderModels(args) {
     run_root: args.runRoot ?? null,
     candidate_manifest_path: args.candidateManifest,
     comparison_summary_path: args.comparisonSummary ?? null,
+    god_comparison_summary_path: args.godComparisonSummary ?? null,
     gate_passed: comparison?.passed ?? null,
+    god_gate_passed: godComparison?.passed ?? null,
     gate_metrics: comparison?.gate?.metrics ?? null,
+    god_gate: godComparison?.gate ?? null,
     tiers,
     warnings,
   };

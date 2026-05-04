@@ -7,6 +7,7 @@ import {
   normalizeLadderModelManifest,
   normalizeLoadedLadderModelsByTier,
 } from "../src/ai/ladderModelManifest.js";
+import { GOD_FEATURE_SCHEMA_VERSION } from "../src/ai/neuralFeatures.js";
 import { createZeroNeuralPolicyModel } from "../src/ai/neuralModel.js";
 
 test("ladder model manifest accepts valid per-tier model config", () => {
@@ -36,6 +37,10 @@ test("ladder model manifest rejects invalid tier, mode, and path shapes", () => 
         mode: "model",
         model_path: "artifacts/god.json",
       },
+      wizard: {
+        mode: "model",
+        model_path: "artifacts/wizard.json",
+      },
       noob: {
         mode: "banana",
         model_path: "artifacts/noob.json",
@@ -51,13 +56,35 @@ test("ladder model manifest rejects invalid tier, mode, and path shapes", () => 
     },
   });
 
-  assert.equal(getConfiguredLadderModelPath(manifest, "god"), null);
+  assert.equal(getConfiguredLadderModelPath(manifest, "god"), "artifacts/god.json");
   assert.equal(getConfiguredLadderModelPath(manifest, "noob"), null);
   assert.equal(getConfiguredLadderModelPath(manifest, "mid"), null);
   assert.equal(getConfiguredLadderModelPath(manifest, "top"), null);
-  assert.ok(manifest.warnings.some((warning) => warning.includes("unsupported tier: god")));
+  assert.ok(manifest.warnings.some((warning) => warning.includes("unsupported tier: wizard")));
   assert.ok(manifest.warnings.some((warning) => warning.includes("tier noob has invalid ladder model mode")));
   assert.ok(manifest.warnings.some((warning) => warning.includes("tier mid has invalid model_path")));
+});
+
+test("loaded ladder models accept valid same-tier God artifact", () => {
+  const manifest = createEnabledLadderModelManifest({
+    god: "artifacts/training/runs/smoke/models/god-model.json",
+  });
+  const model = createZeroNeuralPolicyModel({
+    hiddenUnits: 1,
+    seed: 1009,
+    targetTier: "god",
+    featureSchemaVersion: GOD_FEATURE_SCHEMA_VERSION,
+  });
+
+  const loaded = normalizeLoadedLadderModelsByTier({
+    manifest,
+    rawModelsByTier: {
+      god: model,
+    },
+  });
+
+  assert.equal(loaded.warnings.length, 0);
+  assert.equal(loaded.modelsByTier.god.training_config.target_tier, "god");
 });
 
 test("loaded ladder models require same-tier artifact metadata", () => {

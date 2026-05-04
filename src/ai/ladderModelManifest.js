@@ -3,6 +3,7 @@ import { getNeuralModelTargetTier, normalizeNeuralPolicyModel } from "./neuralMo
 export const LADDER_MODEL_MANIFEST_VERSION = 1;
 export const DEFAULT_LADDER_MODEL_MANIFEST_PATH = "artifacts/training/ladder-models.json";
 export const FAIR_LADDER_MODEL_TIERS = Object.freeze(["noob", "mid", "top", "pro", "goat"]);
+export const PLAYABLE_MODEL_TIERS = Object.freeze([...FAIR_LADDER_MODEL_TIERS, "god"]);
 
 const VALID_MODES = Object.freeze(new Set(["heuristic", "model"]));
 
@@ -51,16 +52,16 @@ export function normalizeLadderModelManifest(rawManifest) {
   }
 
   const rawTiers = isObject(rawManifest.tiers) ? rawManifest.tiers : {};
-  const fairTierSet = new Set(FAIR_LADDER_MODEL_TIERS);
+  const playableTierSet = new Set(PLAYABLE_MODEL_TIERS);
   const tiers = {};
 
   for (const tierId of Object.keys(rawTiers)) {
-    if (!fairTierSet.has(tierId)) {
+    if (!playableTierSet.has(tierId)) {
       warnings.push(`ignoring ladder model config for unsupported tier: ${tierId}`);
     }
   }
 
-  for (const tierId of FAIR_LADDER_MODEL_TIERS) {
+  for (const tierId of PLAYABLE_MODEL_TIERS) {
     const entry = rawTiers[tierId];
     if (!isObject(entry)) {
       continue;
@@ -101,12 +102,20 @@ export function getConfiguredLadderModelPath(manifest, tierId) {
   return entry?.mode === "model" ? entry.model_path : null;
 }
 
-export function normalizeLoadedLadderModelsByTier({ manifest, rawModelsByTier = {} } = {}) {
+export function normalizeLoadedLadderModelsByTier({
+  manifest,
+  rawModelsByTier = {},
+  tiers = PLAYABLE_MODEL_TIERS,
+} = {}) {
   const normalizedManifest = normalizeLadderModelManifest(manifest);
   const warnings = [...normalizedManifest.warnings];
   const modelsByTier = {};
 
-  for (const tierId of FAIR_LADDER_MODEL_TIERS) {
+  const tierSet = new Set(Array.isArray(tiers) && tiers.length > 0 ? tiers : PLAYABLE_MODEL_TIERS);
+  for (const tierId of PLAYABLE_MODEL_TIERS) {
+    if (!tierSet.has(tierId)) {
+      continue;
+    }
     const modelPath = getConfiguredLadderModelPath(normalizedManifest, tierId);
     if (!modelPath) {
       continue;
@@ -136,7 +145,7 @@ export function normalizeLoadedLadderModelsByTier({ manifest, rawModelsByTier = 
 
 export function createEnabledLadderModelManifest(modelsByTier = {}) {
   const tiers = {};
-  for (const tierId of FAIR_LADDER_MODEL_TIERS) {
+  for (const tierId of PLAYABLE_MODEL_TIERS) {
     const modelPath = normalizeManifestPath(modelsByTier[tierId]);
     if (modelPath) {
       tiers[tierId] = {

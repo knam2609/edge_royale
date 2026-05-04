@@ -16,7 +16,7 @@ import {
 } from "../ai/ladderRuntime.js";
 import {
   DEFAULT_LADDER_MODEL_MANIFEST_PATH,
-  FAIR_LADDER_MODEL_TIERS,
+  PLAYABLE_MODEL_TIERS,
   getConfiguredLadderModelPath,
   normalizeLadderModelManifest,
   normalizeLoadedLadderModelsByTier,
@@ -32,10 +32,11 @@ import {
   appendSamples,
   createDecisionSample,
   createEmptyTrainingStore,
+  getSelfTrainingStatus,
   normalizeTrainingStore,
   summarizeTrainingStore,
-  trainSelfModel,
 } from "../ai/training.js";
+import { trainSelfModelWithRl } from "../ai/selfTraining.js";
 import {
   computePortraitBattleLayout,
   findHandSlotHit as findHandSlotHitForLayout,
@@ -71,8 +72,8 @@ const PLACEMENT_TILE_ROWS = Object.freeze(buildPlacementAxis(ARENA_SNAP_MIN.y, A
 
 const MAX_ELIXIR = 10;
 const PROFILE_STORAGE_KEY = "edge_royale_profile_v1";
-const TRAINING_STORAGE_KEY = "edge_royale_training_data_v1";
-const SELF_MODEL_STORAGE_KEY = "edge_royale_self_model_v1";
+const TRAINING_STORAGE_KEY = "edge_royale_training_data_v2";
+const SELF_MODEL_STORAGE_KEY = "edge_royale_self_model_v2";
 const HAND_SLOTS = 4;
 const DRAG_START_DISTANCE = 8;
 const MAX_TRANSIENT_EFFECTS = 96;
@@ -261,6 +262,9 @@ function getTierLabel(tierId) {
 }
 
 function getOpponentModelSource(tierId = appState.selectedBotTier) {
+  if (tierId === "self") {
+    return appState.selfModel?.ready ? "model" : "heuristic";
+  }
   return appState.ladderModelsByTier[tierId] ? "model" : "heuristic";
 }
 
@@ -385,7 +389,7 @@ async function hydrateLadderModels() {
   const fetchWarnings = [];
 
   await Promise.all(
-    FAIR_LADDER_MODEL_TIERS.map(async (tierId) => {
+    PLAYABLE_MODEL_TIERS.map(async (tierId) => {
       const modelPath = getConfiguredLadderModelPath(manifest, tierId);
       if (!modelPath) {
         return;
@@ -949,26 +953,26 @@ function queuePlayerCardPlay(worldPosition, { cardIndex = appState.selectedCardI
     return false;
   }
 
-  const currentElixir = appState.engine.state.elixir.blue.elixir;
   const nextTick = appState.engine.state.tick + 1;
-  appState.pendingActions.push({
+  const action = {
     tick: nextTick,
     type: "PLAY_CARD",
     actor: "blue",
     cardId,
     x: placementStatus.position.x,
     y: placementStatus.position.y,
-  });
+  };
+  appState.pendingActions.push(action);
   appState.selectedCardIndex = cardIndex;
 
   const sample = createDecisionSample({
-    phase: getMatchPhase({
-      tick: appState.engine.state.tick,
-      isOvertime: appState.engine.state.isOvertime,
+    engine: appState.engine,
+    actor: "blue",
+    legalActions: enumerateLegalCardActions({
+      engine: appState.engine,
+      actor: "blue",
     }),
-    elixir: currentElixir,
-    hand: appState.engine.getHand("blue"),
-    cardId,
+    chosenAction: action,
     tick: nextTick,
     sourceTier: appState.selectedBotTier,
   });
@@ -1030,12 +1034,17 @@ function formatWinnerStatus(result) {
   return `${who} (${reason}). Crowns ${score}, tower HP ${hp}.`;
 }
 
-function appendMatchTrainingSamples() {
+function appendMatchTrainingSamples(matchResult) {
   if (appState.pendingTrainingSamples.length === 0) {
     return;
   }
 
-  appState.trainingStore = appendSamples(appState.trainingStore, appState.pendingTrainingSamples);
+  const reward = matchResult?.winner === "blue" ? 1 : matchResult?.winner === "red" ? -1 : 0;
+  const rewardedSamples = appState.pendingTrainingSamples.map((sample) => ({
+    ...sample,
+    reward,
+  }));
+  appState.trainingStore = appendSamples(appState.trainingStore, rewardedSamples);
   persistTrainingStore();
   appState.pendingTrainingSamples = [];
 }
@@ -1045,7 +1054,7 @@ function applyMatchProgression(matchResult) {
     return [];
   }
 
-  appendMatchTrainingSamples();
+  appendMatchTrainingSamples(matchResult);
 
   const progression = recordMatch(appState.profile, {
     opponentTier: appState.selectedBotTier,
@@ -3068,14 +3077,56 @@ botTierSelect.addEventListener("change", () => {
   }
 });
 
-trainBtn.addEventListener("click", () => {
-  const model = trainSelfModel(appState.trainingStore.samples);
+function yieldToBrowser() {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, 0);
+  });
+}
+
+trainBtn.addEventListener("click", async () => {
+  const trainingStatus = getSelfTrainingStatus(appState.trainingStore.samples, {
+    currentModel: appState.selfModel,
+  });
+  if (!trainingStatus.ready_to_train) {
+    refreshProfileSummary();
+    if (trainingStatus.reason === "not_enough_new_samples") {
+      const remaining = Math.max(
+        0,
+        trainingStatus.min_new_samples_required - trainingStatus.new_sample_count,
+      );
+      appState.statusMessage = `Need ${remaining} new legal decision samples before retraining self model.`;
+      return;
+    }
+
+    const remaining = Math.max(
+      0,
+      trainingStatus.min_samples_required - trainingStatus.legal_sample_count,
+    );
+    appState.statusMessage = `Need ${remaining} more legal decision samples before self model is ready.`;
+    return;
+  }
+
+  trainBtn.disabled = true;
+  appState.statusMessage = "Training self model in background...";
+  refreshProfileSummary();
+  await yieldToBrowser();
+
+  let result;
+  try {
+    result = trainSelfModelWithRl(appState.trainingStore.samples, {
+      unlockedTiers: normalizeProfile(appState.profile).unlocked_tiers,
+    });
+  } finally {
+    trainBtn.disabled = false;
+  }
+  const model = result.model;
   appState.selfModel = model;
   persistSelfModel();
   refreshProfileSummary();
 
   if (model.ready) {
-    appState.statusMessage = `Self-play model trained (${model.sample_count} samples).`;
+    const suffix = result.accepted ? " RL accepted." : result.reason === "not_ready" ? "" : " RL kept imitation baseline.";
+    appState.statusMessage = `Self-play model trained (${model.sample_count} samples).${suffix}`;
     return;
   }
 

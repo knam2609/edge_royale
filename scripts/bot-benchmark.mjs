@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 
 import { runBenchmarkMatrix } from "../src/ai/benchmark.js";
 import {
-  FAIR_LADDER_MODEL_TIERS,
+  PLAYABLE_MODEL_TIERS,
   getConfiguredLadderModelPath,
   normalizeLadderModelManifest,
   normalizeLoadedLadderModelsByTier,
@@ -91,7 +91,7 @@ async function loadModelsFromConfig(modelConfigPath) {
   const rawModelsByTier = {};
   const readWarnings = [];
 
-  for (const tierId of FAIR_LADDER_MODEL_TIERS) {
+  for (const tierId of PLAYABLE_MODEL_TIERS) {
     const modelPath = getConfiguredLadderModelPath(manifest, tierId);
     if (!modelPath) {
       continue;
