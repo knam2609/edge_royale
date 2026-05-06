@@ -63,7 +63,7 @@ For any meaningful task:
 6. Update relevant docs if rules, AI expectations, UX behavior, or workflow changed.
 7. Rewrite `progress.md` before ending the session.
 
-Git history is the archive. Do not append session diaries to `progress.md`.
+Git history is the archive. Do not append session diaries to `progress.md`, and do not delete unresolved handoff truth just because the current session worked on something else.
 
 ## Change Rules
 
@@ -123,13 +123,15 @@ If you cannot run a needed validation step, say exactly what was not run and why
 - `Source of Truth`
 - `What Works`
 - `Known Gaps`
-- `Next 3 Tasks`
+- `Next Tasks`
 - `Validation`
 - `Risks / Notes`
 
 Rules:
 
 - Keep only the latest handoff.
+- Preserve unresolved facts, gaps, risks, validation notes, and tasks until they are verified done, intentionally obsolete, superseded by more accurate current text, or moved to a linked source-of-truth doc.
+- `Next Tasks` is a priority queue, not a 3-item limit. Insert new tasks by priority, keep unfinished tasks, and remove tasks only when resolved or explicitly replaced.
 - No historical changelog entries.
 - No brainstorming dump.
 - No duplicated commit history.
@@ -142,6 +144,6 @@ Before you stop:
 
 1. Make sure relevant tests/docs are updated.
 2. Record the current truth in `progress.md`.
-3. Keep `Next 3 Tasks` actionable and prioritized.
+3. Keep `Next Tasks` actionable and prioritized.
 4. Note any unresolved risk plainly.
 5. Leave the repo in a state the next agent can resume without rereading old chat.
