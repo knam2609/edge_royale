@@ -21,7 +21,7 @@ Each exported dataset contains:
 
 - `dataset_hash`, `seed`, `tiers`, `episode_count`, `sample_count`
 - `episodes[]` with seed, tiers, final result, state hash, replay hash, replay actions, and `samples[]`
-- `episodes[].samples[]` with actor, tier, tick, phase, fair observation vector, legal actions, chosen action index, and terminal reward from that actor's perspective
+- `episodes[].samples[]` with actor, tier, tick, phase, observation vector, stored legal actions, chosen action index, total legal-action count, and terminal reward from that actor's perspective
 
 Observation schemas:
 
@@ -59,7 +59,7 @@ Customize the run with env vars when needed:
 LADDER_RUN_NAME=ladder-smoke LADDER_SHARDS=1 LADDER_EPISODES=2 LADDER_MAX_TICKS=120 LADDER_ITERATIONS=1 LADDER_EPOCHS=1 LADDER_EVAL_ROUNDS=1 LADDER_EVAL_MAX_TICKS=80 LADDER_BENCH_ROUNDS=2 LADDER_BENCH_MAX_TICKS=80 bash scripts/train-bot-ladder.sh
 ```
 
-The ladder pipeline wraps `data:export`, `train:bot`, and `model:bench`. `data:export` still writes compact JSON by default so large shard files stay within practical string sizes, and `train:bot` still supports repeated `--dataset <file>` flags for manual debugging. When multiple shard files are supplied, the trainer runs over the deterministic lexicographic union of those files, stores a corpus-level `dataset_hash` on the model artifact, and records the ordered shard metadata under `training_config.dataset_sources`.
+The ladder pipeline wraps `data:export`, `train:bot`, and `model:bench`. `data:export` writes compact JSON by default and stores only the chosen action plus a bounded deterministic prefix of non-chosen legal candidates per sample. Use `--max-stored-negatives <n>` or `LADDER_DATASET_MAX_NEGATIVES` to tune that cap; default export behavior stores `8` negatives. Each sample preserves `legal_action_count` so full action-space size remains measurable. `train:bot` still supports repeated `--dataset <file>` flags for manual debugging. When multiple shard files are supplied, the trainer runs over the deterministic lexicographic union of those files, stores a corpus-level `dataset_hash` on the model artifact, and records the ordered shard metadata under `training_config.dataset_sources`.
 
 ## Local Model Manifest
 

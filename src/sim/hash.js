@@ -12,14 +12,57 @@ export function stableStringify(value) {
   return `{${pairs.join(",")}}`;
 }
 
-export function hashState(state) {
-  const content = stableStringify(state);
-  let hash = 0x811c9dc5;
-
+function updateFnv(hash, content) {
   for (let i = 0; i < content.length; i += 1) {
     hash ^= content.charCodeAt(i);
     hash = Math.imul(hash, 0x01000193) >>> 0;
   }
+  return hash;
+}
 
+function writeStableHash(value, writeToken, { objectValue = false } = {}) {
+  if (value === null || typeof value !== "object") {
+    const token = JSON.stringify(value);
+    if (token === undefined) {
+      if (objectValue) {
+        writeToken("undefined");
+      }
+      return;
+    }
+    writeToken(token);
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    writeToken("[");
+    for (let index = 0; index < value.length; index += 1) {
+      if (index > 0) {
+        writeToken(",");
+      }
+      writeStableHash(value[index], writeToken);
+    }
+    writeToken("]");
+    return;
+  }
+
+  writeToken("{");
+  const keys = Object.keys(value).sort();
+  for (let index = 0; index < keys.length; index += 1) {
+    const key = keys[index];
+    if (index > 0) {
+      writeToken(",");
+    }
+    writeToken(JSON.stringify(key));
+    writeToken(":");
+    writeStableHash(value[key], writeToken, { objectValue: true });
+  }
+  writeToken("}");
+}
+
+export function hashState(state) {
+  let hash = 0x811c9dc5;
+  writeStableHash(state, (token) => {
+    hash = updateFnv(hash, token);
+  });
   return hash.toString(16).padStart(8, "0");
 }

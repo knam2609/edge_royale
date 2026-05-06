@@ -9,6 +9,7 @@ function parseArgs(argv) {
     episodes: 8,
     maxTicks: 900,
     tiers: ["top", "goat"],
+    maxStoredNegatives: 8,
     pretty: false,
     out: "artifacts/training/datasets/goat-dataset.json",
   };
@@ -34,6 +35,10 @@ function parseArgs(argv) {
         .filter((tier) => tier.length > 0);
       continue;
     }
+    if (arg === "--max-stored-negatives" && argv[i + 1]) {
+      parsed.maxStoredNegatives = Number.parseInt(argv[++i], 10);
+      continue;
+    }
     if (arg === "--out" && argv[i + 1]) {
       parsed.out = argv[++i];
       continue;
@@ -55,6 +60,10 @@ function parseArgs(argv) {
   if (!Array.isArray(parsed.tiers) || parsed.tiers.length === 0) {
     parsed.tiers = ["top", "goat"];
   }
+  if (!Number.isFinite(parsed.maxStoredNegatives) || parsed.maxStoredNegatives < 0) {
+    parsed.maxStoredNegatives = 8;
+  }
+  parsed.maxStoredNegatives = Math.floor(parsed.maxStoredNegatives);
 
   return parsed;
 }
@@ -65,6 +74,7 @@ const dataset = generateTrainingDataset({
   episodes: args.episodes,
   maxTicks: args.maxTicks,
   tiers: args.tiers,
+  maxStoredNegatives: args.maxStoredNegatives,
 });
 
 const outPath = resolve(process.cwd(), args.out);

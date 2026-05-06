@@ -20,6 +20,14 @@ import { makeBenchmarkArena, makeBenchmarkInitialEntities } from "./benchmark.js
 export const TRAINING_DATASET_SCHEMA_VERSION = "1.0";
 export const TRAINING_EPISODE_SCHEMA_VERSION = "1.0";
 
+function normalizeStoredNegativeLimit(maxStoredNegatives) {
+  if (maxStoredNegatives === null || maxStoredNegatives === undefined) {
+    return Number.POSITIVE_INFINITY;
+  }
+  const normalized = Math.floor(Number(maxStoredNegatives));
+  return Number.isFinite(normalized) && normalized >= 0 ? normalized : Number.POSITIVE_INFINITY;
+}
+
 function makeController(seed) {
   return {
     rng: createRng(seed),
@@ -75,6 +83,25 @@ function getSampleTier(tierId) {
   return tierId === "god_oracle" ? "god" : tierId;
 }
 
+function selectStoredLegalActions(legalActions, chosenIndex, maxStoredNegatives) {
+  const negativeLimit = normalizeStoredNegativeLimit(maxStoredNegatives);
+  const stored = [];
+  let negatives = 0;
+
+  for (let index = 0; index < legalActions.length; index += 1) {
+    if (index === chosenIndex) {
+      stored.push({ action: legalActions[index], originalIndex: index });
+      continue;
+    }
+    if (negatives < negativeLimit) {
+      stored.push({ action: legalActions[index], originalIndex: index });
+      negatives += 1;
+    }
+  }
+
+  return stored;
+}
+
 function maybeSelectActionAndSample({
   engine,
   actor,
@@ -83,6 +110,7 @@ function maybeSelectActionAndSample({
   samples,
   episodeSeed,
   trainedModel = null,
+  maxStoredNegatives = null,
 }) {
   const tick = engine.state.tick + 1;
   if (tick < controller.nextDecisionTick) {
@@ -111,6 +139,8 @@ function maybeSelectActionAndSample({
     const phase = getMatchPhase({ tick: engine.state.tick, isOvertime: engine.state.isOvertime });
     const featureSchemaVersion = getFeatureSchemaForTier(tierId);
     const observation = encodeStateFeaturesForSchema({ engine, actor, featureSchemaVersion });
+    const storedLegalActions = selectStoredLegalActions(legalActions, chosenIndex, maxStoredNegatives);
+    const storedChosenIndex = storedLegalActions.findIndex((candidate) => candidate.originalIndex === chosenIndex);
     samples.push({
       schema_version: TRAINING_EPISODE_SCHEMA_VERSION,
       episode_seed: episodeSeed,
@@ -122,14 +152,17 @@ function maybeSelectActionAndSample({
         feature_schema_version: featureSchemaVersion,
         vector: observation,
       },
-      legal_actions: legalActions.map((action, index) => ({
+      legal_action_count: legalActions.length,
+      stored_legal_action_count: storedLegalActions.length,
+      legal_actions: storedLegalActions.map(({ action, originalIndex }, index) => ({
         index,
+        source_index: originalIndex,
         action: normalizeAction(action),
         action_space_version: ACTION_SPACE_VERSION,
         action_schema_version: ACTION_SCHEMA_VERSION,
         action_features: encodeActionFeatures({ engine, actor, action }),
       })),
-      chosen_action_index: chosenIndex,
+      chosen_action_index: storedChosenIndex,
       chosen_action: normalizeAction(chosenAction),
       reward: 0,
     });
@@ -151,6 +184,7 @@ export function runTrainingEpisode({
   seed = 1,
   trainedModelBlue = null,
   trainedModelRed = null,
+  maxStoredNegatives = null,
   maxTicks = MATCH_CONFIG.regulation_ticks + MATCH_CONFIG.overtime_ticks + 40,
 } = {}) {
   const engine = createEngine({
@@ -173,6 +207,7 @@ export function runTrainingEpisode({
       samples,
       episodeSeed: seed,
       trainedModel: trainedModelBlue,
+      maxStoredNegatives,
     });
     if (blueAction) {
       actions.push(blueAction);
@@ -186,6 +221,7 @@ export function runTrainingEpisode({
       samples,
       episodeSeed: seed,
       trainedModel: trainedModelRed,
+      maxStoredNegatives,
     });
     if (redAction) {
       actions.push(redAction);
@@ -269,6 +305,7 @@ export function generateTrainingDataset({
   seed = 303,
   episodes = 8,
   maxTicks = 900,
+  maxStoredNegatives = null,
 } = {}) {
   const normalizedTiers = Array.isArray(tiers) && tiers.length > 0 ? tiers : ["top", "goat"];
   const rng = createRng(seed);
@@ -284,6 +321,7 @@ export function generateTrainingDataset({
         redTier,
         seed: episodeSeed,
         maxTicks,
+        maxStoredNegatives,
       }),
     );
   }
@@ -296,6 +334,9 @@ export function generateTrainingDataset({
     episodes_requested: episodes,
     max_ticks: maxTicks,
     action_space_version: ACTION_SPACE_VERSION,
+    ...(Number.isFinite(normalizeStoredNegativeLimit(maxStoredNegatives))
+      ? { max_stored_negatives: normalizeStoredNegativeLimit(maxStoredNegatives) }
+      : {}),
     episode_count: generatedEpisodes.length,
     sample_count: generatedEpisodes.reduce((sum, episode) => sum + episode.samples.length, 0),
     episodes: generatedEpisodes,
