@@ -57,6 +57,7 @@ jobs:
           LADDER_BATCH_SIZE: 64
           LADDER_LEARNING_RATE: 0.01
           LADDER_MAX_NEGATIVES: 8
+          LADDER_DATASET_MAX_NEGATIVES: 8
           LADDER_EVAL_ROUNDS: 50
           LADDER_EVAL_MAX_TICKS: 6040
           LADDER_BENCH_TIERS: noob,mid,top,pro,goat
@@ -78,6 +79,7 @@ jobs:
           LADDER_BATCH_SIZE: 64
           LADDER_LEARNING_RATE: 0.01
           LADDER_MAX_NEGATIVES: 8
+          LADDER_DATASET_MAX_NEGATIVES: 8
           LADDER_EVAL_ROUNDS: 25
           LADDER_EVAL_MAX_TICKS: 6040
           LADDER_BENCH_TIERS: goat,god

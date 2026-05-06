@@ -87,6 +87,7 @@ test("daily workflow uses full-match preset for training, eval, bench, and compa
 
   assert.match(workflow, /LADDER_SHARDS:\s*4/);
   assert.match(workflow, /LADDER_EPISODES:\s*150/);
+  assert.equal([...workflow.matchAll(/LADDER_DATASET_MAX_NEGATIVES:\s*8/g)].length, 2);
   assert.match(workflow, /LADDER_MAX_TICKS:\s*6040/);
   assert.match(workflow, /LADDER_EVAL_MAX_TICKS:\s*6040/);
   assert.match(workflow, /LADDER_BENCH_MAX_TICKS:\s*6040/);

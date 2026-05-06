@@ -75,6 +75,41 @@ test("generated datasets are deterministic and produce supervised action rows", 
   assert.equal(summary.rows, rows.length);
 });
 
+test("generated datasets can cap stored negative legal actions", () => {
+  const maxStoredNegatives = 2;
+  const dataset = generateTrainingDataset({
+    tiers: ["top", "goat"],
+    seed: 616,
+    episodes: 2,
+    maxTicks: 120,
+    maxStoredNegatives,
+  });
+
+  assert.equal(dataset.max_stored_negatives, maxStoredNegatives);
+  assert.ok(dataset.sample_count > 0);
+
+  for (const episode of dataset.episodes) {
+    for (const sample of episode.samples) {
+      const chosen = sample.legal_actions[sample.chosen_action_index];
+      assert.ok(chosen);
+      assert.deepEqual(chosen.action, sample.chosen_action);
+      assert.equal(sample.stored_legal_action_count, sample.legal_actions.length);
+      assert.ok(sample.legal_action_count >= sample.legal_actions.length);
+      assert.ok(sample.legal_actions.length <= maxStoredNegatives + 1);
+      assert.deepEqual(
+        sample.legal_actions.map((candidate) => candidate.index),
+        sample.legal_actions.map((_, index) => index),
+      );
+    }
+  }
+
+  const rowSummary = countActionTrainingRows(dataset, { maxNegativesPerDecision: 8 });
+  assert.equal(rowSummary.positives, dataset.sample_count);
+  assert.ok(rowSummary.negatives > 0);
+  assert.ok(rowSummary.negatives <= dataset.sample_count * maxStoredNegatives);
+  assert.equal(rowSummary.rows, rowSummary.positives + rowSummary.negatives);
+});
+
 test("dataset corpus hash is deterministic and order-sensitive", () => {
   assert.equal(hashTrainingDatasetCorpus(["alpha", "beta"]), hashTrainingDatasetCorpus(["alpha", "beta"]));
   assert.notEqual(hashTrainingDatasetCorpus(["alpha", "beta"]), hashTrainingDatasetCorpus(["beta", "alpha"]));
