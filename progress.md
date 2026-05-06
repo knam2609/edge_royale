@@ -2,7 +2,7 @@
 
 ## Current State
 
-- As of May 4, 2026, local `main` contains the God + self legal-action AI implementation with uncommitted changes.
+- As of May 6, 2026, local `main` contains the God + self legal-action AI implementation and a durable `progress.md` handoff contract.
 - Legal action enumeration now uses `full_snapped_grid_v1`: troops enumerate legal deploy cells and spells enumerate every snapped arena cell.
 - Playable God can load a same-tier `legal_action_mlp` from `artifacts/training/ladder-models.json`; God model features use `god_state_features_v1` with opponent exact elixir, hand, and deck queue.
 - `god_oracle` is available as an internal teacher/benchmark tier and is not exposed in the UI tier list.
@@ -26,6 +26,7 @@
 - Node training supports `--target-tier god` with hidden God feature size and schema-validated model artifacts.
 - Browser self training runs imitation plus reward-weighted rollout fine-tune against Top and the highest unlocked fair tier.
 - Tests cover full-grid spell actions, self legal-action samples/model selection, God hidden schema/runtime, manifest God entries, daily God workflow wiring, and God bootstrap comparison.
+- `AGENTS.md` now requires unresolved `progress.md` bullets to carry forward and uses `Next Tasks` as a priority queue instead of a 3-task cap.
 
 ## Known Gaps
 
@@ -34,15 +35,21 @@
 - Ladder ordering is still noisy at low rounds and is not stable enough for strict promotion.
 - Existing checked-in promoted models do not include a God artifact until a God gate passes and a PR is reviewed.
 - Browser self RL is intentionally lightweight reward-weighted fine-tuning, not a full policy-gradient system.
+- Telemetry/export pipeline work from the roadmap is still incomplete beyond the current deterministic training export hooks.
+- Browser validation is useful but not yet standardized into one repeatable repo command.
 
-## Next 3 Tasks
+## Next Tasks
 
 1. Manually run `.github/workflows/daily-ladder-training.yml` on `main` and inspect total runtime, God lane runtime, artifact size, `god-comparison-summary.json`, and PR behavior.
 2. If the God lane exceeds budget or produces all-draw signal, tune `LADDER_EPISODES`, `LADDER_BENCH_ROUNDS`, or `LADDER_MAX_TICKS` for the God lane separately from fair ladder training.
 3. Browser-smoke self training after enough local samples: verify v2 localStorage, progress/status text, RL accepted/rejected messaging, and playable self model behavior.
+4. Stabilize ladder ordering enough to support a stricter promotion gate, then update `docs/BOT_LEVELS.md` and training gate docs with the real threshold.
+5. Standardize browser validation into one repeatable local command or documented workflow that works without registry access during smoke checks.
+6. Continue telemetry/export pipeline work from `docs/IMPLEMENTATION_PLAN.md` and `docs/TRAINING_PIPELINE.md` so match data can support future self-play training beyond current local samples.
 
 ## Validation
 
+- May 6, 2026: `npm test` -> 119 tests passed.
 - May 4, 2026: `npm test` -> 119 tests passed.
 - May 4, 2026: `npm run bot:bench -- --tiers noob,mid,top,pro,goat,god --rounds 2 --seed 909 --max-ticks 6040` -> completed; God beat Goat `2-0` in the 2-round sample, but low-round matrix remained noisy.
 - May 4, 2026: `env LADDER_RUN_NAME=god-smoke-codex LADDER_OUTPUT_ROOT=artifacts/training/runs/god-smoke-codex LADDER_MODEL_MANIFEST_PATH=artifacts/training/runs/god-smoke-codex/candidate-god-models.json LADDER_TIERS=god LADDER_SHARDS=1 LADDER_EPISODES=1 LADDER_MAX_TICKS=120 LADDER_ITERATIONS=1 LADDER_EPOCHS=1 LADDER_BATCH_SIZE=8 LADDER_MAX_NEGATIVES=2 LADDER_EVAL_ROUNDS=1 LADDER_EVAL_MAX_TICKS=120 LADDER_BENCH_TIERS=goat,god LADDER_BENCH_ROUNDS=1 LADDER_BENCH_MAX_TICKS=120 bash scripts/train-bot-ladder.sh` -> completed; exported `samples=4`, trained `rows=12`, wrote a God candidate manifest.
