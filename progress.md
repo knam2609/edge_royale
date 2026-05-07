@@ -2,7 +2,7 @@
 
 ## Current State
 
-- As of May 6, 2026, local `main` contains the God + self legal-action AI implementation, durable `progress.md` handoff contract, and compact offline ladder dataset export.
+- As of May 7, 2026, local `main` and `origin/main` are at `b2754c80ce19f0263875477c1918608b6db9bd13` with the God + self legal-action AI implementation, durable `progress.md` handoff contract, and compact offline ladder dataset export.
 - Legal action enumeration uses `full_snapped_grid_v1`: troops enumerate legal deploy cells and spells enumerate every snapped arena cell.
 - Offline `data:export` now stores the chosen action plus a bounded deterministic prefix of non-chosen legal candidates per sample, preserving `legal_action_count` for the full action-space size.
 - `hashState` now streams canonical stable JSON tokens into FNV hashing instead of materializing one giant string.
@@ -31,8 +31,8 @@
 
 ## Known Gaps
 
-- The compact export fix has local validation only; hosted `.github/workflows/daily-ladder-training.yml` still needs a fresh run on GitHub Actions.
-- God bootstrap smoke used very small caps and produced draw-heavy short matches; real full-match signal still needs hosted/manual validation.
+- Hosted `.github/workflows/daily-ladder-training.yml` now succeeds after the compact export fix, but artifact `ladder-training-25455693942`, promotion PR behavior, fair/God artifact sizes, and `god-comparison-summary.json` still need review.
+- God bootstrap smoke used very small caps and produced draw-heavy short matches; real full-match signal still needs artifact/manual validation.
 - Ladder ordering is still noisy at low rounds and is not stable enough for strict promotion.
 - Existing checked-in promoted models do not include a God artifact until a God gate passes and a PR is reviewed.
 - Browser self RL is intentionally lightweight reward-weighted fine-tuning, not a full policy-gradient system.
@@ -41,7 +41,7 @@
 
 ## Next Tasks
 
-1. Manually run `.github/workflows/daily-ladder-training.yml` on `main` after the compact export fix and inspect total runtime, fair/God artifact sizes, God lane runtime, `god-comparison-summary.json`, and PR behavior.
+1. Review GitHub Actions run `25455693942` and artifact `ladder-training-25455693942`: inspect total runtime, fair/God artifact sizes, God lane runtime, fair summaries, `god-comparison-summary.json`, promotion output, and opened/updated PR state.
 2. If the God lane exceeds budget or produces all-draw signal, tune `LADDER_EPISODES`, `LADDER_BENCH_ROUNDS`, or `LADDER_MAX_TICKS` for the God lane separately from fair ladder training.
 3. Browser-smoke self training after enough local samples: verify v2 localStorage, progress/status text, RL accepted/rejected messaging, and playable self model behavior.
 4. Stabilize ladder ordering enough to support a stricter promotion gate, then update `docs/BOT_LEVELS.md` and training gate docs with the real threshold.
@@ -50,6 +50,7 @@
 
 ## Validation
 
+- May 7, 2026: `gh run view 25455693942` -> success; scheduled `main` daily run for commit `b2754c80ce19f0263875477c1918608b6db9bd13`; `Train ladder models` completed in `3h31m54s`; artifact `ladder-training-25455693942`.
 - May 6, 2026: inspected GitHub Actions run `25396086873` -> `Train candidate ladder models` failed on `RangeError: Invalid string length` in `src/sim/hash.js` during first noob full-match shard hash.
 - May 6, 2026: `npm test` -> 121 tests passed.
 - May 6, 2026: `npm run data:export -- --seed 303 --episodes 150 --max-ticks 6040 --tiers noob --max-stored-negatives 8 --out /private/tmp/edge_royale-noob-150.json` -> completed; `episodes=150`, `samples=9142`, file size `27505382` bytes.
@@ -62,5 +63,6 @@
 - Raw training artifacts remain ignored under `artifacts/training/runs/`; local `ci-size-smoke` output is intentionally ignored.
 - The ladder smoke command defaulted `LADDER_MODEL_MANIFEST_PATH` to tracked `artifacts/training/ladder-models.json`; that validation-only change was restored.
 - A `/private/tmp` God smoke produced an invalid manifest for comparison because manifest path validation rejects absolute `model_path` values. Workflow paths are repo-relative and the repo-relative smoke passed.
-- Daily workflow timeout is still `350` minutes, but the added God lane may reduce margin versus the previous `1h59m5s` hosted fair-ladder run.
+- Daily workflow timeout is still `350` minutes; run `25455693942` completed in `3h31m54s`, leaving less margin than the previous `1h59m5s` hosted fair-ladder run.
+- GitHub Actions flagged Node.js 20 action deprecation for `actions/checkout@v4`, `actions/setup-node@v4`, and `actions/upload-artifact@v4`; Node.js 24 becomes default on June 2, 2026, and Node.js 20 is removed from runners on September 16, 2026.
 - Browser smoke still needs a clean repeat with a locally available Playwright CLI/browser runtime.
