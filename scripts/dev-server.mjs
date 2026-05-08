@@ -41,5 +41,7 @@ const server = createServer((req, res) => {
 });
 
 server.listen(port, host, () => {
-  process.stdout.write(`Dev server listening at http://${host}:${port}\n`);
+  const address = server.address();
+  const resolvedPort = typeof address === "object" && address ? address.port : port;
+  process.stdout.write(`Dev server listening at http://${host}:${resolvedPort}\n`);
 });

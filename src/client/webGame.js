@@ -44,6 +44,7 @@ import {
   viewportToWorld,
   worldToViewport,
 } from "./layout.js";
+import { PROFILE_STORAGE_KEY, SELF_MODEL_STORAGE_KEY, TRAINING_STORAGE_KEY } from "./storageKeys.js";
 
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
@@ -71,9 +72,6 @@ const PLACEMENT_TILE_COLUMNS = Object.freeze(buildPlacementAxis(ARENA_SNAP_MIN.x
 const PLACEMENT_TILE_ROWS = Object.freeze(buildPlacementAxis(ARENA_SNAP_MIN.y, ARENA_SNAP_MAX.y, PLACEMENT_TILE_STEP));
 
 const MAX_ELIXIR = 10;
-const PROFILE_STORAGE_KEY = "edge_royale_profile_v1";
-const TRAINING_STORAGE_KEY = "edge_royale_training_data_v2";
-const SELF_MODEL_STORAGE_KEY = "edge_royale_self_model_v2";
 const HAND_SLOTS = 4;
 const DRAG_START_DISTANCE = 8;
 const MAX_TRANSIENT_EFFECTS = 96;
@@ -3198,6 +3196,8 @@ window.render_game_to_text = () => {
     },
     bot_tier: appState.selectedBotTier,
     bot_source: getOpponentModelSource(appState.selectedBotTier),
+    status_message: appState.statusMessage,
+    profile_summary_text: profileSummary.textContent,
     ladder_model_status: appState.ladderModelStatus,
     ladder_model_warnings: appState.ladderModelWarnings,
     unlocked_tiers: normalizeProfile(appState.profile).unlocked_tiers,
