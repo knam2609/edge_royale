@@ -62,6 +62,22 @@ Automation hooks exposed in browser:
 
 Self bot training stores public-observation decision samples locally: legal action candidates, chosen action index, action features, and match reward. The self model retrains only when enough legal decision samples have accumulated, and RL output is accepted only when held-out imitation similarity and benchmark win rate do not regress.
 
+## Validation
+
+Run the Node test suite for simulation, AI, replay, and progression validation:
+
+```bash
+npm test
+```
+
+Run the dedicated browser smoke for client and self-training changes. It starts the repo dev server on an ephemeral localhost port, seeds deterministic localStorage fixtures, verifies under-threshold training messaging, RL accepted/fallback messaging, and playable Self model runtime, then shuts the server down:
+
+```bash
+npm run smoke:browser
+```
+
+`smoke:browser` stays separate from `npm test` so browser setup remains opt-in. It requires a locally available Playwright Chromium binary and fails fast with a prerequisite message instead of trying to download browsers during validation.
+
 ## Offline Ladder training
 
 ```bash
