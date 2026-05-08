@@ -20,6 +20,10 @@
     "goat": {
       "mode": "model",
       "model_path": "artifacts/training/promoted/models/goat-model.json"
+    },
+    "god": {
+      "mode": "model",
+      "model_path": "artifacts/training/promoted/models/god-model.json"
     }
   }
 }

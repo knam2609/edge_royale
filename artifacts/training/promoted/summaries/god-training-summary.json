@@ -1,0 +1,71 @@
+{
+  "model_path": "/home/runner/work/edge_royale/edge_royale/artifacts/training/runs/daily-25516896901/models/god-model.json",
+  "target_tier": "god",
+  "dataset_hash": "5f606fdd",
+  "dataset_sources": [
+    {
+      "path": "/home/runner/work/edge_royale/edge_royale/artifacts/training/runs/daily-25516896901/datasets/god/shard-001.json",
+      "dataset_hash": "5f606fdd",
+      "episode_count": 50,
+      "sample_count": 4953,
+      "row_summary": {
+        "rows": 36030,
+        "positives": 4953,
+        "negatives": 31077
+      }
+    }
+  ],
+  "row_summary": {
+    "rows": 36030,
+    "positives": 4953,
+    "negatives": 31077
+  },
+  "iteration_summaries": [
+    {
+      "iteration": 1,
+      "loss": 0.13021402060985565,
+      "accuracy": 0.9183180928230286,
+      "evaluation": [
+        {
+          "tier": "goat",
+          "rounds": 25,
+          "wins": 2,
+          "losses": 20,
+          "draws": 3,
+          "win_rate": 0.09090909090909091
+        },
+        {
+          "tier": "god",
+          "rounds": 25,
+          "wins": 4,
+          "losses": 18,
+          "draws": 3,
+          "win_rate": 0.18181818181818182
+        }
+      ]
+    },
+    {
+      "iteration": 2,
+      "loss": 0.12314169108867645,
+      "accuracy": 0.916125476360321,
+      "evaluation": [
+        {
+          "tier": "goat",
+          "rounds": 25,
+          "wins": 4,
+          "losses": 18,
+          "draws": 3,
+          "win_rate": 0.18181818181818182
+        },
+        {
+          "tier": "god",
+          "rounds": 25,
+          "wins": 6,
+          "losses": 18,
+          "draws": 1,
+          "win_rate": 0.25
+        }
+      ]
+    }
+  ]
+}
