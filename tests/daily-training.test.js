@@ -192,5 +192,77 @@ test("promoteLadderModels copies valid tier models to stable tracked paths", asy
 
   const prBody = await readFile(join(tmpRoot, prBodyOut), "utf8");
   assert.match(prBody, /Daily ladder model update/);
+  assert.match(prBody, /Fair gate passed: true/);
   assert.match(prBody, /mid/);
+});
+
+test("promoteLadderModels PR body reports fair failure separately from God promotion", async () => {
+  const tmpRoot = await mkdtemp(join(tmpdir(), "edge-royale-promote-god-"));
+  const modelPath = "run/models/god-model.json";
+  const summaryPath = "run/models/god-training-summary.json";
+  const manifestPath = "run/candidate-ladder-models.json";
+  const comparisonPath = "run/comparison-summary.json";
+  const godComparisonPath = "run/god-comparison-summary.json";
+  const outDir = "promoted";
+  const manifestOut = "ladder-models.json";
+  const summaryOut = "latest-training-summary.json";
+  const prBodyOut = "pr-body.md";
+
+  const model = createZeroNeuralPolicyModel({
+    hiddenUnits: 1,
+    seed: 1009,
+    targetTier: "god",
+    featureSchemaVersion: GOD_FEATURE_SCHEMA_VERSION,
+  });
+
+  await mkdir(join(tmpRoot, "run", "models"), { recursive: true });
+  await writeFile(join(tmpRoot, modelPath), `${JSON.stringify(model, null, 2)}\n`, "utf8");
+  await writeFile(join(tmpRoot, summaryPath), `${JSON.stringify({ target_tier: "god" }, null, 2)}\n`, "utf8");
+  await writeFile(
+    join(tmpRoot, manifestPath),
+    `${JSON.stringify(createEnabledLadderModelManifest({ god: modelPath }), null, 2)}\n`,
+    "utf8",
+  );
+  await writeFile(
+    join(tmpRoot, comparisonPath),
+    `${JSON.stringify({
+      passed: false,
+      gate: {
+        metrics: { average_delta: 0.037842, worst_adjacent_delta: -0.116216 },
+        reasons: ["worst adjacent delta -0.116216 regressed more than 0.05"],
+      },
+    }, null, 2)}\n`,
+    "utf8",
+  );
+  await writeFile(
+    join(tmpRoot, godComparisonPath),
+    `${JSON.stringify({ passed: true, gate: { passed: true, reasons: [], deterministic: true, bootstrap: true } }, null, 2)}\n`,
+    "utf8",
+  );
+
+  const promoted = await promoteLadderModels({
+    candidateManifest: manifestPath,
+    comparisonSummary: comparisonPath,
+    godComparisonSummary: godComparisonPath,
+    outDir,
+    manifestOut,
+    summaryOut,
+    prBodyOut,
+    runRoot: "run",
+    promotedAt: "2026-05-06T22:43:58.550Z",
+    cwd: tmpRoot,
+  });
+
+  assert.deepEqual(
+    promoted.tiers.map((tier) => tier.tier_id),
+    ["god"],
+  );
+
+  const prBody = await readFile(join(tmpRoot, prBodyOut), "utf8");
+  assert.match(prBody, /Fair gate passed: false/);
+  assert.match(prBody, /God gate passed: true/);
+  assert.match(prBody, /God bootstrap: true/);
+  assert.match(prBody, /Fair gate reasons:/);
+  assert.match(prBody, /worst adjacent delta -0\.116216 regressed more than 0\.05/);
+  assert.doesNotMatch(prBody, /candidate models passed daily validity \+ improvement gate/);
 });

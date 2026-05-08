@@ -74,25 +74,43 @@ async function copyJsonFile(sourcePath, destinationPath, cwd = process.cwd()) {
   await copyFile(source, destination);
 }
 
+function formatGateStatus(value) {
+  return typeof value === "boolean" ? String(value) : "unknown";
+}
+
+function appendReasons(lines, label, reasons) {
+  if (!Array.isArray(reasons) || reasons.length === 0) {
+    return;
+  }
+  lines.push(`${label}:`, ...reasons.map((reason) => `- ${reason}`), "");
+}
+
 function buildPrBody({ promoted, comparison, promotedAt }) {
   const lines = [
     "# Daily ladder model update",
     "",
     `Promoted at: ${promotedAt}`,
-    `Gate passed: ${comparison?.passed === true ? "true" : "unknown"}`,
+    `Fair gate passed: ${formatGateStatus(comparison?.passed)}`,
     `Average delta: ${comparison?.gate?.metrics?.average_delta ?? "unknown"}`,
     `Worst adjacent delta: ${comparison?.gate?.metrics?.worst_adjacent_delta ?? "unknown"}`,
-    `God gate passed: ${promoted.god_gate_passed ?? "unknown"}`,
+    `God gate passed: ${formatGateStatus(promoted.god_gate_passed)}`,
+    `God bootstrap: ${formatGateStatus(promoted.god_gate?.bootstrap)}`,
     "",
+  ];
+
+  appendReasons(lines, "Fair gate reasons", comparison?.gate?.reasons);
+  appendReasons(lines, "God gate reasons", promoted.god_gate?.reasons);
+
+  lines.push(
     "Promoted tiers:",
     ...promoted.tiers.map((tier) => `- ${tier.tier_id}: ${tier.model_path}`),
     "",
     "Validation:",
     "- npm test passed before training in workflow",
-    "- candidate models passed daily validity + improvement gate",
+    "- promoted tier gates passed for the tiers listed above",
     "- full run artifact is attached to workflow run",
     "",
-  ];
+  );
 
   return `${lines.join("\n")}\n`;
 }
