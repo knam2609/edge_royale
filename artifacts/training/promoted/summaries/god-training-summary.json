@@ -8,6 +8,7 @@
       "dataset_hash": "5f606fdd",
       "episode_count": 50,
       "sample_count": 4953,
+      "max_ticks": 6040,
       "row_summary": {
         "rows": 36030,
         "positives": 4953,
