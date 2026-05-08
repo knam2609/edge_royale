@@ -1,10 +1,10 @@
 {
   "version": 1,
-  "promoted_at": "2026-05-07T22:49:33.605Z",
-  "run_root": "artifacts/training/runs/daily-25516896901",
-  "candidate_manifest_path": "artifacts/training/runs/daily-25516896901/candidate-ladder-models.json",
-  "comparison_summary_path": "artifacts/training/runs/daily-25516896901/comparison-summary.json",
-  "god_comparison_summary_path": "artifacts/training/runs/daily-25516896901/god-comparison-summary.json",
+  "promoted_at": "2026-05-08T22:30:55.526Z",
+  "run_root": "artifacts/training/runs/daily-25573686210",
+  "candidate_manifest_path": "artifacts/training/runs/daily-25573686210/candidate-ladder-models.json",
+  "comparison_summary_path": "artifacts/training/runs/daily-25573686210/comparison-summary.json",
+  "god_comparison_summary_path": "artifacts/training/runs/daily-25573686210/god-comparison-summary.json",
   "gate_passed": false,
   "god_gate_passed": true,
   "gate_metrics": {
@@ -16,15 +16,15 @@
     "passed": true,
     "reasons": [],
     "deterministic": true,
-    "bootstrap": true
+    "bootstrap": false
   },
   "tiers": [
     {
       "tier_id": "god",
       "model_path": "artifacts/training/promoted/models/god-model.json",
-      "source_model_path": "artifacts/training/runs/daily-25516896901/models/god-model.json",
+      "source_model_path": "artifacts/training/runs/daily-25573686210/models/god-model.json",
       "training_summary_path": "artifacts/training/promoted/summaries/god-training-summary.json",
-      "source_training_summary_path": "artifacts/training/runs/daily-25516896901/models/god-training-summary.json",
+      "source_training_summary_path": "artifacts/training/runs/daily-25573686210/models/god-training-summary.json",
       "dataset_hash": "5f606fdd",
       "training_config": {
         "algorithm": "ladder_supervised_policy_v1",
@@ -41,7 +41,7 @@
         "max_negatives_per_decision": 8,
         "dataset_sources": [
           {
-            "path": "/home/runner/work/edge_royale/edge_royale/artifacts/training/runs/daily-25516896901/datasets/god/shard-001.json",
+            "path": "/home/runner/work/edge_royale/edge_royale/artifacts/training/runs/daily-25573686210/datasets/god/shard-001.json",
             "dataset_hash": "5f606fdd",
             "episode_count": 50,
             "sample_count": 4953,
