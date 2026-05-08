@@ -165,6 +165,17 @@ function addRowSummary(total, current) {
   };
 }
 
+function ensureMatchingDatasetMaxTicks(expected, current) {
+  if (!expected) {
+    return;
+  }
+  if (expected.maxTicks !== current.maxTicks) {
+    throw new Error(
+      `dataset max_ticks mismatch: ${expected.path} uses ${expected.maxTicks}, but ${current.path} uses ${current.maxTicks}`,
+    );
+  }
+}
+
 function collectDatasetTiers(datasetSources) {
   const seen = new Set();
   for (const source of datasetSources) {
@@ -240,7 +251,7 @@ function exportModelArtifact(model, args, dataset, rowSummary, iterationSummarie
       epochs_per_iteration: args.epochs,
       batch_size: args.batchSize,
       learning_rate: args.learningRate,
-      max_ticks: args.maxTicks,
+      max_ticks: dataset.max_ticks,
       max_negatives_per_decision: args.maxNegatives,
       ...(Array.isArray(dataset.dataset_sources) ? { dataset_sources: dataset.dataset_sources } : {}),
       row_summary: rowSummary,
@@ -298,6 +309,7 @@ async function loadOrGenerateTrainingInput(tf, args) {
         dataset_hash: dataset.dataset_hash,
         episode_count: dataset.episode_count,
         sample_count: dataset.sample_count,
+        max_ticks: dataset.max_ticks,
         tiers: dataset.tiers,
         input_size: args.inputSize,
       },
@@ -310,9 +322,18 @@ async function loadOrGenerateTrainingInput(tf, args) {
 
   const datasetSources = [];
   let rowSummary = createEmptyRowSummary();
+  let expectedMaxTicks = null;
 
   for (const datasetPath of datasetPaths) {
     const source = await loadDatasetFile(datasetPath);
+    ensureMatchingDatasetMaxTicks(expectedMaxTicks, {
+      path: source.path,
+      maxTicks: source.max_ticks,
+    });
+    expectedMaxTicks = expectedMaxTicks ?? {
+      path: source.path,
+      maxTicks: source.max_ticks,
+    };
     const sourceRowSummary = countActionTrainingRows(source.dataset, {
       maxNegativesPerDecision: args.maxNegatives,
     });
@@ -325,7 +346,9 @@ async function loadOrGenerateTrainingInput(tf, args) {
       dataset_hash: source.dataset_hash,
       episode_count: source.episode_count,
       sample_count: source.sample_count,
+      max_ticks: source.max_ticks,
       tiers: source.tiers,
+      dataset: source.dataset,
       row_summary: sourceRowSummary,
     });
     rowSummary = addRowSummary(rowSummary, sourceRowSummary);
@@ -340,8 +363,7 @@ async function loadOrGenerateTrainingInput(tf, args) {
   }
 
   for (const source of datasetSources) {
-    const loaded = await loadDatasetFile(source.path);
-    rowCount = fillActionTrainingBuffers(loaded.dataset, {
+    rowCount = fillActionTrainingBuffers(source.dataset, {
       maxNegativesPerDecision: args.maxNegatives,
       inputSize: args.inputSize,
       inputs,
@@ -359,6 +381,7 @@ async function loadOrGenerateTrainingInput(tf, args) {
           : hashTrainingDatasetCorpus(datasetSources.map((source) => source.dataset_hash)),
       episode_count: datasetSources.reduce((sum, source) => sum + source.episode_count, 0),
       sample_count: datasetSources.reduce((sum, source) => sum + source.sample_count, 0),
+      max_ticks: expectedMaxTicks.maxTicks,
       tiers: collectDatasetTiers(datasetSources),
       input_size: args.inputSize,
       dataset_sources: datasetSources.map((source) => ({
@@ -366,6 +389,7 @@ async function loadOrGenerateTrainingInput(tf, args) {
         dataset_hash: source.dataset_hash,
         episode_count: source.episode_count,
         sample_count: source.sample_count,
+        max_ticks: source.max_ticks,
         row_summary: source.row_summary,
       })),
     },

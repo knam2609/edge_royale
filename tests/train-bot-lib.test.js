@@ -131,9 +131,73 @@ test("train-bot consumes shard directories and writes a valid model artifact", a
 
     assert.ok(normalizeNeuralPolicyModel(model));
     assert.equal(model.dataset_hash, hashTrainingDatasetCorpus([shardOne.dataset_hash, shardTwo.dataset_hash]));
+    assert.equal(model.training_config.max_ticks, baseDataset.max_ticks);
     assert.equal(model.training_config.dataset_sources.length, 2);
+    assert.ok(model.training_config.dataset_sources.every((source) => source.max_ticks === baseDataset.max_ticks));
     assert.equal(model.training_config.target_tier, "goat");
     assert.equal(summary.dataset_sources.length, 2);
+    assert.ok(summary.dataset_sources.every((source) => source.max_ticks === baseDataset.max_ticks));
+  });
+});
+
+test("train-bot rejects dataset shards with mixed max_ticks", async () => {
+  await withTempDir(async (tempDir) => {
+    const datasetDir = join(tempDir, "datasets");
+    const outputDir = join(tempDir, "outputs");
+    await mkdir(datasetDir, { recursive: true });
+    await mkdir(outputDir, { recursive: true });
+
+    const shortDataset = generateTrainingDataset({
+      tiers: ["top", "goat"],
+      seed: 4101,
+      episodes: 2,
+      maxTicks: 120,
+    });
+    const fullDataset = generateTrainingDataset({
+      tiers: ["top", "goat"],
+      seed: 4102,
+      episodes: 2,
+      maxTicks: 240,
+    });
+    await writeFile(join(datasetDir, "shard-001.json"), `${JSON.stringify(shortDataset)}\n`, "utf8");
+    await writeFile(join(datasetDir, "shard-002.json"), `${JSON.stringify(fullDataset)}\n`, "utf8");
+
+    const modelPath = join(outputDir, "model.json");
+    const summaryPath = join(outputDir, "summary.json");
+
+    await assert.rejects(
+      execFileAsync(
+        process.execPath,
+        [
+          "scripts/train-bot.mjs",
+          "--dataset-dir",
+          datasetDir,
+          "--iterations",
+          "1",
+          "--epochs",
+          "1",
+          "--eval-rounds",
+          "1",
+          "--eval-max-ticks",
+          "80",
+          "--max-negatives",
+          "2",
+          "--out",
+          modelPath,
+          "--summary-out",
+          summaryPath,
+        ],
+        {
+          cwd: process.cwd(),
+        },
+      ),
+      (error) => {
+        assert.match(error.stderr, /dataset max_ticks mismatch/);
+        assert.match(error.stderr, /shard-001\.json/);
+        assert.match(error.stderr, /shard-002\.json/);
+        return true;
+      },
+    );
   });
 });
 

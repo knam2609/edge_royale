@@ -12,6 +12,14 @@ function normalizeStringArray(values) {
     : [];
 }
 
+function normalizeDatasetMaxTicks(rawMaxTicks, datasetPath = null) {
+  const maxTicks = Number.parseInt(rawMaxTicks, 10);
+  if (!Number.isFinite(maxTicks) || maxTicks <= 0) {
+    throw new Error(`training dataset is missing valid max_ticks: ${datasetPath ?? "<generated>"}`);
+  }
+  return maxTicks;
+}
+
 function summarizeDataset(rawDataset, datasetPath = null) {
   if (!rawDataset || typeof rawDataset !== "object") {
     throw new Error(`invalid training dataset payload: ${datasetPath ?? "<generated>"}`);
@@ -24,6 +32,7 @@ function summarizeDataset(rawDataset, datasetPath = null) {
   const sampleCount = rawDataset.episodes.reduce((sum, episode) => {
     return sum + (Array.isArray(episode?.samples) ? episode.samples.length : 0);
   }, 0);
+  const maxTicks = normalizeDatasetMaxTicks(rawDataset.max_ticks, datasetPath);
 
   const dataset = {
     ...rawDataset,
@@ -41,6 +50,7 @@ function summarizeDataset(rawDataset, datasetPath = null) {
     dataset_hash: datasetHash,
     episode_count: episodeCount,
     sample_count: sampleCount,
+    max_ticks: maxTicks,
     tiers: normalizeStringArray(rawDataset.tiers),
   };
 }
