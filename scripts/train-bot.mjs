@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
-import { loadDatasetFile, resolveDatasetInputPaths } from "./train-bot-lib.mjs";
+import { getDefaultEvalTiers, loadDatasetFile, resolveDatasetInputPaths } from "./train-bot-lib.mjs";
 import { runBenchmark } from "../src/ai/benchmark.js";
 import {
   ACTION_SCHEMA_VERSION,
@@ -29,25 +29,6 @@ function normalizeTierId(tierId) {
 
 function getDefaultModelShape(targetTier) {
   return TIER_MODEL_SHAPES[normalizeTierId(targetTier)] ?? TIER_MODEL_SHAPES.goat;
-}
-
-function getDefaultEvalTiers(targetTier) {
-  if (targetTier === "noob") {
-    return ["noob", "mid"];
-  }
-  if (targetTier === "mid") {
-    return ["noob", "mid", "top"];
-  }
-  if (targetTier === "top") {
-    return ["mid", "top", "pro"];
-  }
-  if (targetTier === "pro") {
-    return ["top", "pro", "goat"];
-  }
-  if (targetTier === "god") {
-    return ["goat", "god"];
-  }
-  return ["noob", "mid", "top"];
 }
 
 function getFeatureSchemaForTarget(targetTier) {
@@ -289,6 +270,7 @@ async function loadOrGenerateTrainingInput(tf, args) {
     });
     const rowSummary = countActionTrainingRows(dataset, {
       maxNegativesPerDecision: args.maxNegatives,
+      sampleTier: args.targetTier,
     });
     if (rowSummary.rows === 0) {
       throw new Error("training dataset produced no action rows");
@@ -298,6 +280,7 @@ async function loadOrGenerateTrainingInput(tf, args) {
     const labels = new Float32Array(rowSummary.rows);
     const rowCount = fillActionTrainingBuffers(dataset, {
       maxNegativesPerDecision: args.maxNegatives,
+      sampleTier: args.targetTier,
       inputSize: args.inputSize,
       inputs,
       labels,
@@ -336,6 +319,7 @@ async function loadOrGenerateTrainingInput(tf, args) {
     };
     const sourceRowSummary = countActionTrainingRows(source.dataset, {
       maxNegativesPerDecision: args.maxNegatives,
+      sampleTier: args.targetTier,
     });
     if (sourceRowSummary.rows === 0) {
       continue;
@@ -365,6 +349,7 @@ async function loadOrGenerateTrainingInput(tf, args) {
   for (const source of datasetSources) {
     rowCount = fillActionTrainingBuffers(source.dataset, {
       maxNegativesPerDecision: args.maxNegatives,
+      sampleTier: args.targetTier,
       inputSize: args.inputSize,
       inputs,
       labels,
