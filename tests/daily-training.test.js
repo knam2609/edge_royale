@@ -266,3 +266,61 @@ test("promoteLadderModels PR body reports fair failure separately from God promo
   assert.match(prBody, /worst adjacent delta -0\.116216 regressed more than 0\.05/);
   assert.doesNotMatch(prBody, /candidate models passed daily validity \+ improvement gate/);
 });
+
+test("promoteLadderModels can promote fair tiers only while preserving existing God entry", async () => {
+  const tmpRoot = await mkdtemp(join(tmpdir(), "edge-royale-promote-fair-only-"));
+  const midModelPath = "run/models/mid-model.json";
+  const midSummaryPath = "run/models/mid-training-summary.json";
+  const godModelPath = "existing/god-model.json";
+  const manifestPath = "run/candidate-ladder-models.json";
+  const comparisonPath = "run/strict-comparison-summary.json";
+  const existingManifestPath = "existing/ladder-models.json";
+
+  const midModel = createZeroNeuralPolicyModel({ hiddenUnits: 1, seed: 123, targetTier: "mid" });
+  const godModel = createZeroNeuralPolicyModel({
+    hiddenUnits: 1,
+    seed: 1009,
+    targetTier: "god",
+    featureSchemaVersion: GOD_FEATURE_SCHEMA_VERSION,
+  });
+
+  await mkdir(join(tmpRoot, "run", "models"), { recursive: true });
+  await mkdir(join(tmpRoot, "existing"), { recursive: true });
+  await writeFile(join(tmpRoot, midModelPath), `${JSON.stringify(midModel, null, 2)}\n`, "utf8");
+  await writeFile(join(tmpRoot, midSummaryPath), `${JSON.stringify({ target_tier: "mid" }, null, 2)}\n`, "utf8");
+  await writeFile(join(tmpRoot, godModelPath), `${JSON.stringify(godModel, null, 2)}\n`, "utf8");
+  await writeFile(
+    join(tmpRoot, manifestPath),
+    `${JSON.stringify(createEnabledLadderModelManifest({ mid: midModelPath, god: godModelPath }), null, 2)}\n`,
+    "utf8",
+  );
+  await writeFile(
+    join(tmpRoot, comparisonPath),
+    `${JSON.stringify({ passed: true, gate: { metrics: { compared_pairs: 4, failing_pairs: 0 } } }, null, 2)}\n`,
+    "utf8",
+  );
+  await writeFile(
+    join(tmpRoot, existingManifestPath),
+    `${JSON.stringify(createEnabledLadderModelManifest({ god: godModelPath }), null, 2)}\n`,
+    "utf8",
+  );
+
+  const promoted = await promoteLadderModels({
+    candidateManifest: manifestPath,
+    comparisonSummary: comparisonPath,
+    existingManifest: existingManifestPath,
+    promotionScopes: ["fair"],
+    cwd: tmpRoot,
+  });
+
+  assert.deepEqual(
+    promoted.tiers.map((tier) => tier.tier_id),
+    ["mid"],
+  );
+
+  const promotedManifest = JSON.parse(
+    await readFile(join(tmpRoot, "artifacts", "training", "ladder-models.json"), "utf8"),
+  );
+  assert.equal(promotedManifest.tiers.mid.model_path.endsWith("artifacts/training/promoted/models/mid-model.json"), true);
+  assert.equal(promotedManifest.tiers.god.model_path, godModelPath);
+});

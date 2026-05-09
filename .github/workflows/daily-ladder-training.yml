@@ -136,9 +136,20 @@ jobs:
           retention-days: 14
           if-no-files-found: warn
 
-      - name: Promote passing candidate
+      - name: Summarize fair candidate handoff
+        if: always()
+        run: |
+          {
+            echo "### Fair ladder candidate"
+            echo
+            echo "Daily fair comparison passed: \`${{ steps.compare.outputs.comparison_passed || 'false' }}\`"
+            echo "Candidate manifest: \`$CANDIDATE_MANIFEST\`"
+            echo "Strict follow-up workflow: \`Strict Fair Ladder Promotion\` with source run id \`${{ github.run_id }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Promote passing God candidate
         id: promote
-        if: steps.compare.outputs.comparison_passed == 'true' || steps.compare_god.outputs.god_comparison_passed == 'true'
+        if: steps.compare_god.outputs.god_comparison_passed == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -148,6 +159,7 @@ jobs:
             --candidate-manifest "$CANDIDATE_MANIFEST" \
             --comparison-summary "$COMPARISON_SUMMARY" \
             --god-comparison-summary "$GOD_COMPARISON_SUMMARY" \
+            --promote-god \
             --run-root "$RUN_ROOT" \
             --pr-body-out "$PR_BODY"
           git add artifacts/training/ladder-models.json artifacts/training/promoted

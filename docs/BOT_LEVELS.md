@@ -98,13 +98,34 @@ Self Play uses a local `legal_action_mlp` trained from the player's public-obser
 
 ## 5) Benchmark and Promotion Criteria
 
-Bots are promoted only if they meet both:
+Fair ladder promotion now uses two gates:
 
-- Win-rate threshold:
-  - `Top` vs `Mid` >= 65% over at least 500 seeded matches.
-  - `Mid` vs `Noob` >= 70% over at least 500 seeded matches.
-- Stability threshold:
-  - Standard deviation of win-rate under target tolerance across 5 seed batches.
+- Daily fair refresh gate:
+  - Runs in `.github/workflows/daily-ladder-training.yml`.
+  - Validates candidate artifacts, determinism, and matrix improvement signal.
+  - Produces candidate manifests and artifacts for manual review.
+  - Does not update tracked fair runtime models.
+- Strict fair promotion gate:
+  - Runs locally with `npm run train:ladder:strict -- ...` or in `.github/workflows/strict-fair-ladder-promotion.yml`.
+  - Uses full-match `6040` tick games.
+  - Uses `5` fixed seed batches of `100` rounds for each adjacent fair pair.
+  - Applies the calibrated pair floors below plus stability and non-regression checks before tracked fair models can change.
+
+Strict fair adjacent pair thresholds:
+
+- `Mid` vs `Noob` mean resolved win rate >= `0.72`
+- `Top` vs `Mid` mean resolved win rate >= `0.67`
+- `Pro` vs `Top` mean resolved win rate >= `0.52`
+- `Goat` vs `Pro` mean resolved win rate >= `0.52`
+- Every adjacent pair mean resolved fraction >= `0.75`
+- Every adjacent pair win-rate stddev across the `5` batches <= `0.08`
+- No adjacent pair may regress versus the checked-in fair baseline by more than `0.05` resolved win rate
+- No adjacent pair may regress versus the checked-in fair baseline by more than `0.05` resolved fraction
+
+Current strict thresholds are seeded from the May 9, 2026 calibration pass inputs:
+
+- checked-in promoted fair ladder manifest `artifacts/training/ladder-models.json`
+- May 8, 2026 daily candidate artifact from run `25516896901`
 
 Neural fair-tier model artifacts additionally require:
 
@@ -113,7 +134,7 @@ Neural fair-tier model artifacts additionally require:
 - Legal-action-only runtime behavior.
 - Benchmark comparison against heuristic same-tier, adjacent fair tiers, and prior neural snapshots before replacing a playable tier.
 
-Daily GitHub Actions training may open PRs for model refreshes under a lighter improvement gate: tests pass, candidate artifacts validate and benchmark deterministically, average fixed-seed matrix win-rate improves by at least `0.02` after bootstrap, and no adjacent tier pair regresses by more than `0.05`. That daily gate can update checked-in candidate runtime models, but it does not replace the strict promotion thresholds above.
+Daily GitHub Actions training may still open or update the manual-review branch under the lighter improvement gate when God passes. Fair tracked runtime promotion remains blocked on the strict gate above, even if the lighter fair refresh gate passes.
 
 God model artifacts use a separate daily gate. Bootstrap accepts the first valid deterministic same-tier God model. After a baseline God model exists, a candidate must avoid regression versus Goat and score at least `50%` resolved win rate against the prior God model on the fixed-seed comparison.
 

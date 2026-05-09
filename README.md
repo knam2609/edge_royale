@@ -106,7 +106,7 @@ npm run bot:bench -- --model-config artifacts/training/ladder-models.json
 
 ## Daily ladder training
 
-GitHub Actions runs `.github/workflows/daily-ladder-training.yml` every day at `17:37 UTC` and can also be started manually. The workflow runs tests, trains all fair ladder tiers at the balanced large preset, trains a capped God model lane, uploads the full ignored run directory as an Actions artifact, compares fair candidates and God candidates against separate gates, and opens or updates a manual-review PR when either gate passes. If repository settings block Action-created PRs, the workflow still pushes `training/daily-ladder-models` and reports a warning.
+GitHub Actions runs `.github/workflows/daily-ladder-training.yml` every day at `17:37 UTC` and can also be started manually. The workflow runs tests, trains all fair ladder tiers at the balanced large preset, trains a capped God model lane, uploads the full ignored run directory as an Actions artifact, and compares fair candidates and God candidates against separate gates. The daily lane still auto-promotes God when its gate passes, but fair runtime model promotion now waits for the separate strict fair gate.
 
 The workflow commits only promoted runtime files:
 
@@ -114,3 +114,13 @@ The workflow commits only promoted runtime files:
 - `artifacts/training/promoted/**`
 
 Raw datasets and timestamped run outputs stay ignored under `artifacts/training/runs/`.
+
+## Strict fair promotion
+
+Run the stricter fair-promotion check locally with:
+
+```bash
+npm run train:ladder:strict -- --candidate-manifest /private/tmp/edge_royale_ladder_25516896901/candidate-ladder-models.json --seed-base 1909 --batches 5 --rounds 100 --max-ticks 6040
+```
+
+GitHub Actions also exposes `.github/workflows/strict-fair-ladder-promotion.yml` as a manual `workflow_dispatch`. Pass the source daily run id, let it download `ladder-training-<run_id>`, run the strict gate, and promote fair tracked models to `training/daily-ladder-models` only when that stricter gate passes.
