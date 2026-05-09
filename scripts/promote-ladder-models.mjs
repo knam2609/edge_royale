@@ -27,6 +27,7 @@ function parseArgs(argv) {
     prBodyOut: null,
     runRoot: null,
     promotedAt: new Date().toISOString(),
+    promotionScopes: [],
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -41,6 +42,8 @@ function parseArgs(argv) {
     else if (arg === "--pr-body-out" && argv[i + 1]) parsed.prBodyOut = argv[++i];
     else if (arg === "--run-root" && argv[i + 1]) parsed.runRoot = argv[++i];
     else if (arg === "--promoted-at" && argv[i + 1]) parsed.promotedAt = argv[++i];
+    else if (arg === "--promote-fair") parsed.promotionScopes.push("fair");
+    else if (arg === "--promote-god") parsed.promotionScopes.push("god");
   }
 
   if (!parsed.candidateManifest) {
@@ -78,6 +81,10 @@ function formatGateStatus(value) {
   return typeof value === "boolean" ? String(value) : "unknown";
 }
 
+function formatScopeStatus(value) {
+  return value ? "enabled" : "disabled";
+}
+
 function appendReasons(lines, label, reasons) {
   if (!Array.isArray(reasons) || reasons.length === 0) {
     return;
@@ -90,9 +97,11 @@ function buildPrBody({ promoted, comparison, promotedAt }) {
     "# Daily ladder model update",
     "",
     `Promoted at: ${promotedAt}`,
+    `Fair promotion scope: ${formatScopeStatus(promoted.promote_fair)}`,
     `Fair gate passed: ${formatGateStatus(comparison?.passed)}`,
     `Average delta: ${comparison?.gate?.metrics?.average_delta ?? "unknown"}`,
     `Worst adjacent delta: ${comparison?.gate?.metrics?.worst_adjacent_delta ?? "unknown"}`,
+    `God promotion scope: ${formatScopeStatus(promoted.promote_god)}`,
     `God gate passed: ${formatGateStatus(promoted.god_gate_passed)}`,
     `God bootstrap: ${formatGateStatus(promoted.god_gate?.bootstrap)}`,
     "",
@@ -117,6 +126,9 @@ function buildPrBody({ promoted, comparison, promotedAt }) {
 
 export async function promoteLadderModels(args) {
   const cwd = args.cwd ?? process.cwd();
+  const outDir = args.outDir ?? DEFAULT_PROMOTED_DIR;
+  const manifestOut = args.manifestOut ?? DEFAULT_LADDER_MODEL_MANIFEST_PATH;
+  const summaryOut = args.summaryOut ?? DEFAULT_SUMMARY_OUT;
   const rawManifest = await readJson(args.candidateManifest, cwd);
   const manifest = normalizeLadderModelManifest(rawManifest);
   const comparison = args.comparisonSummary ? await readJson(args.comparisonSummary, cwd) : null;
@@ -137,17 +149,23 @@ export async function promoteLadderModels(args) {
   const tiers = [];
   const warnings = [...manifest.warnings];
   const acceptedTierSet = new Set();
+  const selectedScopes =
+    Array.isArray(args.promotionScopes) && args.promotionScopes.length > 0
+      ? new Set(args.promotionScopes)
+      : new Set(["fair", "god"]);
+  const promoteFair = selectedScopes.has("fair");
+  const promoteGod = selectedScopes.has("god");
 
-  if (!comparison) {
+  if (promoteFair && !comparison) {
     for (const tierId of FAIR_LADDER_MODEL_TIERS) {
       acceptedTierSet.add(tierId);
     }
-  } else if (comparison.passed === true) {
+  } else if (promoteFair && comparison.passed === true) {
     for (const tierId of FAIR_LADDER_MODEL_TIERS) {
       acceptedTierSet.add(tierId);
     }
   }
-  if (godComparison?.passed === true) {
+  if (promoteGod && godComparison?.passed === true) {
     acceptedTierSet.add("god");
   }
 
@@ -168,8 +186,8 @@ export async function promoteLadderModels(args) {
       continue;
     }
 
-    const destinationModelPath = promotedModelPath(args.outDir, tierId);
-    const destinationSummaryPath = promotedTrainingSummaryPath(args.outDir, tierId);
+    const destinationModelPath = promotedModelPath(outDir, tierId);
+    const destinationSummaryPath = promotedTrainingSummaryPath(outDir, tierId);
     const summaryPath = sourceTrainingSummaryPath(modelPath, tierId);
 
     await copyJsonFile(modelPath, destinationModelPath, cwd);
@@ -207,6 +225,8 @@ export async function promoteLadderModels(args) {
     candidate_manifest_path: args.candidateManifest,
     comparison_summary_path: args.comparisonSummary ?? null,
     god_comparison_summary_path: args.godComparisonSummary ?? null,
+    promote_fair: promoteFair,
+    promote_god: promoteGod,
     gate_passed: comparison?.passed ?? null,
     god_gate_passed: godComparison?.passed ?? null,
     gate_metrics: comparison?.gate?.metrics ?? null,
@@ -215,8 +235,8 @@ export async function promoteLadderModels(args) {
     warnings,
   };
 
-  const manifestOutPath = resolve(cwd, args.manifestOut);
-  const summaryOutPath = resolve(cwd, args.summaryOut);
+  const manifestOutPath = resolve(cwd, manifestOut);
+  const summaryOutPath = resolve(cwd, summaryOut);
   await mkdir(dirname(manifestOutPath), { recursive: true });
   await mkdir(dirname(summaryOutPath), { recursive: true });
   await writeFile(manifestOutPath, `${JSON.stringify(promotedManifest, null, 2)}\n`, "utf8");

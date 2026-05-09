@@ -12,6 +12,7 @@
     "train:bot": "node scripts/train-bot.mjs",
     "train:ladder": "bash scripts/train-bot-ladder.sh",
     "train:ladder:compare": "node scripts/compare-ladder-models.mjs",
+    "train:ladder:strict": "node scripts/strict-ladder-gate.mjs",
     "train:god:compare": "node scripts/compare-god-models.mjs",
     "train:ladder:promote": "node scripts/promote-ladder-models.mjs",
     "model:bench": "node scripts/model-benchmark.mjs"

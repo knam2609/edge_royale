@@ -102,7 +102,7 @@ God artifacts use `training_config.target_tier: "god"` and `feature_schema_versi
 
 ## Promotion Gate
 
-The current gate is pipeline correctness:
+Fair ladder still keeps the pipeline-correctness gate:
 
 - dataset export is replayable from saved actions
 - model artifact validates
@@ -110,7 +110,15 @@ The current gate is pipeline correctness:
 - saved model benchmark output is deterministic
 - trained model is compared against heuristic same-tier and adjacent fair tiers before any gameplay promotion
 
-This gate is still about pipeline correctness first. Ladder ordering and stronger promotion thresholds remain follow-up work.
+Tracked fair runtime models now require a second, stricter gate after that correctness pass. `scripts/strict-ladder-gate.mjs` benchmarks only adjacent fair pairs (`mid>noob`, `top>mid`, `pro>top`, `goat>pro`) at full-match `6040` ticks with `5` fixed seed batches of `100` rounds per pair. The current strict config lives in `src/ai/strictFairGateConfig.js` and requires:
+
+- pair mean resolved win rate floors of `0.72`, `0.67`, `0.52`, and `0.52`
+- mean resolved fraction >= `0.75` for every adjacent pair
+- win-rate stddev <= `0.08` for every adjacent pair
+- no adjacent pair win-rate regression vs checked-in fair baseline below `-0.05`
+- no adjacent pair resolved-rate regression vs checked-in fair baseline below `-0.05`
+
+These thresholds were seeded from the current checked-in fair manifest and the May 8, 2026 daily candidate artifact from run `25516896901`. They are intentionally strict enough that current fair ladder promotion remains blocked until the ladder is retuned.
 
 Playable God uses `scripts/compare-god-models.mjs`. Bootstrap accepts a valid deterministic same-tier God model. After bootstrap, the candidate God model must avoid regression versus Goat and score at least `0.5` resolved win rate against the prior God model.
 
@@ -148,7 +156,7 @@ LADDER_BENCH_ROUNDS=25
 LADDER_BENCH_MAX_TICKS=6040
 ```
 
-`6040` ticks covers one full match: 180 seconds of regulation, 120 seconds of overtime, and a 40-tick buffer at 20 ticks per second. The reduced `150` episodes per shard keeps the daily workflow under the current 180-minute runtime budget while avoiding the all-draw benchmark signal produced by short 900-tick runs.
+`6040` ticks covers one full match: 180 seconds of regulation, 120 seconds of overtime, and a 40-tick buffer at 20 ticks per second. The reduced `150` episodes per shard keeps the daily workflow under the current `350` minute workflow timeout while avoiding the all-draw benchmark signal produced by short `900` tick runs.
 
 After training, `scripts/compare-ladder-models.mjs` benchmarks the candidate manifest against the checked-in manifest with the same seeds and full-match `6040` tick cap. The daily improvement gate passes only when:
 
@@ -157,7 +165,9 @@ After training, `scripts/compare-ladder-models.mjs` benchmarks the candidate man
 - average win-rate delta is at least `+0.02` after bootstrap
 - no adjacent tier pair regresses by more than `0.05`
 
-When either fair or God gate passes, `scripts/promote-ladder-models.mjs` copies accepted models and per-tier summaries to `artifacts/training/promoted/`, preserves unchanged manifest entries, writes `artifacts/training/ladder-models.json`, and prepares the PR body. The workflow pushes branch `training/daily-ladder-models` and opens or updates a PR to `main`; it does not auto-merge. If repository settings block Action-created PRs, the workflow leaves the branch pushed and emits a warning instead of failing. Configure `LADDER_MODEL_PR_TOKEN` with pull-request permissions when automatic PR creation is required without changing repository workflow permissions.
+The daily workflow now uses that lighter fair comparison only as candidate refresh signal. It uploads the full run artifact, writes the fair candidate manifest, and records a strict-gate handoff in the workflow summary. Daily automation still auto-promotes God when the God gate passes by calling `scripts/promote-ladder-models.mjs --promote-god`, preserving unchanged fair entries.
+
+Strict fair promotion happens in `.github/workflows/strict-fair-ladder-promotion.yml`. That manual workflow takes a daily source run id, downloads `ladder-training-<run_id>`, runs `scripts/strict-ladder-gate.mjs`, and only on strict pass copies fair tracked models into `artifacts/training/promoted/`, preserves unchanged manifest entries, writes `artifacts/training/ladder-models.json`, and pushes `training/daily-ladder-models` for review. If repository settings block Action-created PRs, the workflow leaves the branch pushed and emits a warning instead of failing. Configure `LADDER_MODEL_PR_TOKEN` with pull-request permissions when automatic PR creation is required without changing repository workflow permissions.
 
 The first accepted run can bootstrap from a heuristic baseline if no checked-in models exist. This daily improvement gate is not the strict promotion gate in `docs/BOT_LEVELS.md`; it is a safe automatic refresh gate for candidate model artifacts.
 
