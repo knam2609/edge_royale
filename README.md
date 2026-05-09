@@ -85,6 +85,7 @@ bash scripts/train-bot-ladder.sh
 ```
 
 By default the script writes a timestamped run under `artifacts/training/runs/`, exports shard files for each requested tier, trains one saved model per tier, and benchmarks each saved model. Fair ladder tiers are `noob`, `mid`, `top`, `pro`, and `goat`; `god` uses a hidden-info feature schema for the playable boss model.
+Fair ladder export now uses built-in mixed curricula instead of same-tier self-play only: `noob` trains from `noob vs mid`, `mid` from `mid vs noob` plus `mid vs top`, `top` from `top vs mid` plus `top vs pro`, `pro` from `pro vs top` plus `pro vs goat`, and `goat` from `goat vs mid/top/pro`. `LADDER_EPISODES` is split across those pairings per tier, with tiny smoke presets clamped so every pairing still gets at least one episode.
 
 Customize a run with env vars when needed:
 
@@ -93,6 +94,7 @@ LADDER_RUN_NAME=ladder-v2 LADDER_SHARDS=4 LADDER_EPISODES=500 LADDER_BENCH_ROUND
 ```
 
 Generated training artifacts are ignored by git. `data:export` still writes compact JSON shard files by default, and `train:bot` trains a specific fair ladder tier with `--target-tier <tier>`.
+When mixed-tier dataset dirs are supplied, `train:bot` now filters supervised rows to the requested target tier so the target model sees adjacent-tier opponents without imitating their actions.
 
 Fair ladder tiers and playable God use deterministic plain-JS inference when a valid same-tier model artifact is supplied and fall back to their heuristic policies otherwise.
 `train:ladder` also writes `artifacts/training/ladder-models.json`, the local manifest that points each trained fair tier at a saved model.

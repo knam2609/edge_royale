@@ -3,6 +3,37 @@ import { resolve } from "node:path";
 
 import { hashTrainingDataset } from "../src/ai/trainingData.js";
 
+const DEFAULT_EVAL_TIERS = Object.freeze({
+  default: Object.freeze(["noob", "mid", "top"]),
+  noob: Object.freeze(["noob", "mid"]),
+  mid: Object.freeze(["noob", "mid", "top"]),
+  top: Object.freeze(["mid", "top", "pro"]),
+  pro: Object.freeze(["top", "pro", "goat"]),
+  goat: Object.freeze(["mid", "top", "pro", "goat"]),
+  god: Object.freeze(["goat", "god"]),
+});
+
+const FAIR_TRAINING_CURRICULUM = Object.freeze({
+  noob: Object.freeze([Object.freeze({ id: "noob-vs-mid", tiers: Object.freeze(["noob", "mid"]) })]),
+  mid: Object.freeze([
+    Object.freeze({ id: "mid-vs-noob", tiers: Object.freeze(["mid", "noob"]) }),
+    Object.freeze({ id: "mid-vs-top", tiers: Object.freeze(["mid", "top"]) }),
+  ]),
+  top: Object.freeze([
+    Object.freeze({ id: "top-vs-mid", tiers: Object.freeze(["top", "mid"]) }),
+    Object.freeze({ id: "top-vs-pro", tiers: Object.freeze(["top", "pro"]) }),
+  ]),
+  pro: Object.freeze([
+    Object.freeze({ id: "pro-vs-top", tiers: Object.freeze(["pro", "top"]) }),
+    Object.freeze({ id: "pro-vs-goat", tiers: Object.freeze(["pro", "goat"]) }),
+  ]),
+  goat: Object.freeze([
+    Object.freeze({ id: "goat-vs-mid", tiers: Object.freeze(["goat", "mid"]) }),
+    Object.freeze({ id: "goat-vs-top", tiers: Object.freeze(["goat", "top"]) }),
+    Object.freeze({ id: "goat-vs-pro", tiers: Object.freeze(["goat", "pro"]) }),
+  ]),
+});
+
 function normalizeStringArray(values) {
   return Array.isArray(values)
     ? values
@@ -10,6 +41,17 @@ function normalizeStringArray(values) {
         .map((value) => value.trim())
         .filter((value) => value.length > 0)
     : [];
+}
+
+function normalizeTierId(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function cloneTrainingDatasetPlan(dataset) {
+  return {
+    id: dataset.id,
+    tiers: [...dataset.tiers],
+  };
 }
 
 function normalizeDatasetMaxTicks(rawMaxTicks, datasetPath = null) {
@@ -53,6 +95,46 @@ function summarizeDataset(rawDataset, datasetPath = null) {
     max_ticks: maxTicks,
     tiers: normalizeStringArray(rawDataset.tiers),
   };
+}
+
+export function getDefaultEvalTiers(targetTier) {
+  const tierId = normalizeTierId(targetTier);
+  return [...(DEFAULT_EVAL_TIERS[tierId] ?? DEFAULT_EVAL_TIERS.default)];
+}
+
+export function getTierTrainingDatasets(targetTier) {
+  const tierId = normalizeTierId(targetTier);
+  if (FAIR_TRAINING_CURRICULUM[tierId]) {
+    return FAIR_TRAINING_CURRICULUM[tierId].map(cloneTrainingDatasetPlan);
+  }
+  if (tierId === "god" && DEFAULT_EVAL_TIERS.god) {
+    return [{ id: "god", tiers: ["god"] }];
+  }
+  if (tierId.length > 0) {
+    return [{ id: tierId, tiers: [tierId] }];
+  }
+  return [{ id: "goat", tiers: ["goat"] }];
+}
+
+export function splitEpisodesAcrossPairings(totalEpisodes, pairingCount) {
+  const total = Number.isFinite(Number(totalEpisodes)) ? Math.max(1, Math.floor(Number(totalEpisodes))) : 1;
+  const count = Number.isFinite(Number(pairingCount)) ? Math.max(1, Math.floor(Number(pairingCount))) : 1;
+  if (total < count) {
+    return Array.from({ length: count }, () => 1);
+  }
+
+  const baseEpisodes = Math.floor(total / count);
+  const remainder = total % count;
+  return Array.from({ length: count }, (_, index) => baseEpisodes + (index < remainder ? 1 : 0));
+}
+
+export function buildTierTrainingDatasets(targetTier, totalEpisodes) {
+  const datasets = getTierTrainingDatasets(targetTier);
+  const episodePlan = splitEpisodesAcrossPairings(totalEpisodes, datasets.length);
+  return datasets.map((dataset, index) => ({
+    ...cloneTrainingDatasetPlan(dataset),
+    episodes: episodePlan[index] ?? 1,
+  }));
 }
 
 export async function resolveDatasetInputPaths({

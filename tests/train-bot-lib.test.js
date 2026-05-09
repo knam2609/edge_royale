@@ -6,7 +6,12 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 
-import { resolveDatasetInputPaths } from "../scripts/train-bot-lib.mjs";
+import {
+  buildTierTrainingDatasets,
+  getDefaultEvalTiers,
+  resolveDatasetInputPaths,
+} from "../scripts/train-bot-lib.mjs";
+import { countActionTrainingRows } from "../src/ai/neuralTraining.js";
 import { normalizeNeuralPolicyModel } from "../src/ai/neuralModel.js";
 import { generateTrainingDataset, hashTrainingDataset, hashTrainingDatasetCorpus } from "../src/ai/trainingData.js";
 
@@ -80,6 +85,25 @@ test("resolveDatasetInputPaths rejects empty dataset directories", async () => {
   });
 });
 
+test("buildTierTrainingDatasets uses mixed fair curricula and keeps God unchanged", () => {
+  assert.deepEqual(buildTierTrainingDatasets("noob", 5), [{ id: "noob-vs-mid", tiers: ["noob", "mid"], episodes: 5 }]);
+  assert.deepEqual(buildTierTrainingDatasets("goat", 5), [
+    { id: "goat-vs-mid", tiers: ["goat", "mid"], episodes: 2 },
+    { id: "goat-vs-top", tiers: ["goat", "top"], episodes: 2 },
+    { id: "goat-vs-pro", tiers: ["goat", "pro"], episodes: 1 },
+  ]);
+  assert.deepEqual(buildTierTrainingDatasets("goat", 2), [
+    { id: "goat-vs-mid", tiers: ["goat", "mid"], episodes: 1 },
+    { id: "goat-vs-top", tiers: ["goat", "top"], episodes: 1 },
+    { id: "goat-vs-pro", tiers: ["goat", "pro"], episodes: 1 },
+  ]);
+  assert.deepEqual(buildTierTrainingDatasets("god", 3), [{ id: "god", tiers: ["god"], episodes: 3 }]);
+});
+
+test("getDefaultEvalTiers keeps goat on adjacent fair window", () => {
+  assert.deepEqual(getDefaultEvalTiers("goat"), ["mid", "top", "pro", "goat"]);
+});
+
 test("train-bot consumes shard directories and writes a valid model artifact", async () => {
   await withTempDir(async (tempDir) => {
     const datasetDir = join(tempDir, "datasets");
@@ -137,6 +161,87 @@ test("train-bot consumes shard directories and writes a valid model artifact", a
     assert.equal(model.training_config.target_tier, "goat");
     assert.equal(summary.dataset_sources.length, 2);
     assert.ok(summary.dataset_sources.every((source) => source.max_ticks === baseDataset.max_ticks));
+  });
+});
+
+test("train-bot filters mixed-tier rows to target tier across dataset directories", async () => {
+  await withTempDir(async (tempDir) => {
+    const firstDatasetDir = join(tempDir, "datasets", "top-vs-mid");
+    const secondDatasetDir = join(tempDir, "datasets", "top-vs-pro");
+    const outputDir = join(tempDir, "outputs");
+    await mkdir(firstDatasetDir, { recursive: true });
+    await mkdir(secondDatasetDir, { recursive: true });
+    await mkdir(outputDir, { recursive: true });
+
+    const topMidDataset = generateTrainingDataset({
+      tiers: ["top", "mid"],
+      seed: 2040,
+      episodes: 2,
+      maxTicks: 120,
+      maxStoredNegatives: 2,
+    });
+    const topProDataset = generateTrainingDataset({
+      tiers: ["top", "pro"],
+      seed: 2041,
+      episodes: 2,
+      maxTicks: 120,
+      maxStoredNegatives: 2,
+    });
+
+    await writeFile(join(firstDatasetDir, "shard-001.json"), `${JSON.stringify(topMidDataset)}\n`, "utf8");
+    await writeFile(join(secondDatasetDir, "shard-001.json"), `${JSON.stringify(topProDataset)}\n`, "utf8");
+
+    const expectedRowSummary = [topMidDataset, topProDataset]
+      .map((dataset) => countActionTrainingRows(dataset, { maxNegativesPerDecision: 2, sampleTier: "top" }))
+      .reduce(
+        (total, current) => ({
+          rows: total.rows + current.rows,
+          positives: total.positives + current.positives,
+          negatives: total.negatives + current.negatives,
+        }),
+        { rows: 0, positives: 0, negatives: 0 },
+      );
+
+    const modelPath = join(outputDir, "top-model.json");
+    const summaryPath = join(outputDir, "top-summary.json");
+    await execFileAsync(
+      process.execPath,
+      [
+        "scripts/train-bot.mjs",
+        "--target-tier",
+        "top",
+        "--dataset-dir",
+        firstDatasetDir,
+        "--dataset-dir",
+        secondDatasetDir,
+        "--iterations",
+        "1",
+        "--epochs",
+        "1",
+        "--eval-rounds",
+        "1",
+        "--eval-max-ticks",
+        "80",
+        "--max-negatives",
+        "2",
+        "--out",
+        modelPath,
+        "--summary-out",
+        summaryPath,
+      ],
+      {
+        cwd: process.cwd(),
+      },
+    );
+
+    const model = JSON.parse(await readFile(modelPath, "utf8"));
+    const summary = JSON.parse(await readFile(summaryPath, "utf8"));
+
+    assert.ok(normalizeNeuralPolicyModel(model));
+    assert.equal(model.training_config.target_tier, "top");
+    assert.deepEqual(model.training_config.row_summary, expectedRowSummary);
+    assert.deepEqual(summary.row_summary, expectedRowSummary);
+    assert.equal(summary.dataset_sources.length, 2);
   });
 });
 

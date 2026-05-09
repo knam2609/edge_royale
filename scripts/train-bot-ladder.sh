@@ -37,15 +37,17 @@ if ! [[ "$LADDER_SHARDS" =~ ^[0-9]+$ ]] || [[ "$LADDER_SHARDS" -lt 1 ]]; then
   exit 1
 fi
 
-default_eval_tiers() {
-  case "$1" in
-    noob) echo "noob,mid" ;;
-    mid) echo "noob,mid,top" ;;
-    top) echo "mid,top,pro" ;;
-    pro) echo "top,pro,goat" ;;
-    god) echo "goat,god" ;;
-    *) echo "noob,mid,top" ;;
-  esac
+training_dataset_plan_lines() {
+  local tier="$1"
+  local episodes="$2"
+  node --input-type=module -e '
+    import { buildTierTrainingDatasets } from "./scripts/train-bot-lib.mjs";
+
+    const [targetTier, totalEpisodes] = process.argv.slice(1);
+    for (const dataset of buildTierTrainingDatasets(targetTier, Number.parseInt(totalEpisodes, 10))) {
+      console.log([dataset.id, dataset.episodes, dataset.tiers.join(",")].join("\t"));
+    }
+  ' "$tier" "$episodes"
 }
 
 episodes_for_tier() {
@@ -82,34 +84,44 @@ for tier_index in "${!TRAIN_TIERS[@]}"; do
 
   echo
   echo "==> tier=${tier} exporting shards episodes=${tier_episodes}"
-  for ((shard_index = 1; shard_index <= LADDER_SHARDS; shard_index += 1)); do
-    shard_seed=$((LADDER_BASE_SEED + tier_index * 1000 + (shard_index - 1) * LADDER_SEED_STEP))
-    shard_path=$(printf "%s/shard-%03d.json" "$dataset_dir" "$shard_index")
-    echo "  shard ${shard_index}/${LADDER_SHARDS} seed=${shard_seed}"
-    npm run data:export -- \
-      --seed "$shard_seed" \
-      --episodes "$tier_episodes" \
-      --max-ticks "$LADDER_MAX_TICKS" \
-      --tiers "$tier" \
-      --max-stored-negatives "$LADDER_DATASET_MAX_NEGATIVES" \
-      --out "$shard_path"
+  mapfile -t dataset_plans < <(training_dataset_plan_lines "$tier" "$tier_episodes")
+  train_dataset_args=()
+  dataset_seed_offset=0
+  for dataset_plan in "${dataset_plans[@]}"; do
+    IFS=$'\t' read -r dataset_id dataset_episodes dataset_tiers <<< "$dataset_plan"
+    dataset_dir="${LADDER_OUTPUT_ROOT}/datasets/${tier}/${dataset_id}"
+    mkdir -p "$dataset_dir"
+
+    echo "  dataset=${dataset_id} tiers=${dataset_tiers} episodes=${dataset_episodes}"
+    for ((shard_index = 1; shard_index <= LADDER_SHARDS; shard_index += 1)); do
+      shard_seed=$((LADDER_BASE_SEED + tier_index * 1000 + dataset_seed_offset + (shard_index - 1) * LADDER_SEED_STEP))
+      shard_path=$(printf "%s/shard-%03d.json" "$dataset_dir" "$shard_index")
+      echo "    shard ${shard_index}/${LADDER_SHARDS} seed=${shard_seed}"
+      npm run data:export -- \
+        --seed "$shard_seed" \
+        --episodes "$dataset_episodes" \
+        --max-ticks "$LADDER_MAX_TICKS" \
+        --tiers "$dataset_tiers" \
+        --max-stored-negatives "$LADDER_DATASET_MAX_NEGATIVES" \
+        --out "$shard_path"
+    done
+    train_dataset_args+=(--dataset-dir "$dataset_dir")
+    dataset_seed_offset=$((dataset_seed_offset + 100))
   done
 
   train_seed=$((LADDER_TRAIN_SEED_BASE + tier_index * LADDER_TRAIN_SEED_STEP))
-  eval_tiers="$(default_eval_tiers "$tier")"
 
   echo
   echo "==> tier=${tier} training model"
   npm run train:bot -- \
     --target-tier "$tier" \
     --seed "$train_seed" \
-    --dataset-dir "$dataset_dir" \
+    "${train_dataset_args[@]}" \
     --iterations "$LADDER_ITERATIONS" \
     --epochs "$LADDER_EPOCHS" \
     --batch-size "$LADDER_BATCH_SIZE" \
     --learning-rate "$LADDER_LEARNING_RATE" \
     --max-negatives "$LADDER_MAX_NEGATIVES" \
-    --eval-tiers "$eval_tiers" \
     --eval-rounds "$LADDER_EVAL_ROUNDS" \
     --eval-max-ticks "$LADDER_EVAL_MAX_TICKS" \
     --out "$model_path" \

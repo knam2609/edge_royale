@@ -1,7 +1,22 @@
-function forEachActionTrainingRow(dataset, { maxNegativesPerDecision = 4 } = {}, visitRow) {
+function normalizeSampleTier(sample, dataset) {
+  if (typeof sample?.tier === "string" && sample.tier.length > 0) {
+    return sample.tier;
+  }
+  const datasetTiers = Array.isArray(dataset?.tiers)
+    ? dataset.tiers.filter((tier) => typeof tier === "string" && tier.length > 0)
+    : [];
+  return datasetTiers.length === 1 ? datasetTiers[0] : null;
+}
+
+function forEachActionTrainingRow(dataset, { maxNegativesPerDecision = 4, sampleTier = null } = {}, visitRow) {
   const negativeLimit = Math.max(0, Math.floor(maxNegativesPerDecision));
+  const normalizedSampleTier = typeof sampleTier === "string" && sampleTier.length > 0 ? sampleTier : null;
   for (const episode of Array.isArray(dataset?.episodes) ? dataset.episodes : []) {
     for (const sample of Array.isArray(episode.samples) ? episode.samples : []) {
+      const rowSampleTier = normalizeSampleTier(sample, dataset);
+      if (normalizedSampleTier && rowSampleTier !== normalizedSampleTier) {
+        continue;
+      }
       const observation = sample.observation?.vector;
       const legalActions = Array.isArray(sample.legal_actions) ? sample.legal_actions : [];
       const chosenIndex = Number(sample.chosen_action_index);
@@ -17,6 +32,7 @@ function forEachActionTrainingRow(dataset, { maxNegativesPerDecision = 4 } = {},
           actionFeatures: chosen.action_features,
           label: 1,
           reward: Number(sample.reward) || 0,
+          sampleTier: rowSampleTier,
         });
       }
 
@@ -34,6 +50,7 @@ function forEachActionTrainingRow(dataset, { maxNegativesPerDecision = 4 } = {},
           actionFeatures: candidate.action_features,
           label: 0,
           reward: Number(sample.reward) || 0,
+          sampleTier: rowSampleTier,
         });
         negatives += 1;
       }
@@ -41,26 +58,30 @@ function forEachActionTrainingRow(dataset, { maxNegativesPerDecision = 4 } = {},
   }
 }
 
-export function buildActionTrainingRows(dataset, { maxNegativesPerDecision = 4 } = {}) {
+export function buildActionTrainingRows(dataset, { maxNegativesPerDecision = 4, sampleTier = null } = {}) {
   const rows = [];
-  forEachActionTrainingRow(dataset, { maxNegativesPerDecision }, ({ observation, actionFeatures, label, reward }) => {
-    rows.push({
-      input: [...observation, ...actionFeatures],
-      label,
-      reward,
-    });
-  });
+  forEachActionTrainingRow(
+    dataset,
+    { maxNegativesPerDecision, sampleTier },
+    ({ observation, actionFeatures, label, reward }) => {
+      rows.push({
+        input: [...observation, ...actionFeatures],
+        label,
+        reward,
+      });
+    },
+  );
   return rows;
 }
 
-export function countActionTrainingRows(dataset, { maxNegativesPerDecision = 4 } = {}) {
+export function countActionTrainingRows(dataset, { maxNegativesPerDecision = 4, sampleTier = null } = {}) {
   const summary = {
     rows: 0,
     positives: 0,
     negatives: 0,
   };
 
-  forEachActionTrainingRow(dataset, { maxNegativesPerDecision }, ({ label }) => {
+  forEachActionTrainingRow(dataset, { maxNegativesPerDecision, sampleTier }, ({ label }) => {
     summary.rows += 1;
     if (label === 1) {
       summary.positives += 1;
@@ -74,7 +95,7 @@ export function countActionTrainingRows(dataset, { maxNegativesPerDecision = 4 }
 
 export function fillActionTrainingBuffers(
   dataset,
-  { maxNegativesPerDecision = 4, inputSize, inputs, labels, rowOffset = 0 } = {},
+  { maxNegativesPerDecision = 4, sampleTier = null, inputSize, inputs, labels, rowOffset = 0 } = {},
 ) {
   if (!Number.isInteger(inputSize) || inputSize <= 0) {
     throw new Error(`invalid action training input size: ${inputSize}`);
@@ -89,7 +110,7 @@ export function fillActionTrainingBuffers(
   let rowIndex = Math.max(0, Math.floor(Number(rowOffset) || 0));
   forEachActionTrainingRow(
     dataset,
-    { maxNegativesPerDecision },
+    { maxNegativesPerDecision, sampleTier },
     ({ observation, actionFeatures, label }) => {
       if (observation.length + actionFeatures.length !== inputSize) {
         throw new Error(

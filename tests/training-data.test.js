@@ -110,6 +110,41 @@ test("generated datasets can cap stored negative legal actions", () => {
   assert.equal(rowSummary.rows, rowSummary.positives + rowSummary.negatives);
 });
 
+test("mixed-tier datasets can filter rows by sample tier", () => {
+  const maxNegativesPerDecision = 2;
+  const dataset = generateTrainingDataset({
+    tiers: ["top", "pro"],
+    seed: 717,
+    episodes: 4,
+    maxTicks: 120,
+    maxStoredNegatives: maxNegativesPerDecision,
+  });
+
+  const sampleCounts = dataset.episodes.reduce(
+    (totals, episode) => {
+      for (const sample of episode.samples) {
+        totals[sample.tier] = (totals[sample.tier] ?? 0) + 1;
+      }
+      return totals;
+    },
+    { top: 0, pro: 0 },
+  );
+
+  const allRows = countActionTrainingRows(dataset, { maxNegativesPerDecision });
+  const topRows = countActionTrainingRows(dataset, { maxNegativesPerDecision, sampleTier: "top" });
+  const proRows = countActionTrainingRows(dataset, { maxNegativesPerDecision, sampleTier: "pro" });
+  const topTrainingRows = buildActionTrainingRows(dataset, { maxNegativesPerDecision, sampleTier: "top" });
+  const proTrainingRows = buildActionTrainingRows(dataset, { maxNegativesPerDecision, sampleTier: "pro" });
+
+  assert.ok(sampleCounts.top > 0);
+  assert.ok(sampleCounts.pro > 0);
+  assert.equal(topRows.positives, sampleCounts.top);
+  assert.equal(proRows.positives, sampleCounts.pro);
+  assert.equal(topRows.rows + proRows.rows, allRows.rows);
+  assert.equal(topTrainingRows.length, topRows.rows);
+  assert.equal(proTrainingRows.length, proRows.rows);
+});
+
 test("dataset corpus hash is deterministic and order-sensitive", () => {
   assert.equal(hashTrainingDatasetCorpus(["alpha", "beta"]), hashTrainingDatasetCorpus(["alpha", "beta"]));
   assert.notEqual(hashTrainingDatasetCorpus(["alpha", "beta"]), hashTrainingDatasetCorpus(["beta", "alpha"]));
