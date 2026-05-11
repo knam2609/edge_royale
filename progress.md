@@ -2,8 +2,11 @@
 
 ## Current State
 
-- As of May 10, 2026, local `main` is at `dfd0b221becb96e722c504ca6c53ed0930796f2d` with uncommitted strict fair curriculum prep: `scripts/train-bot-ladder.sh` now exports built-in mixed-opponent fair datasets, `scripts/train-bot.mjs` and `src/ai/neuralTraining.js` now filter mixed dataset rows to the requested `target_tier`, and docs/tests were updated to match.
-- Fair tracked runtime promotion still uses a separate strict lane: `npm run train:ladder:strict -- ...` and `.github/workflows/strict-fair-ladder-promotion.yml`. Daily training still trains fair candidates and uploads artifacts, but only God may auto-promote from `.github/workflows/daily-ladder-training.yml`.
+- As of May 11, 2026, strict fair promotion path contract is fixed locally: `.github/workflows/strict-fair-ladder-promotion.yml` now downloads the daily artifact into `artifacts/training/runs/daily-<source_run_id>`, matching embedded candidate manifest model paths.
+- GitHub has not used that fix yet. Manual strict workflow rerun `25664511411` still executed the old checked-in workflow with `RUN_ROOT=artifacts/training/runs/strict-25636585475`, so it again reported `candidate_model_tiers=none`.
+- The May 11, 2026 strict workflow runs `25659568238` and `25664511411` are both invalid as ladder-strength evidence. Both used the old `strict-<run_id>` extraction path mismatch, not real fair candidate loading.
+- Local strict smoke replay against daily run `25636585475` does load real fair candidate models from the downloaded artifact: `candidate_model_tiers=noob,mid,top,pro,goat`.
+- Fair tracked runtime promotion remains blocked. Latest reviewed daily fair signal is still run `25636585475`, which failed the lighter daily gate at `average_delta=-0.020634` and `worst_adjacent_delta=-0.16093`.
 - `src/ai/strictFairGateConfig.js` remains unchanged from the May 9, 2026 calibration seed: `mid>noob 0.72`, `top>mid 0.67`, `pro>top 0.52`, `goat>pro 0.52`, mean resolved fraction `0.75`, win-rate stddev cap `0.08`, and per-pair regression caps `0.05`.
 
 ## Source of Truth
@@ -19,41 +22,40 @@
 
 ## What Works
 
-- Fair ladder export now uses built-in curricula instead of same-tier-only self-play: `noob -> noob vs mid`, `mid -> mid vs noob/top`, `top -> top vs mid/pro`, `pro -> pro vs top/goat`, `goat -> goat vs mid/top/pro`; `god` remains single-tier.
-- `train:bot` now supports mixed-tier dataset dirs without cross-tier imitation leakage because action rows are filtered to `training_config.target_tier` before row counting and buffer fill; default goat eval opponents are now `mid,top,pro,goat`.
-- Tests now cover mixed-tier row filtering, curriculum episode splits (including tiny clamped smoke presets), goat eval defaults, multi-dir target-tier training, strict gate behavior, and workflow split behavior.
-- `scripts/strict-ladder-gate.mjs` emits machine-readable strict fair summaries with `thresholds`, `batches`, `pairs`, `baseline_deltas`, and `gate` results, and it also exposes calibration mode for threshold recommendation output.
-- `scripts/promote-ladder-models.mjs` now supports fair-only or God-only promotion scopes while preserving untouched manifest entries, so strict fair promotion can update tracked fair models without clobbering an existing God entry.
-- Daily training still runs tests, trains fair and God candidates, uploads the full run artifact, compares fair and God candidates, and auto-promotes God only. The workflow step summary now records the fair candidate handoff for the strict manual lane.
-- `.github/workflows/strict-fair-ladder-promotion.yml` can download `ladder-training-<run_id>`, run the strict fair gate, and push `training/daily-ladder-models` only when the stricter fair gate passes.
+- Fair ladder export still uses built-in mixed-opponent curricula, target-tier row filtering, strict gate summaries, and fair-only/God-only promotion scopes from the May 10, 2026 training pipeline slice.
+- Local repo workflow contract is aligned with the daily artifact layout, so downloaded candidate manifests can resolve same-tier fair model files without manifest rewriting once this change reaches GitHub.
+- Regression coverage now guards the strict workflow split and asserts the strict lane uses `artifacts/training/runs/daily-${{ github.event.inputs.source_run_id }}` instead of the broken `strict-*` path family.
+- Local strict smoke replay on the downloaded May 10, 2026 daily artifact proves the fixed path contract loads fair candidate tiers instead of falling back to heuristics.
 
 ## Known Gaps
 
-- No new full-match `daily-ladder-training` artifact has been reviewed after the curriculum change, so fair tracked runtime promotion is still blocked until the next daily or manual workflow run shows whether adjacent fair pairs improved.
+- No new full-match strict GitHub rerun has completed with the fixed workflow file on GitHub; real full-match adjacent-pair strict results for run `25636585475` still need confirmation from Actions after the local patch is pushed.
 - Checked-in fair promoted models still come from legacy short-cap run `25276131849`, so their `training_config.max_ticks: 900` remains provenance until a newer full-match `6040` fair promotion passes the strict gate.
-- The full `5x100` adjacent-pair calibration command still was not rerun after the curriculum change; strict thresholds remain seeded from the checked-in fair manifest and run `25516896901` artifact data rather than a fresh completed local calibration sweep.
+- Latest daily fair candidate evidence still shows regression under the lighter gate: run `25636585475` reported `average_delta=-0.020634` and `worst_adjacent_delta=-0.16093`.
 - Browser self RL is intentionally lightweight reward-weighted fine-tuning, not a full policy-gradient system.
 - Telemetry/export pipeline work from the roadmap is still incomplete beyond the current deterministic training export hooks.
 
 ## Next Tasks
 
-1. Review the next `daily-ladder-training` artifact, or manually dispatch the workflow, to measure whether the mixed-opponent curriculum fixes the adjacent fair regressions from run `25516896901`.
-2. Run `npm run train:ladder:strict -- --candidate-manifest <latest artifact> --seed-base 1909 --batches 5 --rounds 100 --max-ticks 6040` against the next fair candidate and record which adjacent pairs still fail, if any.
+1. Get the local strict workflow path fix onto GitHub, then re-dispatch `.github/workflows/strict-fair-ladder-promotion.yml` for source run `25636585475` and confirm the strict gate reports `candidate_model_tiers=noob,mid,top,pro,goat` instead of `none`.
+2. Record the real full-match strict pair failures from the first rerun that uses the fixed workflow file, then use those pair-level results to choose the next ladder-tuning slice.
 3. Replace legacy short-cap fair promoted models only after a new full-match `6040` fair promotion passes the strict gate.
 4. Continue telemetry/export pipeline work from `docs/IMPLEMENTATION_PLAN.md` and `docs/TRAINING_PIPELINE.md` so match data can support future self-play training beyond current local samples.
 5. Extend the browser smoke beyond seeded self-training flows if future client changes need layout, mobile, or ladder-manifest coverage.
 
 ## Validation
 
-- May 10, 2026: `bash -n scripts/train-bot-ladder.sh` -> passed.
-- May 10, 2026: `node --test tests/training-data.test.js tests/train-bot-lib.test.js tests/daily-training.test.js tests/strict-ladder-gate.test.js` -> 30 tests passed.
-- May 10, 2026: `npm test` -> 139 tests passed.
-- May 10, 2026: not run locally by design: `bash scripts/train-bot-ladder.sh` and `npm run train:ladder:strict -- ...` full-match validation still waits for the next daily workflow artifact or an explicit manual run because of runtime cost.
+- May 11, 2026: `node --test tests/strict-ladder-gate.test.js tests/daily-training.test.js` -> 16 tests passed.
+- May 11, 2026: `npm test` -> 139 tests passed.
+- May 11, 2026: `gh run download 25636585475 --name ladder-training-25636585475 --dir artifacts/training/runs/daily-25636585475` -> passed.
+- May 11, 2026: `node scripts/strict-ladder-gate.mjs --baseline-manifest artifacts/training/ladder-models.json --candidate-manifest artifacts/training/runs/daily-25636585475/candidate-ladder-models.json --out artifacts/training/runs/daily-25636585475/strict-comparison-summary.local-smoke.json --seed-base 1909 --batches 1 --rounds 1 --max-ticks 40` -> passed; reported `candidate_model_tiers=noob,mid,top,pro,goat`.
+- May 11, 2026: GitHub strict workflow run `25664511411` -> completed, but still used `RUN_ROOT=artifacts/training/runs/strict-25636585475`; reported `candidate_model_tiers=none`, so it did not validate the local path fix.
 
 ## Risks / Notes
 
-- First full-match signal for the curriculum change is still pending; code-level validation passed, but ladder-strength impact is not yet measured against a new daily artifact.
-- The strict manual workflow depends on the daily artifact `ladder-training-<run_id>` remaining available long enough for review/promotion follow-up.
-- The new strict thresholds are intentionally higher than current fair ladder quality, so daily PR activity may continue to carry God-only updates until fair ladder tuning lands.
+- Local smoke replay proved path wiring only. It does not replace the full-match `5x100x6040` strict gate result.
+- GitHub rerun `25664511411` used the old remote workflow file, so remote/local workflow truth is currently diverged until the patch is pushed.
+- Artifact retention still matters: both local replay and strict rerun depend on `ladder-training-25636585475` remaining downloadable.
+- The new strict thresholds are intentionally higher than current fair ladder quality, so even after the path fix reaches GitHub the rerun is expected to fail on real ladder strength unless tuning improved elsewhere.
 - Raw training artifacts remain ignored under `artifacts/training/runs/`.
 - GitHub Actions still uses Node.js 20-based actions that GitHub has already scheduled for deprecation/removal.

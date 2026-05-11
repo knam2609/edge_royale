@@ -13,10 +13,10 @@ permissions:
   pull-requests: write
 
 env:
-  RUN_ROOT: artifacts/training/runs/strict-${{ github.event.inputs.source_run_id }}
-  CANDIDATE_MANIFEST: artifacts/training/runs/strict-${{ github.event.inputs.source_run_id }}/candidate-ladder-models.json
-  STRICT_SUMMARY: artifacts/training/runs/strict-${{ github.event.inputs.source_run_id }}/strict-comparison-summary.json
-  PR_BODY: artifacts/training/runs/strict-${{ github.event.inputs.source_run_id }}/pull-request-body.md
+  RUN_ROOT: artifacts/training/runs/daily-${{ github.event.inputs.source_run_id }}
+  CANDIDATE_MANIFEST: artifacts/training/runs/daily-${{ github.event.inputs.source_run_id }}/candidate-ladder-models.json
+  STRICT_SUMMARY: artifacts/training/runs/daily-${{ github.event.inputs.source_run_id }}/strict-comparison-summary.json
+  PR_BODY: artifacts/training/runs/daily-${{ github.event.inputs.source_run_id }}/pull-request-body.md
 
 jobs:
   promote:
