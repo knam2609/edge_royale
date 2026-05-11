@@ -241,4 +241,6 @@ test("workflow split keeps fair promotion out of daily lane and adds strict manu
   assert.match(strictWorkflow, /gh run download/);
   assert.match(strictWorkflow, /strict-ladder-gate\.mjs/);
   assert.match(strictWorkflow, /--promote-fair/);
+  assert.match(strictWorkflow, /RUN_ROOT:\s*artifacts\/training\/runs\/daily-\$\{\{\s*github\.event\.inputs\.source_run_id\s*\}\}/);
+  assert.doesNotMatch(strictWorkflow, /artifacts\/training\/runs\/strict-\$\{\{\s*github\.event\.inputs\.source_run_id\s*\}\}/);
 });
