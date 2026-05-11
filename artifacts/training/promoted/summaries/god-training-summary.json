@@ -1,10 +1,10 @@
 {
-  "model_path": "/home/runner/work/edge_royale/edge_royale/artifacts/training/runs/daily-25573686210/models/god-model.json",
+  "model_path": "/home/runner/work/edge_royale/edge_royale/artifacts/training/runs/daily-25691872871/models/god-model.json",
   "target_tier": "god",
   "dataset_hash": "5f606fdd",
   "dataset_sources": [
     {
-      "path": "/home/runner/work/edge_royale/edge_royale/artifacts/training/runs/daily-25573686210/datasets/god/shard-001.json",
+      "path": "/home/runner/work/edge_royale/edge_royale/artifacts/training/runs/daily-25691872871/datasets/god/god/shard-001.json",
       "dataset_hash": "5f606fdd",
       "episode_count": 50,
       "sample_count": 4953,
