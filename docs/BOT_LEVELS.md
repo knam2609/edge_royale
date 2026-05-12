@@ -71,7 +71,7 @@ Self Play uses a local `legal_action_mlp` trained from the player's public-obser
 
 - Strategy:
   - Can run as a model-backed fair boss when a valid same-tier neural artifact is supplied.
-  - Scores every legal `PLAY_CARD(cardId, x, y)` candidate from fair public observations.
+  - Scores every legal fair-observation candidate, including synthetic `PASS` in `goat_action_features_v2`.
   - Falls back to the heuristic Goat policy when no valid model is loaded.
   - Keeps strong spell discipline and king-tower pressure choices as the fallback behavior.
 - Reaction delay:

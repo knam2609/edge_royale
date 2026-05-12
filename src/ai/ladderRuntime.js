@@ -170,6 +170,8 @@ const TIER_STRATEGY = Object.freeze({
 
 const EPSILON = 1e-9;
 
+export const PASS_ACTION = Object.freeze({ type: "PASS" });
+
 function getTeam(actor) {
   return actor === "red" ? { own: "red", enemy: "blue" } : { own: "blue", enemy: "red" };
 }
@@ -180,6 +182,10 @@ function roundPlacement(value) {
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
+}
+
+function isPassAction(action) {
+  return action?.type === "PASS";
 }
 
 function getMidY(arena) {
@@ -241,11 +247,26 @@ function isLegalTroopPlacement(actor, state, placement) {
 }
 
 function cardCost(action) {
+  if (isPassAction(action)) {
+    return 0;
+  }
   return getCard(action.cardId)?.cost ?? 0;
 }
 
 function actionSortKey(action) {
+  if (isPassAction(action)) {
+    return "~PASS";
+  }
   return `${action.cardId}|${Number(action.x).toFixed(2)}|${Number(action.y).toFixed(2)}`;
+}
+
+export function appendPassAction(legalActions = []) {
+  const normalized = Array.isArray(legalActions) ? [...legalActions] : [];
+  if (normalized.some((action) => isPassAction(action))) {
+    return normalized;
+  }
+  normalized.push(PASS_ACTION);
+  return normalized;
 }
 
 function getTierStrategy(tierId) {
@@ -524,7 +545,7 @@ function selectTierModelAction({ trainedModel, tierId, engine, actor, legalActio
   return selectActionFromNeuralModel(trainedModel, {
     engine,
     actor,
-    legalActions,
+    legalActions: appendPassAction(legalActions),
   });
 }
 

@@ -37,10 +37,10 @@ The fair observation vector includes:
 
 It intentionally excludes hidden opponent hand and exact opponent elixir.
 
-Action schema: `goat_action_features_v1`
+Action schema: `goat_action_features_v2`
 Action space: `full_snapped_grid_v1`
 
-The action vector describes one legal `PLAY_CARD(cardId, x, y)` candidate. Troops enumerate every legal deploy grid cell; spells enumerate every snapped arena grid cell. The model scores every legal candidate and chooses the highest-scoring legal action. If no valid neural model is supplied, the tier falls back to its existing heuristic policy.
+The action vector describes one legal candidate. `PLAY_CARD(cardId, x, y)` candidates enumerate every legal troop deploy grid cell and every snapped spell target. A synthetic `PASS` candidate is also scored in v2 with an explicit `is_pass` feature. Legacy `goat_action_features_v1` artifacts remain readable, but they do not score synthetic `PASS`. If no valid neural model is supplied, the tier falls back to its existing heuristic policy.
 
 ## Commands
 
@@ -52,7 +52,7 @@ bash scripts/train-bot-ladder.sh
 
 By default the script writes a timestamped run under `artifacts/training/runs/`, exports shard files for each fair ladder tier, trains one saved model per tier, then benchmarks each saved model.
 It also writes `artifacts/training/ladder-models.json`, an ignored local manifest that enables the newly trained model for each completed fair tier.
-Fair tiers now use a fixed mixed-opponent curriculum inside `scripts/train-bot-ladder.sh`: `noob` -> `noob vs mid`; `mid` -> `mid vs noob`, `mid vs top`; `top` -> `top vs mid`, `top vs pro`; `pro` -> `pro vs top`, `pro vs goat`; `goat` -> `goat vs mid`, `goat vs top`, `goat vs pro`. `god` stays single-tier. `LADDER_EPISODES` is split across each tier's pairings with floor division, remainder assigned to the earliest pairings, and tiny smoke runs clamped so every pairing still gets at least one episode.
+Fair tiers now use a fixed mixed-opponent curriculum inside `scripts/train-bot-ladder.sh`: `noob` -> `noob vs mid`; `mid` -> weighted `mid vs noob` / `mid vs top` at `2:1`; `top` -> weighted `top vs mid` / `top vs pro` at `2:1`; `pro` -> `pro vs top`, `pro vs goat`; `goat` -> `goat vs mid`, `goat vs top`, `goat vs pro`. `god` stays single-tier. `LADDER_EPISODES` is split by pairing weights with a minimum of one episode per pairing, so tiny smoke runs still cover every configured matchup.
 
 Customize the run with env vars when needed:
 

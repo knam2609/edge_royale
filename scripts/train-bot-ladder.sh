@@ -84,7 +84,10 @@ for tier_index in "${!TRAIN_TIERS[@]}"; do
 
   echo
   echo "==> tier=${tier} exporting shards episodes=${tier_episodes}"
-  mapfile -t dataset_plans < <(training_dataset_plan_lines "$tier" "$tier_episodes")
+  dataset_plans=()
+  while IFS= read -r dataset_plan_line; do
+    dataset_plans+=("$dataset_plan_line")
+  done < <(training_dataset_plan_lines "$tier" "$tier_episodes")
   train_dataset_args=()
   dataset_seed_offset=0
   for dataset_plan in "${dataset_plans[@]}"; do

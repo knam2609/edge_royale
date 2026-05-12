@@ -1,3 +1,11 @@
+import {
+  ACTION_FEATURE_SIZE,
+  ACTION_SCHEMA_VERSION,
+  LEGACY_ACTION_FEATURE_SIZE,
+  LEGACY_ACTION_SCHEMA_VERSION,
+  normalizeActionFeaturesForSchema,
+} from "./neuralFeatures.js";
+
 function normalizeSampleTier(sample, dataset) {
   if (typeof sample?.tier === "string" && sample.tier.length > 0) {
     return sample.tier;
@@ -6,6 +14,37 @@ function normalizeSampleTier(sample, dataset) {
     ? dataset.tiers.filter((tier) => typeof tier === "string" && tier.length > 0)
     : [];
   return datasetTiers.length === 1 ? datasetTiers[0] : null;
+}
+
+function inferActionSchemaVersion(actionFeatures, actionSchemaVersion) {
+  if (actionSchemaVersion === ACTION_SCHEMA_VERSION || actionSchemaVersion === LEGACY_ACTION_SCHEMA_VERSION) {
+    return actionSchemaVersion;
+  }
+  if (!Array.isArray(actionFeatures)) {
+    return null;
+  }
+  if (actionFeatures.length === ACTION_FEATURE_SIZE) {
+    return ACTION_SCHEMA_VERSION;
+  }
+  if (actionFeatures.length === LEGACY_ACTION_FEATURE_SIZE) {
+    return LEGACY_ACTION_SCHEMA_VERSION;
+  }
+  return null;
+}
+
+function normalizeTrainingActionFeatures(candidate) {
+  const sourceActionSchemaVersion = inferActionSchemaVersion(
+    candidate?.action_features,
+    candidate?.action_schema_version,
+  );
+  if (!sourceActionSchemaVersion) {
+    return null;
+  }
+  return normalizeActionFeaturesForSchema({
+    actionFeatures: candidate.action_features,
+    sourceActionSchemaVersion,
+    targetActionSchemaVersion: ACTION_SCHEMA_VERSION,
+  });
 }
 
 function forEachActionTrainingRow(dataset, { maxNegativesPerDecision = 4, sampleTier = null } = {}, visitRow) {
@@ -26,10 +65,11 @@ function forEachActionTrainingRow(dataset, { maxNegativesPerDecision = 4, sample
       }
 
       const chosen = legalActions[chosenIndex];
-      if (Array.isArray(chosen.action_features)) {
+      const chosenActionFeatures = normalizeTrainingActionFeatures(chosen);
+      if (chosenActionFeatures) {
         visitRow({
           observation,
-          actionFeatures: chosen.action_features,
+          actionFeatures: chosenActionFeatures,
           label: 1,
           reward: Number(sample.reward) || 0,
           sampleTier: rowSampleTier,
@@ -42,12 +82,13 @@ function forEachActionTrainingRow(dataset, { maxNegativesPerDecision = 4, sample
           continue;
         }
         const candidate = legalActions[index];
-        if (!Array.isArray(candidate.action_features)) {
+        const candidateActionFeatures = normalizeTrainingActionFeatures(candidate);
+        if (!candidateActionFeatures) {
           continue;
         }
         visitRow({
           observation,
-          actionFeatures: candidate.action_features,
+          actionFeatures: candidateActionFeatures,
           label: 0,
           reward: Number(sample.reward) || 0,
           sampleTier: rowSampleTier,

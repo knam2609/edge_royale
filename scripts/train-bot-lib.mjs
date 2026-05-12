@@ -16,12 +16,12 @@ const DEFAULT_EVAL_TIERS = Object.freeze({
 const FAIR_TRAINING_CURRICULUM = Object.freeze({
   noob: Object.freeze([Object.freeze({ id: "noob-vs-mid", tiers: Object.freeze(["noob", "mid"]) })]),
   mid: Object.freeze([
-    Object.freeze({ id: "mid-vs-noob", tiers: Object.freeze(["mid", "noob"]) }),
-    Object.freeze({ id: "mid-vs-top", tiers: Object.freeze(["mid", "top"]) }),
+    Object.freeze({ id: "mid-vs-noob", tiers: Object.freeze(["mid", "noob"]), weight: 2 }),
+    Object.freeze({ id: "mid-vs-top", tiers: Object.freeze(["mid", "top"]), weight: 1 }),
   ]),
   top: Object.freeze([
-    Object.freeze({ id: "top-vs-mid", tiers: Object.freeze(["top", "mid"]) }),
-    Object.freeze({ id: "top-vs-pro", tiers: Object.freeze(["top", "pro"]) }),
+    Object.freeze({ id: "top-vs-mid", tiers: Object.freeze(["top", "mid"]), weight: 2 }),
+    Object.freeze({ id: "top-vs-pro", tiers: Object.freeze(["top", "pro"]), weight: 1 }),
   ]),
   pro: Object.freeze([
     Object.freeze({ id: "pro-vs-top", tiers: Object.freeze(["pro", "top"]) }),
@@ -51,6 +51,7 @@ function cloneTrainingDatasetPlan(dataset) {
   return {
     id: dataset.id,
     tiers: [...dataset.tiers],
+    weight: Number.isFinite(Number(dataset.weight)) && Number(dataset.weight) > 0 ? Number(dataset.weight) : 1,
   };
 }
 
@@ -128,11 +129,52 @@ export function splitEpisodesAcrossPairings(totalEpisodes, pairingCount) {
   return Array.from({ length: count }, (_, index) => baseEpisodes + (index < remainder ? 1 : 0));
 }
 
+function splitEpisodesByWeights(totalEpisodes, weights = []) {
+  const normalizedWeights = Array.isArray(weights)
+    ? weights.map((weight) => (Number.isFinite(Number(weight)) && Number(weight) > 0 ? Number(weight) : 1))
+    : [];
+  const count = normalizedWeights.length > 0 ? normalizedWeights.length : 1;
+  const total = Number.isFinite(Number(totalEpisodes)) ? Math.max(1, Math.floor(Number(totalEpisodes))) : 1;
+  if (total < count) {
+    return Array.from({ length: count }, () => 1);
+  }
+
+  const minimum = Array.from({ length: count }, () => 1);
+  const remaining = total - count;
+  if (remaining === 0) {
+    return minimum;
+  }
+
+  const totalWeight = normalizedWeights.reduce((sum, weight) => sum + weight, 0);
+  const exactShares = normalizedWeights.map((weight) => (remaining * weight) / totalWeight);
+  const extras = exactShares.map((share) => Math.floor(share));
+  let assigned = extras.reduce((sum, value) => sum + value, 0);
+  const remainderOrder = exactShares
+    .map((share, index) => ({ index, remainder: share - extras[index] }))
+    .sort((left, right) => {
+      if (left.remainder !== right.remainder) {
+        return right.remainder - left.remainder;
+      }
+      return left.index - right.index;
+    });
+
+  for (let i = 0; assigned < remaining && i < remainderOrder.length; i += 1) {
+    extras[remainderOrder[i].index] += 1;
+    assigned += 1;
+  }
+
+  return minimum.map((value, index) => value + extras[index]);
+}
+
 export function buildTierTrainingDatasets(targetTier, totalEpisodes) {
   const datasets = getTierTrainingDatasets(targetTier);
-  const episodePlan = splitEpisodesAcrossPairings(totalEpisodes, datasets.length);
+  const episodePlan = splitEpisodesByWeights(
+    totalEpisodes,
+    datasets.map((dataset) => dataset.weight ?? 1),
+  );
   return datasets.map((dataset, index) => ({
-    ...cloneTrainingDatasetPlan(dataset),
+    id: dataset.id,
+    tiers: [...dataset.tiers],
     episodes: episodePlan[index] ?? 1,
   }));
 }

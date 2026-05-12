@@ -9,6 +9,11 @@ import {
   selectActionFromSelfModel,
   trainSelfModel,
 } from "../src/ai/training.js";
+import {
+  ACTION_FEATURE_SIZE,
+  ACTION_SCHEMA_VERSION,
+  LEGACY_ACTION_SCHEMA_VERSION,
+} from "../src/ai/neuralFeatures.js";
 import { enumerateLegalCardActions } from "../src/ai/ladderRuntime.js";
 import { FIREBALL_CONFIG } from "../src/sim/config.js";
 import { createEngine } from "../src/sim/engine.js";
@@ -77,6 +82,8 @@ test("createDecisionSample records public legal-action candidates", () => {
   assert.ok(sample.legal_actions.length > 0);
   assert.ok(sample.chosen_action_index >= 0);
   assert.ok(sample.legal_actions.some((candidate) => candidate.action.card_id === "knight"));
+  assert.ok(sample.legal_actions.some((candidate) => candidate.action.type === "PASS"));
+  assert.equal(sample.legal_actions.at(-1)?.action.type, "PASS");
 });
 
 test("createDecisionSample keeps legal player placement when candidate subset misses it", () => {
@@ -94,6 +101,43 @@ test("createDecisionSample keeps legal player placement when candidate subset mi
   assert.equal(sample.chosen_action.card_id, "arrows");
   assert.equal(sample.chosen_action_index, sample.legal_actions.length - 1);
   assert.ok(sample.legal_actions.some((candidate) => candidate.action.card_id === "arrows"));
+});
+
+test("createDecisionSample supports chosen PASS decisions", () => {
+  const engine = makeEngine();
+  const legalActions = enumerateLegalCardActions({ engine, actor: "blue" });
+  const sample = createDecisionSample({
+    engine,
+    actor: "blue",
+    legalActions,
+    chosenAction: { type: "PASS" },
+    tick: 1,
+  });
+
+  assert.equal(sample.chosen_action.type, "PASS");
+  assert.equal(sample.card_id, null);
+  assert.ok(sample.legal_actions.some((candidate) => candidate.action.type === "PASS"));
+  assert.equal(sample.legal_actions[sample.chosen_action_index].action.type, "PASS");
+});
+
+test("appendSamples upgrades legacy legal-action samples to pass-aware schema", () => {
+  const engine = makeEngine();
+  const sample = makePlayerSample(engine, "knight");
+  const legacy = {
+    ...sample,
+    legal_actions: sample.legal_actions
+      .filter((candidate) => candidate.action.type !== "PASS")
+      .map((candidate) => ({
+        ...candidate,
+        action_schema_version: LEGACY_ACTION_SCHEMA_VERSION,
+        action_features: candidate.action_features.slice(0, -1),
+      })),
+  };
+  const store = appendSamples(createEmptyTrainingStore(), [legacy], 5);
+  const normalized = store.samples[0];
+
+  assert.ok(normalized.legal_actions.every((candidate) => candidate.action_schema_version === ACTION_SCHEMA_VERSION));
+  assert.ok(normalized.legal_actions.every((candidate) => candidate.action_features.length === ACTION_FEATURE_SIZE));
 });
 
 test("trainSelfModel builds deterministic legal-action scorer", () => {

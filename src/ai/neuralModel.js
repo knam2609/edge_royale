@@ -2,12 +2,18 @@ import {
   ACTION_SCHEMA_VERSION,
   FEATURE_SCHEMA_VERSION,
   GOD_FEATURE_SCHEMA_VERSION,
-  getModelInputSizeForFeatureSchema,
+  LEGACY_ACTION_SCHEMA_VERSION,
+  getModelInputSizeForSchemas,
+  normalizeActionFeatureSchemaVersion,
   encodeModelInput,
 } from "./neuralFeatures.js";
 
 export const NEURAL_MODEL_VERSION = 1;
 export const NEURAL_MODEL_KIND = "legal_action_mlp";
+
+function isPassAction(action) {
+  return action?.type === "PASS";
+}
 
 function isFiniteNumber(value) {
   return Number.isFinite(Number(value));
@@ -57,15 +63,19 @@ export function normalizeNeuralPolicyModel(rawModel) {
     return null;
   }
   const featureSchemaVersion = rawModel.feature_schema_version;
+  const actionSchemaVersion = normalizeActionFeatureSchemaVersion(rawModel.action_schema_version);
   if (
     ![FEATURE_SCHEMA_VERSION, GOD_FEATURE_SCHEMA_VERSION].includes(featureSchemaVersion) ||
-    rawModel.action_schema_version !== ACTION_SCHEMA_VERSION
+    !actionSchemaVersion
   ) {
     return null;
   }
 
   const inputSize = Number(rawModel.input_size);
-  const expectedInputSize = getModelInputSizeForFeatureSchema(featureSchemaVersion);
+  const expectedInputSize = getModelInputSizeForSchemas({
+    featureSchemaVersion,
+    actionSchemaVersion,
+  });
   if (!Number.isInteger(inputSize) || inputSize !== expectedInputSize) {
     return null;
   }
@@ -89,7 +99,7 @@ export function normalizeNeuralPolicyModel(rawModel) {
     version: NEURAL_MODEL_VERSION,
     kind: NEURAL_MODEL_KIND,
     feature_schema_version: featureSchemaVersion,
-    action_schema_version: ACTION_SCHEMA_VERSION,
+    action_schema_version: actionSchemaVersion,
     input_size: inputSize,
     training_config: rawModel.training_config && typeof rawModel.training_config === "object"
       ? rawModel.training_config
@@ -165,6 +175,9 @@ export function scoreEncodedInput(model, input) {
 }
 
 function actionSortKey(action) {
+  if (isPassAction(action)) {
+    return "~PASS";
+  }
   return `${action.cardId}|${Number(action.x).toFixed(2)}|${Number(action.y).toFixed(2)}`;
 }
 
@@ -175,6 +188,7 @@ export function scoreActionWithModel(model, { engine, actor = "red", action }) {
     actor,
     action,
     featureSchemaVersion: normalized?.feature_schema_version ?? FEATURE_SCHEMA_VERSION,
+    actionSchemaVersion: normalized?.action_schema_version ?? ACTION_SCHEMA_VERSION,
   });
   return scoreEncodedInput(model, input);
 }
@@ -190,11 +204,15 @@ export function selectActionFromNeuralModel(model, { engine, actor = "red", lega
   let bestKey = "";
 
   for (const action of legalActions) {
+    if (isPassAction(action) && normalized.action_schema_version === LEGACY_ACTION_SCHEMA_VERSION) {
+      continue;
+    }
     const input = encodeModelInput({
       engine,
       actor,
       action,
       featureSchemaVersion: normalized.feature_schema_version,
+      actionSchemaVersion: normalized.action_schema_version,
     });
     const score = scoreWithNormalizedModel(normalized, input);
     if (!Number.isFinite(score)) {
@@ -216,10 +234,14 @@ export function createZeroNeuralPolicyModel({
   hiddenUnits = 4,
   seed = 0,
   featureSchemaVersion = FEATURE_SCHEMA_VERSION,
+  actionSchemaVersion = ACTION_SCHEMA_VERSION,
   targetTier = null,
 } = {}) {
   const hidden = Math.max(1, Math.floor(hiddenUnits));
-  const inputSize = getModelInputSizeForFeatureSchema(featureSchemaVersion);
+  const inputSize = getModelInputSizeForSchemas({
+    featureSchemaVersion,
+    actionSchemaVersion,
+  });
   const firstWeights = Array.from({ length: inputSize }, () => Array.from({ length: hidden }, () => 0));
   const secondWeights = Array.from({ length: hidden }, () => [0]);
 
@@ -227,7 +249,7 @@ export function createZeroNeuralPolicyModel({
     version: NEURAL_MODEL_VERSION,
     kind: NEURAL_MODEL_KIND,
     feature_schema_version: featureSchemaVersion,
-    action_schema_version: ACTION_SCHEMA_VERSION,
+    action_schema_version: actionSchemaVersion,
     input_size: inputSize,
     training_config: { fixture: true, ...(targetTier ? { target_tier: targetTier } : {}) },
     dataset_hash: "fixture",
