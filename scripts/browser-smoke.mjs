@@ -182,6 +182,7 @@ async function runUnderThresholdScenario(browser, url, fixtures) {
 async function runAcceptedScenario(browser, url, fixtures) {
   const { page, context, pageErrors } = await openScenarioPage(browser, url, fixtures.rlAccepted.storageState);
   try {
+    const expectedSampleCount = fixtures.rlAccepted.trainingStore.samples.length;
     await page.locator("#train-btn").click();
     await page.waitForFunction(
       () => JSON.parse(window.render_game_to_text()).status_message.endsWith("RL accepted."),
@@ -191,8 +192,11 @@ async function runAcceptedScenario(browser, url, fixtures) {
     const storedTraining = await readStoredJson(page, fixtures.keys.training);
     const storedModel = await readStoredJson(page, fixtures.keys.selfModel);
 
-    assert.match(state.profile_summary_text, /Training samples: 128\b/);
-    assert.match(state.status_message, /Self-play model trained \(128 samples\)\. RL accepted\.$/);
+    assert.match(state.profile_summary_text, new RegExp(`Training samples: ${expectedSampleCount}\\b`));
+    assert.match(
+      state.status_message,
+      new RegExp(`Self-play model trained \\(${expectedSampleCount} samples\\)\\. RL accepted\\.$`),
+    );
     assert.equal(storedTraining.version, 2);
     assert.equal(storedModel.ready, true);
     assert.equal(storedModel.training_config.rl_gate.accepted, true);
@@ -206,20 +210,27 @@ async function runAcceptedScenario(browser, url, fixtures) {
 async function runFallbackScenario(browser, url, fixtures) {
   const { page, context, pageErrors } = await openScenarioPage(browser, url, fixtures.rlFallback.storageState);
   try {
+    const expectedAccepted = fixtures.rlFallback.result.accepted;
+    const expectedSuffix = expectedAccepted ? "RL accepted." : "RL kept imitation baseline.";
+    const expectedSampleCount = fixtures.rlFallback.trainingStore.samples.length;
     await page.locator("#train-btn").click();
     await page.waitForFunction(
-      () => JSON.parse(window.render_game_to_text()).status_message.endsWith("RL kept imitation baseline."),
+      (suffix) => JSON.parse(window.render_game_to_text()).status_message.endsWith(suffix),
+      expectedSuffix,
     );
 
     const state = await readGameState(page);
     const storedTraining = await readStoredJson(page, fixtures.keys.training);
     const storedModel = await readStoredJson(page, fixtures.keys.selfModel);
 
-    assert.match(state.status_message, /Self-play model trained \(128 samples\)\. RL kept imitation baseline\.$/);
+    const expectedPattern = expectedAccepted
+      ? new RegExp(`Self-play model trained \\(${expectedSampleCount} samples\\)\\. RL accepted\\.$`)
+      : new RegExp(`Self-play model trained \\(${expectedSampleCount} samples\\)\\. RL kept imitation baseline\\.$`);
+    assert.match(state.status_message, expectedPattern);
     assert.equal(storedTraining.version, 2);
     assert.equal(storedModel.ready, true);
-    assert.equal(storedModel.training_config.rl_gate.accepted, false);
-    assert.equal(storedModel.training_config.rl_gate.reason, "style_regression");
+    assert.equal(storedModel.training_config.rl_gate.accepted, expectedAccepted);
+    assert.equal(storedModel.training_config.rl_gate.reason, fixtures.rlFallback.result.reason);
     assertNoPageErrors("fallback smoke", pageErrors);
   } finally {
     await context.close();

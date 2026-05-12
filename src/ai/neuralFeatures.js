@@ -4,13 +4,17 @@ import { getTowerStats } from "../sim/stats.js";
 
 export const FEATURE_SCHEMA_VERSION = "goat_state_features_v1";
 export const GOD_FEATURE_SCHEMA_VERSION = "god_state_features_v1";
-export const ACTION_SCHEMA_VERSION = "goat_action_features_v1";
+export const LEGACY_ACTION_SCHEMA_VERSION = "goat_action_features_v1";
+export const ACTION_SCHEMA_VERSION = "goat_action_features_v2";
 export const CARD_FEATURE_ORDER = Object.freeze([...DEFAULT_DECK]);
 export const PHASE_FEATURE_ORDER = Object.freeze(["normal", "double", "overtime"]);
 
 export const STATE_FEATURE_SIZE = 74;
 export const GOD_STATE_FEATURE_SIZE = STATE_FEATURE_SIZE + 17;
-export const ACTION_FEATURE_SIZE = 17;
+export const LEGACY_ACTION_FEATURE_SIZE = 17;
+export const ACTION_FEATURE_SIZE = 18;
+export const LEGACY_MODEL_INPUT_SIZE = STATE_FEATURE_SIZE + LEGACY_ACTION_FEATURE_SIZE;
+export const LEGACY_GOD_MODEL_INPUT_SIZE = GOD_STATE_FEATURE_SIZE + LEGACY_ACTION_FEATURE_SIZE;
 export const MODEL_INPUT_SIZE = STATE_FEATURE_SIZE + ACTION_FEATURE_SIZE;
 export const GOD_MODEL_INPUT_SIZE = GOD_STATE_FEATURE_SIZE + ACTION_FEATURE_SIZE;
 
@@ -74,6 +78,10 @@ function laneKeyForX(x, arena) {
 
 function oneHot(value, order) {
   return order.map((entry) => (entry === value ? 1 : 0));
+}
+
+function isPassAction(action) {
+  return action?.type === "PASS";
 }
 
 function pushCardPresence(features, cards) {
@@ -225,8 +233,72 @@ export function getStateFeatureSizeForSchema(featureSchemaVersion = FEATURE_SCHE
   return STATE_FEATURE_SIZE;
 }
 
+export function getActionFeatureSizeForSchema(actionSchemaVersion = ACTION_SCHEMA_VERSION) {
+  return actionSchemaVersion === LEGACY_ACTION_SCHEMA_VERSION
+    ? LEGACY_ACTION_FEATURE_SIZE
+    : ACTION_FEATURE_SIZE;
+}
+
+export function getModelInputSizeForSchemas({
+  featureSchemaVersion = FEATURE_SCHEMA_VERSION,
+  actionSchemaVersion = ACTION_SCHEMA_VERSION,
+} = {}) {
+  return (
+    getStateFeatureSizeForSchema(featureSchemaVersion) +
+    getActionFeatureSizeForSchema(actionSchemaVersion)
+  );
+}
+
 export function getModelInputSizeForFeatureSchema(featureSchemaVersion = FEATURE_SCHEMA_VERSION) {
-  return getStateFeatureSizeForSchema(featureSchemaVersion) + ACTION_FEATURE_SIZE;
+  return getModelInputSizeForSchemas({ featureSchemaVersion });
+}
+
+export function normalizeActionFeatureSchemaVersion(actionSchemaVersion = ACTION_SCHEMA_VERSION) {
+  return actionSchemaVersion === LEGACY_ACTION_SCHEMA_VERSION || actionSchemaVersion === ACTION_SCHEMA_VERSION
+    ? actionSchemaVersion
+    : null;
+}
+
+export function normalizeActionFeaturesForSchema({
+  actionFeatures,
+  sourceActionSchemaVersion = ACTION_SCHEMA_VERSION,
+  targetActionSchemaVersion = ACTION_SCHEMA_VERSION,
+} = {}) {
+  const sourceSchemaVersion = normalizeActionFeatureSchemaVersion(sourceActionSchemaVersion);
+  const targetSchemaVersion = normalizeActionFeatureSchemaVersion(targetActionSchemaVersion);
+  if (!sourceSchemaVersion || !targetSchemaVersion || !Array.isArray(actionFeatures)) {
+    return null;
+  }
+
+  const expectedSourceSize = getActionFeatureSizeForSchema(sourceSchemaVersion);
+  if (actionFeatures.length !== expectedSourceSize) {
+    return null;
+  }
+
+  const normalized = actionFeatures.map((value) => Number(value));
+  if (normalized.some((value) => !Number.isFinite(value))) {
+    return null;
+  }
+
+  if (sourceSchemaVersion === targetSchemaVersion) {
+    return normalized;
+  }
+
+  if (
+    sourceSchemaVersion === LEGACY_ACTION_SCHEMA_VERSION &&
+    targetSchemaVersion === ACTION_SCHEMA_VERSION
+  ) {
+    return [...normalized, 0];
+  }
+
+  if (
+    sourceSchemaVersion === ACTION_SCHEMA_VERSION &&
+    targetSchemaVersion === LEGACY_ACTION_SCHEMA_VERSION
+  ) {
+    return normalized.slice(0, LEGACY_ACTION_FEATURE_SIZE);
+  }
+
+  return null;
 }
 
 export function encodeStateFeaturesForSchema({
@@ -240,24 +312,51 @@ export function encodeStateFeaturesForSchema({
   return encodeStateFeatures({ engine, actor });
 }
 
-export function encodeActionFeatures({ engine, actor = "red", action }) {
+export function encodeActionFeatures({
+  engine,
+  actor = "red",
+  action,
+  actionSchemaVersion = ACTION_SCHEMA_VERSION,
+}) {
   const state = engine.state;
-  const card = getCard(action?.cardId);
+  const schemaVersion =
+    normalizeActionFeatureSchemaVersion(actionSchemaVersion) ?? ACTION_SCHEMA_VERSION;
+  const card = isPassAction(action) ? null : getCard(action?.cardId);
   const features = [];
 
-  features.push(...oneHot(action?.cardId, CARD_FEATURE_ORDER));
-  features.push(norm(card?.cost ?? 0, 5));
-  features.push(card?.type === "troop" ? 1 : 0);
-  features.push(card?.type === "spell" ? 1 : 0);
-  features.push(norm((Number(action?.x) || 0) - state.arena.minX, getArenaWidth(state.arena)));
-  features.push(perspectiveY(actor, Number(action?.y) || 0, state.arena));
-  features.push(clamp(((Number(action?.x) || 0) - getMidX(state.arena)) / (getArenaWidth(state.arena) / 2), -1, 1));
-  features.push(norm(Math.abs((Number(action?.y) || 0) - getMidY(state.arena)), getArenaHeight(state.arena) / 2));
-  features.push(isOnOwnSide(actor, Number(action?.y) || 0, state.arena) ? 1 : 0);
-  features.push(norm((state.elixir[actor]?.elixir ?? 0) - (card?.cost ?? 0), 10, -1, 1));
+  if (isPassAction(action)) {
+    features.push(...Array.from({ length: LEGACY_ACTION_FEATURE_SIZE }, () => 0));
+  } else {
+    features.push(...oneHot(action?.cardId, CARD_FEATURE_ORDER));
+    features.push(norm(card?.cost ?? 0, 5));
+    features.push(card?.type === "troop" ? 1 : 0);
+    features.push(card?.type === "spell" ? 1 : 0);
+    features.push(norm((Number(action?.x) || 0) - state.arena.minX, getArenaWidth(state.arena)));
+    features.push(perspectiveY(actor, Number(action?.y) || 0, state.arena));
+    features.push(
+      clamp(
+        ((Number(action?.x) || 0) - getMidX(state.arena)) / (getArenaWidth(state.arena) / 2),
+        -1,
+        1,
+      ),
+    );
+    features.push(
+      norm(
+        Math.abs((Number(action?.y) || 0) - getMidY(state.arena)),
+        getArenaHeight(state.arena) / 2,
+      ),
+    );
+    features.push(isOnOwnSide(actor, Number(action?.y) || 0, state.arena) ? 1 : 0);
+    features.push(norm((state.elixir[actor]?.elixir ?? 0) - (card?.cost ?? 0), 10, -1, 1));
+  }
 
-  if (features.length !== ACTION_FEATURE_SIZE) {
-    throw new Error(`action feature size mismatch: expected ${ACTION_FEATURE_SIZE}, got ${features.length}`);
+  if (schemaVersion === ACTION_SCHEMA_VERSION) {
+    features.push(isPassAction(action) ? 1 : 0);
+  }
+
+  const expectedSize = getActionFeatureSizeForSchema(schemaVersion);
+  if (features.length !== expectedSize) {
+    throw new Error(`action feature size mismatch: expected ${expectedSize}, got ${features.length}`);
   }
 
   return features;
@@ -268,9 +367,10 @@ export function encodeModelInput({
   actor = "red",
   action,
   featureSchemaVersion = FEATURE_SCHEMA_VERSION,
+  actionSchemaVersion = ACTION_SCHEMA_VERSION,
 }) {
   return [
     ...encodeStateFeaturesForSchema({ engine, actor, featureSchemaVersion }),
-    ...encodeActionFeatures({ engine, actor, action }),
+    ...encodeActionFeatures({ engine, actor, action, actionSchemaVersion }),
   ];
 }

@@ -2,9 +2,12 @@ import {
   ACTION_FEATURE_SIZE,
   ACTION_SCHEMA_VERSION,
   FEATURE_SCHEMA_VERSION,
+  LEGACY_ACTION_FEATURE_SIZE,
+  LEGACY_ACTION_SCHEMA_VERSION,
   MODEL_INPUT_SIZE,
   encodeActionFeatures,
   encodeStateFeatures,
+  normalizeActionFeaturesForSchema,
 } from "./neuralFeatures.js";
 import {
   NEURAL_MODEL_KIND,
@@ -27,6 +30,19 @@ export const MAX_TRAINING_SAMPLES = 1000;
 export const SELF_MODEL_MAX_NEGATIVES = 8;
 export const SELF_MODEL_DEFAULT_EPOCHS = 4;
 export const SELF_MODEL_DEFAULT_LEARNING_RATE = 0.08;
+
+function isPassAction(action) {
+  return action?.type === "PASS";
+}
+
+function appendPassAction(legalActions = []) {
+  const normalized = Array.isArray(legalActions) ? [...legalActions] : [];
+  if (normalized.some((action) => isPassAction(action))) {
+    return normalized;
+  }
+  normalized.push({ type: "PASS" });
+  return normalized;
+}
 
 export function createEmptyTrainingStore() {
   return {
@@ -60,6 +76,10 @@ function normalizeAction(action) {
     return null;
   }
 
+  if (action.type === "PASS") {
+    return { type: "PASS" };
+  }
+
   const cardId = typeof action.cardId === "string" ? action.cardId : action.card_id;
   if (action.type !== "PLAY_CARD" || typeof cardId !== "string") {
     return null;
@@ -80,6 +100,9 @@ function normalizeAction(action) {
 }
 
 function sameNormalizedAction(left, right) {
+  if (left?.type === "PASS" || right?.type === "PASS") {
+    return left?.type === "PASS" && right?.type === "PASS";
+  }
   return (
     left?.type === right?.type &&
     left?.card_id === right?.card_id &&
@@ -88,13 +111,44 @@ function sameNormalizedAction(left, right) {
   );
 }
 
+function inferActionSchemaVersion(actionFeatures, actionSchemaVersion) {
+  if (actionSchemaVersion === ACTION_SCHEMA_VERSION || actionSchemaVersion === LEGACY_ACTION_SCHEMA_VERSION) {
+    return actionSchemaVersion;
+  }
+  if (!Array.isArray(actionFeatures)) {
+    return null;
+  }
+  if (actionFeatures.length === ACTION_FEATURE_SIZE) {
+    return ACTION_SCHEMA_VERSION;
+  }
+  if (actionFeatures.length === LEGACY_ACTION_FEATURE_SIZE) {
+    return LEGACY_ACTION_SCHEMA_VERSION;
+  }
+  return null;
+}
+
+function normalizeCandidateActionFeatures(actionFeatures, actionSchemaVersion) {
+  const sourceActionSchemaVersion = inferActionSchemaVersion(actionFeatures, actionSchemaVersion);
+  if (!sourceActionSchemaVersion) {
+    return null;
+  }
+  return normalizeActionFeaturesForSchema({
+    actionFeatures,
+    sourceActionSchemaVersion,
+    targetActionSchemaVersion: ACTION_SCHEMA_VERSION,
+  });
+}
+
 function normalizeLegalActionCandidate(rawCandidate, fallbackIndex = 0) {
   if (!rawCandidate || typeof rawCandidate !== "object") {
     return null;
   }
 
   const action = normalizeAction(rawCandidate.action ?? rawCandidate);
-  const actionFeatures = normalizeNumberArray(rawCandidate.action_features, ACTION_FEATURE_SIZE);
+  const actionFeatures = normalizeCandidateActionFeatures(
+    rawCandidate.action_features,
+    rawCandidate.action_schema_version,
+  );
   if (!action || !actionFeatures) {
     return null;
   }
@@ -132,7 +186,7 @@ function normalizeLegalDecisionSample(rawSample) {
     kind: LEGAL_DECISION_SAMPLE_KIND,
     phase,
     elixir: Number.isFinite(elixir) ? Math.max(0, Math.min(10, Math.round(elixir))) : 0,
-    card_id: chosenCandidate.action.card_id,
+    card_id: chosenCandidate.action.card_id ?? null,
     hand: normalizeHand(rawSample.hand),
     tick: Math.max(0, Math.floor(Number(rawSample.tick) || 0)),
     source_tier: typeof rawSample.source_tier === "string" ? rawSample.source_tier : "unknown",
@@ -216,7 +270,7 @@ function createLegalDecisionSample({
     return null;
   }
 
-  const normalizedCandidates = legalActions
+  const normalizedCandidates = appendPassAction(legalActions)
     .map((action, index) => {
       const normalizedAction = normalizeAction(action);
       if (!normalizedAction) {
@@ -416,7 +470,10 @@ export function getSelfTrainingStatus(
 
 function makeModelInputFromCandidate(sample, candidate) {
   const observation = normalizeNumberArray(sample?.observation?.vector);
-  const actionFeatures = normalizeNumberArray(candidate?.action_features, ACTION_FEATURE_SIZE);
+  const actionFeatures = normalizeCandidateActionFeatures(
+    candidate?.action_features,
+    candidate?.action_schema_version,
+  );
   if (!observation || !actionFeatures) {
     return null;
   }
@@ -630,21 +687,34 @@ function normalizeSelfScorerModel(model) {
   if (!model || typeof model !== "object" || model.kind !== SELF_MODEL_KIND || Number(model.version) !== SELF_MODEL_VERSION) {
     return null;
   }
-  if (model.action_schema_version !== ACTION_SCHEMA_VERSION || model.action_feature_size !== ACTION_FEATURE_SIZE) {
+  const sourceActionSchemaVersion = inferActionSchemaVersion(
+    Array.isArray(model.action_feature_weights) ? model.action_feature_weights : [],
+    model.action_schema_version,
+  );
+  if (!sourceActionSchemaVersion) {
     return null;
   }
-  const weights = normalizeNumberArray(model.action_feature_weights, ACTION_FEATURE_SIZE);
-  if (!weights) {
+  const rawWeights = normalizeNumberArray(
+    model.action_feature_weights,
+    sourceActionSchemaVersion === LEGACY_ACTION_SCHEMA_VERSION ? LEGACY_ACTION_FEATURE_SIZE : ACTION_FEATURE_SIZE,
+  );
+  if (!rawWeights) {
     return null;
   }
+  const weights =
+    sourceActionSchemaVersion === LEGACY_ACTION_SCHEMA_VERSION ? [...rawWeights, 0] : rawWeights;
 
   return {
     ...model,
+    action_schema_version: ACTION_SCHEMA_VERSION,
     action_feature_weights: weights,
   };
 }
 
 function actionSortKey(action) {
+  if (isPassAction(action)) {
+    return "~PASS";
+  }
   return `${action.cardId}|${Number(action.x).toFixed(2)}|${Number(action.y).toFixed(2)}`;
 }
 
@@ -653,8 +723,10 @@ export function selectActionFromSelfModel(model, { engine, actor = "red", legalA
     return null;
   }
 
+  const candidateActions = appendPassAction(legalActions);
+
   if (getNeuralModelTargetTier(model) === "self") {
-    return selectActionFromNeuralModel(model, { engine, actor, legalActions });
+    return selectActionFromNeuralModel(model, { engine, actor, legalActions: candidateActions });
   }
 
   const normalized = normalizeSelfScorerModel(model);
@@ -666,7 +738,7 @@ export function selectActionFromSelfModel(model, { engine, actor = "red", legalA
   let bestScore = -Infinity;
   let bestKey = "";
 
-  for (const action of legalActions) {
+  for (const action of candidateActions) {
     const features = encodeActionFeatures({ engine, actor, action });
     let score = 0;
     for (let i = 0; i < normalized.action_feature_weights.length; i += 1) {

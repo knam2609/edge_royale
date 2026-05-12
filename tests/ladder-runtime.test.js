@@ -219,6 +219,31 @@ test("mid bot uses a matching trained ladder model when supplied", () => {
   assert.equal(action.cardId, "knight");
 });
 
+test("mid bot falls back to heuristics when trained ladder model target mismatches", () => {
+  const engine = makeEngine(["knight", "giant", "arrows", "fireball"]);
+  const model = createZeroNeuralPolicyModel({ hiddenUnits: 1, seed: 708 });
+  model.training_config.target_tier = "top";
+  model.layers[0].weights[STATE_FEATURE_SIZE + 7][0] = 6;
+  model.layers[1].weights[0][0] = 6;
+
+  const legalActions = [
+    { type: "PLAY_CARD", cardId: "fireball", x: 0.5, y: 0.5 },
+    { type: "PLAY_CARD", cardId: "knight", x: 9, y: 12 },
+  ];
+
+  const action = selectBotAction({
+    tierId: "mid",
+    engine,
+    actor: "red",
+    legalActions,
+    trainedModel: model,
+    rng: () => 0.9,
+  });
+
+  assert.equal(action.type, "PLAY_CARD");
+  assert.equal(action.cardId, "knight");
+});
+
 test("decision delay for tier is always within configured bounds", () => {
   const tiny = rollDecisionDelayTicks({ tierId: "mid", rng: () => 0 });
   const huge = rollDecisionDelayTicks({ tierId: "mid", rng: () => 0.999 });

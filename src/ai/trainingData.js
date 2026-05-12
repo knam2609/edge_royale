@@ -3,6 +3,7 @@ import { createEngine } from "../sim/engine.js";
 import { hashState } from "../sim/hash.js";
 import { createRng } from "../sim/random.js";
 import {
+  appendPassAction,
   enumerateLegalCardActions,
   ACTION_SPACE_VERSION,
   rollDecisionDelayTicks,
@@ -36,7 +37,15 @@ function makeController(seed) {
 }
 
 function normalizeAction(action) {
-  if (!action || action.type !== "PLAY_CARD") {
+  if (!action) {
+    return null;
+  }
+  if (action.type === "PASS") {
+    return {
+      type: "PASS",
+    };
+  }
+  if (action.type !== "PLAY_CARD") {
     return null;
   }
   return {
@@ -48,6 +57,9 @@ function normalizeAction(action) {
 }
 
 function sameAction(left, right) {
+  if (left?.type === "PASS" || right?.type === "PASS") {
+    return left?.type === "PASS" && right?.type === "PASS";
+  }
   return (
     left?.type === right?.type &&
     left?.cardId === right?.cardId &&
@@ -85,21 +97,26 @@ function getSampleTier(tierId) {
 
 function selectStoredLegalActions(legalActions, chosenIndex, maxStoredNegatives) {
   const negativeLimit = normalizeStoredNegativeLimit(maxStoredNegatives);
-  const stored = [];
-  let negatives = 0;
+  const negativeIndices = [];
+  const passIndex = legalActions.findIndex((action) => action?.type === "PASS");
 
-  for (let index = 0; index < legalActions.length; index += 1) {
-    if (index === chosenIndex) {
-      stored.push({ action: legalActions[index], originalIndex: index });
-      continue;
-    }
-    if (negatives < negativeLimit) {
-      stored.push({ action: legalActions[index], originalIndex: index });
-      negatives += 1;
-    }
+  if (negativeLimit > 0 && passIndex >= 0 && passIndex !== chosenIndex) {
+    negativeIndices.push(passIndex);
   }
 
-  return stored;
+  for (let index = 0; index < legalActions.length && negativeIndices.length < negativeLimit; index += 1) {
+    if (index === chosenIndex || index === passIndex) {
+      continue;
+    }
+    negativeIndices.push(index);
+  }
+
+  return [chosenIndex, ...negativeIndices]
+    .sort((left, right) => left - right)
+    .map((index) => ({
+      action: legalActions[index],
+      originalIndex: index,
+    }));
 }
 
 function maybeSelectActionAndSample({
@@ -117,7 +134,7 @@ function maybeSelectActionAndSample({
     return null;
   }
 
-  const legalActions = enumerateLegalCardActions({ engine, actor });
+  const legalActions = appendPassAction(enumerateLegalCardActions({ engine, actor }));
   const decisionDelay = rollDecisionDelayTicks({ tierId, rng: controller.rng });
   controller.nextDecisionTick = tick + decisionDelay;
 
@@ -130,7 +147,7 @@ function maybeSelectActionAndSample({
     trainedModel,
   });
 
-  if (!chosenAction || chosenAction.type !== "PLAY_CARD") {
+  if (!chosenAction) {
     return null;
   }
 
@@ -168,7 +185,7 @@ function maybeSelectActionAndSample({
     });
   }
 
-  return makeMatchAction({ tick, actor, action: chosenAction });
+  return chosenAction.type === "PLAY_CARD" ? makeMatchAction({ tick, actor, action: chosenAction }) : null;
 }
 
 function finalizeSampleRewards(samples, result) {

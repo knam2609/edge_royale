@@ -87,6 +87,14 @@ test("resolveDatasetInputPaths rejects empty dataset directories", async () => {
 
 test("buildTierTrainingDatasets uses mixed fair curricula and keeps God unchanged", () => {
   assert.deepEqual(buildTierTrainingDatasets("noob", 5), [{ id: "noob-vs-mid", tiers: ["noob", "mid"], episodes: 5 }]);
+  assert.deepEqual(buildTierTrainingDatasets("mid", 6), [
+    { id: "mid-vs-noob", tiers: ["mid", "noob"], episodes: 4 },
+    { id: "mid-vs-top", tiers: ["mid", "top"], episodes: 2 },
+  ]);
+  assert.deepEqual(buildTierTrainingDatasets("top", 6), [
+    { id: "top-vs-mid", tiers: ["top", "mid"], episodes: 4 },
+    { id: "top-vs-pro", tiers: ["top", "pro"], episodes: 2 },
+  ]);
   assert.deepEqual(buildTierTrainingDatasets("goat", 5), [
     { id: "goat-vs-mid", tiers: ["goat", "mid"], episodes: 2 },
     { id: "goat-vs-top", tiers: ["goat", "top"], episodes: 2 },

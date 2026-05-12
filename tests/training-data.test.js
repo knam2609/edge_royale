@@ -54,6 +54,20 @@ test("training episode exports replayable decisions and final hashes", () => {
   assert.equal(replayed.replay_hash, episode.replay_hash);
 });
 
+test("training episodes keep PASS decisions instead of dropping them", () => {
+  const episode = runTrainingEpisode({
+    blueTier: "noob",
+    redTier: "noob",
+    seed: 2222,
+    maxTicks: 120,
+  });
+
+  const passSample = episode.samples.find((sample) => sample.chosen_action?.type === "PASS");
+  assert.ok(passSample);
+  assert.ok(passSample.legal_actions.some((candidate) => candidate.action.type === "PASS"));
+  assert.equal(passSample.legal_actions[passSample.chosen_action_index].action.type, "PASS");
+});
+
 test("generated datasets are deterministic and produce supervised action rows", () => {
   const config = {
     tiers: ["top", "goat"],
