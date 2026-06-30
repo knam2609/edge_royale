@@ -1,106 +1,38 @@
-# Sprint Backlog (Detailed)
+# Sprint Backlog
 
-This backlog assumes 10 one-week sprints. IDs are stable so they can become GitHub issues directly.
+## Current Priorities
 
-## Sprint 1: Foundations
+- `AI-EDGER-001` Add tactical regression scenarios for Edger defense.
+  - Done when Edger correctly answers Giants, swarm pressure, and ranged support using legal actions.
+- `AI-EDGER-002` Add tower-finishing and spell-value regression scenarios.
+  - Done when Edger reliably chooses lethal or high-value Fireball/Arrows targets.
+- `AI-EDGER-003` Tune elixir-advantage pressure.
+  - Done when benchmark output and targeted tests show Edger punishes low opponent elixir without reckless overcommit.
+- `AI-EDGER-004` Expand internal baselines or scripted scenarios.
+  - Done when new baselines improve signal without becoming player-facing levels.
+- `PERF-001` Measure and optimize every-tick Edger scoring.
+  - Done when full-match benchmarks and browser smoke stay comfortably within local runtime expectations.
+- `UI-001` Polish Edger-only setup overlay.
+  - Done when the first screen starts the playable game with no old level/training language.
+- `QA-001` Keep browser smoke deterministic and fast.
+  - Done when `npm run smoke:browser` verifies UI, runtime, and profile persistence without flaky timing.
+- `DOC-001` Keep docs aligned with Edger-only scope.
+  - Done when README, AGENTS, and subsystem docs do not reference removed ladder/self-training systems except as explicitly removed scope.
 
-- `ENG-001` Initialize monorepo structure (`sim`, `client`, `ai`, `data`, `tests`).
-  - Done when: packages build independently and CI runs basic checks.
-- `ENG-002` Implement fixed-tick simulation loop (20 TPS).
-  - Done when: loop advances deterministic tick counter.
-- `ENG-003` Add seedable RNG utility with deterministic test vectors.
-  - Done when: same seed reproduces exact sequence in tests.
-- `QA-001` Setup test framework and baseline CI workflow.
-  - Done when: PR check runs unit tests and reports status.
+## Completed Baseline
 
-## Sprint 2: Core Combat
+- Deterministic simulation engine.
+- Fixed 8-card deck and card cycle.
+- Royale-style placement, bridge, and pocket behavior.
+- Replay serialization for debugging/determinism.
+- Browser UI with portrait battlefield, card hand, elixir, tower HP, and match banners.
+- Single Edger opponent with internal benchmark baselines.
+- Simple local Edger match profile.
 
-- `SIM-001` Implement entity registry and lifecycle.
-- `SIM-002` Implement troop movement and simple lane pathing.
-- `SIM-003` Implement target acquisition and attack cooldown logic.
-- `SIM-004` Implement tower attacks and tower HP tracking.
-- `QA-002` Add unit tests for movement, targeting, and damage resolution.
+## Non-Goals
 
-## Sprint 3: Match Rules
-
-- `SIM-005` Implement elixir regen/cap logic with phase timing.
-- `SIM-006` Implement deck/hand/cycle rules for 8-card fixed deck.
-- `SIM-007` Implement win conditions + overtime + tiebreak.
-- `SIM-008` Implement Fireball knockback with troop-only displacement and Giant immunity.
-- `QA-003` Add determinism replay tests (golden hash snapshots).
-- `QA-009` Add overtime regen verification (`56/28/20` ticks) and Fireball immunity tests.
-
-## Sprint 4: Client Scaffolding
-
-- `UI-001` Setup rendering engine and arena scene.
-- `UI-002` Implement HUD: timer, elixir bar, tower HP.
-- `UI-003` Implement card hand UI and drag/drop placement.
-- `INT-001` Build engine-state to UI adapter layer.
-
-## Sprint 5: End-to-End Playability
-
-- `UI-004` Implement troop/spell visuals (spawn, projectile, hit).
-- `FLOW-001` Implement match state transitions (start, active, end).
-- `AI-001` Implement Noob bot policy.
-- `QA-004` Add smoke test: full match playable without crash/desync.
-
-## Sprint 6: Mid Tier + Progression
-
-- `AI-002` Implement Mid-ladder Menace heuristics.
-- `PROG-001` Add local profile persistence for unlocks/history.
-- `PROG-002` Enforce tier unlock gating in UI and match start flow.
-- `QA-005` Add progression persistence tests across app restart.
-
-## Sprint 7: Top Tier + Replay
-
-- `AI-003` Implement Top Ladder heuristics (elixir/cycle-aware).
-- `DATA-001` Implement replay serialization/deserialization.
-- `DATA-002` Add match history screen with replay references.
-- `QA-006` Add replay determinism regression tests.
-
-## Sprint 8: Telemetry Pipeline
-
-- `DATA-003` Define telemetry schema v1 and event emission.
-- `DATA-004` Build export script for offline dataset generation.
-- `DATA-005` Add schema validation and version checks.
-- `DATA-006` Export deterministic training episodes with fair observations, legal actions, rewards, replay hashes, and replayable action streams.
-- `QA-007` Add telemetry completeness checks per match.
-
-## Sprint 9: Self-Play Foundation
-
-- `AI-004` Implement self-play unlock conditions.
-- `ML-001` Build imitation-learning dataset builder from telemetry.
-- `ML-002` Integrate baseline policy training pipeline.
-- `ML-005` Add model-backed Goat legal-action scorer with deterministic plain-JS inference.
-- `ML-006` Add TensorFlow.js offline trainer that exports schema-validated Goat model artifacts.
-- `ML-007` Add playable God model lane with hidden-info features and a separate promotion gate.
-- `QA-008` Add offline benchmark harness for trained policy.
-
-## Sprint 10: RL + Hardening
-
-- `ML-003` Integrate self-play RL fine-tuning pipeline.
-- `ML-004` Add model promotion gates based on benchmark deltas.
-- `ML-008` Add held-out self-style and benchmark non-regression gates for local self RL.
-- `PERF-001` Run performance and memory profiling pass.
-- `REL-001` Final release checklist and cut MVP tag.
-
-## Cross-Sprint Non-Functional Work
-
-- `DOC-001` Keep `docs/*` specs updated for behavior changes.
-- `SEC-001` Input validation and anti-corruption checks for replay loading.
-- `OBS-001` Add structured error logs and crash diagnostics.
-- `TOOL-001` Add dev scripts (`npm run sim:test`, `npm run bot:bench`, `npm run replay:verify`).
-
-## Dependency Highlights
-
-- `SIM-005`, `SIM-006`, `SIM-007` depend on `ENG-002` and `SIM-001`.
-- `UI-003` depends on `SIM-006` card legality and elixir APIs.
-- `AI-002`, `AI-003` depend on stable `selectAction` contract from `AI-001`.
-- `ML-*` tasks depend on complete telemetry (`DATA-003` to `DATA-005`).
-
-## Milestone Checkpoints
-
-- Milestone A (end Sprint 3): deterministic headless playable simulation.
-- Milestone B (end Sprint 5): human-playable game loop with Noob bot.
-- Milestone C (end Sprint 7): ladder + progression + replay complete.
-- Milestone D (end Sprint 10): self-play loop and MVP release readiness.
+- Online PvP.
+- Player-facing bot levels.
+- Unlock progression.
+- Self-play/player mirroring.
+- Local training exports or model promotion workflows.

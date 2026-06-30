@@ -1,15 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { runBenchmark, runBenchmarkMatrix, runLadderMatch } from "../src/ai/benchmark.js";
-import { createZeroNeuralPolicyModel } from "../src/ai/neuralModel.js";
+import { runBenchmark, runBenchmarkMatrix, runBotMatch, runEdgerBenchmarkSuite } from "../src/ai/benchmark.js";
+import { EDGER_BOT_ID, INTERNAL_BASELINE_BOTS } from "../src/ai/botRuntime.js";
 
 const SMOKE_MAX_TICKS = 120;
 
-test("ladder match smoke run returns structured score payload", () => {
-  const match = runLadderMatch({
-    blueTier: "mid",
-    redTier: "noob",
+test("bot match smoke run returns structured score payload", () => {
+  const match = runBotMatch({
+    blueBot: EDGER_BOT_ID,
+    redBot: "random",
     seed: 404,
     maxTicks: SMOKE_MAX_TICKS,
   });
@@ -23,8 +23,8 @@ test("ladder match smoke run returns structured score payload", () => {
 
 test("benchmark output is deterministic for same seed and config", () => {
   const config = {
-    botA: "top",
-    botB: "mid",
+    botA: EDGER_BOT_ID,
+    botB: "aggressive",
     seed: 707,
     rounds: 2,
     maxTicks: SMOKE_MAX_TICKS,
@@ -39,9 +39,9 @@ test("benchmark output is deterministic for same seed and config", () => {
   assert.ok(first.resolved >= 0);
 });
 
-test("benchmark matrix is deterministic and enumerates pairwise tiers", () => {
+test("benchmark matrix is deterministic and enumerates pairwise bots", () => {
   const config = {
-    tiers: ["noob", "mid", "top"],
+    bots: [EDGER_BOT_ID, "random", "aggressive"],
     seed: 202,
     roundsPerPair: 1,
     maxTicks: SMOKE_MAX_TICKS,
@@ -57,8 +57,8 @@ test("benchmark matrix is deterministic and enumerates pairwise tiers", () => {
 
 test("short benchmark smoke run preserves accounting invariants", () => {
   const result = runBenchmark({
-    botA: "mid",
-    botB: "noob",
+    botA: EDGER_BOT_ID,
+    botB: "random",
     rounds: 2,
     seed: 202,
     maxTicks: SMOKE_MAX_TICKS,
@@ -70,51 +70,17 @@ test("short benchmark smoke run preserves accounting invariants", () => {
   assert.ok(result.winRateA >= 0 && result.winRateA <= 1);
 });
 
-test("model-backed Goat benchmark is deterministic for fixed model and seed", () => {
-  const model = createZeroNeuralPolicyModel({ hiddenUnits: 2, seed: 606 });
-  const config = {
-    botA: "goat",
-    botB: "noob",
-    trainedModelA: model,
-    rounds: 2,
-    seed: 303,
-    maxTicks: SMOKE_MAX_TICKS,
-  };
-
-  const first = runBenchmark(config);
-  const second = runBenchmark(config);
-
-  assert.deepEqual(first, second);
-  assert.equal(first.winsA + first.winsB + first.draws, 2);
-});
-
-test("benchmark matrix forwards configured trained models by tier", () => {
-  const model = createZeroNeuralPolicyModel({ hiddenUnits: 1, seed: 707 });
-  model.training_config.target_tier = "mid";
-
-  const matrix = runBenchmarkMatrix({
-    tiers: ["noob", "mid"],
-    seed: 515,
-    roundsPerPair: 2,
-    maxTicks: SMOKE_MAX_TICKS,
-    trainedModelsByTier: {
-      mid: model,
-    },
+test("Edger clears the initial internal baseline benchmark floor", () => {
+  const suite = runEdgerBenchmarkSuite({
+    opponents: INTERNAL_BASELINE_BOTS,
+    seed: 20260630,
+    roundsPerOpponent: 30,
+    maxTicks: 6040,
   });
 
-  const pair = matrix.pairs[0];
-  const expected = runBenchmark({
-    botA: "mid",
-    botB: "noob",
-    seed: pair.seed,
-    rounds: pair.rounds,
-    maxTicks: SMOKE_MAX_TICKS,
-    trainedModelA: model,
-  });
-
-  assert.equal(pair.higher_tier, "mid");
-  assert.equal(pair.lower_tier, "noob");
-  assert.equal(pair.wins_higher, expected.winsA);
-  assert.equal(pair.wins_lower, expected.winsB);
-  assert.equal(pair.draws, expected.draws);
+  assert.deepEqual(suite.opponents, INTERNAL_BASELINE_BOTS);
+  for (const pair of suite.pairs) {
+    assert.ok(pair.resolved > 0, `${pair.opponent} produced no resolved games`);
+    assert.ok(pair.win_rate >= 0.6, `${pair.opponent} win rate ${pair.win_rate}`);
+  }
 });

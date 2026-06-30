@@ -1,39 +1,41 @@
-# edge_royale plan
+# edge_royale
 
-## Context
-This is a super lightweight version of Clash Royale, the most famous Supercell mobile game.
+`edge_royale` is a lightweight, single-player Clash Royale-inspired browser game.
 
-Instead of playing against other player online, player will play will play against bots that have different levels of playing:
+The shipped game is human vs **Edger** only:
 
-- Noob (random playing)
-- Mid-ladder Menace (low-level strategic, greedy aggressive playing style)
-- Top Ladder (mid-level strategic, good elixir management and cycle count)
-- Pro (Ryley) (high-level strategic, very good elixir management and close to prefect cycle count)
-- Goat (Mo Light) (extremly high-level strategic, perfect elixir management and cycle count)
-- God (perfect gameply, can see opponents' cycle and elixir)
+- one arena
+- one fixed 8-card deck: Giant, Knight, Archers, Mini P.E.K.K.A, Musketeer, Goblins, Arrows, Fireball
+- deterministic simulation
+- one no-mercy oracle bot, Edger
+- simple local match stats against Edger
+- core replay serialization for determinism/debugging
 
-Players have to beat previous level to play the next one.
+There are no player-facing bot levels, unlock gates, self-play mirror bot, model manifests, or local training pipeline.
 
-Once they play enough games for us to gather their gameplay data, we will unlock self play, which is playing again ur own self and use reinforcement learning to make the self bot better as you get better.
+## Game Shape
 
-## Details
-Gameplay will be the same as Clash Royale. Link to game details: https://clashroyale.fandom.com/wiki/Basics_of_Battle 
+Edger is a deterministic handcrafted oracle bot. It may use exact opponent elixir, hand, and deck queue, acts every tick, returns legal actions only, and has no intentional mistakes or rubber-banding.
 
-We only gonna use one basic deck: Giant, Knight, Archers, Mini Pekka, Musketeer, Goblins, Arrows and Fireball to make sure we focus on building the algorithm for bots.
+Internal benchmark baselines exist only for CLI/tests:
+
+- `random`
+- `aggressive`
+- `defender`
+
+These are not product levels and are not exposed in the browser UI.
+
 The sim currently uses a level 11 tournament-standard stat baseline with simplified mechanics where the engine intentionally diverges from full Clash Royale parity.
 
-Learn how to implement UI here: https://github.com/Noisyboy-9/clash_royale_game
+## Docs
 
-## Detailed planning docs
-
+- Game rules: `docs/GAME_RULES.md`
+- Card balance: `docs/CARD_SPECS.md`
+- Edger/baseline AI spec: `docs/BOT_LEVELS.md`
 - Implementation roadmap: `docs/IMPLEMENTATION_PLAN.md`
-- Game rules spec: `docs/GAME_RULES.md`
-- Card balance spec: `docs/CARD_SPECS.md`
-- Bot tiers spec: `docs/BOT_LEVELS.md`
-- Neural training pipeline: `docs/TRAINING_PIPELINE.md`
 - Sprint/task backlog: `docs/SPRINT_BACKLOG.md`
 
-## Run prototype
+## Run Prototype
 
 ```bash
 npm install
@@ -43,86 +45,37 @@ npm run dev
 Open `http://127.0.0.1:5173`.
 
 Controls:
-- Click a card slot (or press `1-4`) to select a hand card
-- Click arena to play the selected card (troops on your side unless you have unlocked a pocket by destroying a crown tower)
+
+- Click a card slot, or press `1-4`, to select a hand card
+- Click arena to play the selected card
 - Drag a card from hand to arena to play on release
 - `Space` pause/resume
 - `R` reset
 - `F` fullscreen toggle
 
-Ladder + training:
-- Select bot difficulty from the `Bot Level` dropdown (locked levels show as disabled).
-- Beat a tier to unlock the next (`Noob` -> `Mid-ladder Menace` -> `Top Ladder`).
-- Click `Train Self Bot` to fit the local self-play legal-action MLP from logged player decisions, then run a small reward-weighted RL fine-tune.
-- Self-play unlock rule is enforced from profile data (`100` matches and `3` wins vs Top).
+Browser automation hooks:
 
-Automation hooks exposed in browser:
 - `window.render_game_to_text()`
 - `window.advanceTime(ms)`
 
-Self bot training stores public-observation decision samples locally: legal action candidates, chosen action index, action features, and match reward. The self model retrains only when enough legal decision samples have accumulated, and RL output is accepted only when held-out imitation similarity and benchmark win rate do not regress.
-
 ## Validation
 
-Run the Node test suite for simulation, AI, replay, and progression validation:
+Run the Node suite:
 
 ```bash
 npm test
 ```
 
-Run the dedicated browser smoke for client and self-training changes. It starts the repo dev server on an ephemeral localhost port, seeds deterministic localStorage fixtures, verifies under-threshold training messaging, RL accepted/fallback messaging, and playable Self model runtime, then shuts the server down:
+Run the Edger benchmark gate:
+
+```bash
+npm run bot:bench -- --opponents random,aggressive,defender --rounds 30 --seed 20260630 --max-ticks 6040 --min-win-rate 0.6
+```
+
+Run the browser smoke:
 
 ```bash
 npm run smoke:browser
 ```
 
-`smoke:browser` stays separate from `npm test` so browser setup remains opt-in. It requires a locally available Playwright Chromium binary and fails fast with a prerequisite message instead of trying to download browsers during validation.
-
-## Offline Ladder training
-
-```bash
-bash scripts/train-bot-ladder.sh
-```
-
-By default the script writes a timestamped run under `artifacts/training/runs/`, exports shard files for each requested tier, trains one saved model per tier, and benchmarks each saved model. Fair ladder tiers are `noob`, `mid`, `top`, `pro`, and `goat`; `god` uses a hidden-info feature schema for the playable boss model.
-Fair ladder export now uses built-in mixed curricula instead of same-tier self-play only: `noob` trains from `noob vs mid`, `mid` from `mid vs noob` plus `mid vs top`, `top` from `top vs mid` plus `top vs pro`, `pro` from `pro vs top` plus `pro vs goat`, and `goat` from `goat vs mid/top/pro`. `LADDER_EPISODES` is split across those pairings per tier, with tiny smoke presets clamped so every pairing still gets at least one episode.
-
-Customize a run with env vars when needed:
-
-```bash
-LADDER_RUN_NAME=ladder-v2 LADDER_SHARDS=4 LADDER_EPISODES=500 LADDER_BENCH_ROUNDS=50 bash scripts/train-bot-ladder.sh
-```
-
-Generated training artifacts are ignored by git. `data:export` still writes compact JSON shard files by default, and `train:bot` trains a specific fair ladder tier with `--target-tier <tier>`.
-When mixed-tier dataset dirs are supplied, `train:bot` now filters supervised rows to the requested target tier so the target model sees adjacent-tier opponents without imitating their actions.
-
-Fair ladder tiers and playable God use deterministic plain-JS inference when a valid same-tier model artifact is supplied and fall back to their heuristic policies otherwise.
-`train:ladder` also writes `artifacts/training/ladder-models.json`, the local manifest that points each trained fair tier at a saved model.
-The browser loads that manifest on startup; missing, invalid, or mismatched model entries fall back to heuristics.
-
-Benchmark the normal ladder matrix against the configured local models with:
-
-```bash
-npm run bot:bench -- --model-config artifacts/training/ladder-models.json
-```
-
-## Daily ladder training
-
-GitHub Actions runs `.github/workflows/daily-ladder-training.yml` every day at `17:37 UTC` and can also be started manually. The workflow runs tests, trains all fair ladder tiers at the balanced large preset, trains a capped God model lane, uploads the full ignored run directory as an Actions artifact, and compares fair candidates and God candidates against separate gates. The daily lane still auto-promotes God when its gate passes, but fair runtime model promotion now waits for the separate strict fair gate.
-
-The workflow commits only promoted runtime files:
-
-- `artifacts/training/ladder-models.json`
-- `artifacts/training/promoted/**`
-
-Raw datasets and timestamped run outputs stay ignored under `artifacts/training/runs/`.
-
-## Strict fair promotion
-
-Run the stricter fair-promotion check locally with:
-
-```bash
-npm run train:ladder:strict -- --candidate-manifest /private/tmp/edge_royale_ladder_25516896901/candidate-ladder-models.json --seed-base 1909 --batches 5 --rounds 100 --max-ticks 6040
-```
-
-GitHub Actions also exposes `.github/workflows/strict-fair-ladder-promotion.yml` as a manual `workflow_dispatch`. Pass the source daily run id, let it download `ladder-training-<run_id>`, run the strict gate, and promote fair tracked models to `training/daily-ladder-models` only when that stricter gate passes.
+The browser smoke starts the static dev server on an ephemeral localhost port, verifies the Edger-only UI, advances a match, checks profile stat persistence, and shuts the server down.

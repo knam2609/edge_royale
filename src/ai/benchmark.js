@@ -4,10 +4,13 @@ import { createTower, createTroop } from "../sim/entities.js";
 import { createArena } from "../sim/map.js";
 import { createRng } from "../sim/random.js";
 import {
+  EDGER_BOT_ID,
+  INTERNAL_BASELINE_BOTS,
   enumerateLegalCardActions,
+  normalizeBotId,
   rollDecisionDelayTicks,
   selectBotAction,
-} from "./ladderRuntime.js";
+} from "./botRuntime.js";
 
 export function makeBenchmarkArena() {
   return createArena({ minX: 0, maxX: 18, minY: 0, maxY: 32 });
@@ -29,23 +32,22 @@ function makeBotController(seed) {
   };
 }
 
-function maybeSelectAction({ engine, actor, tierId, controller, trainedModel = null }) {
+function maybeSelectAction({ engine, actor, botId, controller }) {
   const tick = engine.state.tick + 1;
   if (tick < controller.nextDecisionTick) {
     return null;
   }
 
   const legalActions = enumerateLegalCardActions({ engine, actor });
-  const decisionDelay = rollDecisionDelayTicks({ tierId, rng: controller.rng });
+  const decisionDelay = rollDecisionDelayTicks({ botId, rng: controller.rng });
   controller.nextDecisionTick = tick + decisionDelay;
 
   const action = selectBotAction({
-    tierId,
+    botId,
     engine,
     actor,
     legalActions,
     rng: controller.rng,
-    trainedModel,
   });
 
   if (!action || action.type !== "PLAY_CARD") {
@@ -62,12 +64,10 @@ function maybeSelectAction({ engine, actor, tierId, controller, trainedModel = n
   };
 }
 
-export function runLadderMatch({
-  blueTier,
-  redTier,
+export function runBotMatch({
+  blueBot,
+  redBot,
   seed,
-  trainedModelBlue = null,
-  trainedModelRed = null,
   maxTicks = MATCH_CONFIG.regulation_ticks + MATCH_CONFIG.overtime_ticks + 40,
 }) {
   const arena = makeBenchmarkArena();
@@ -78,6 +78,8 @@ export function runLadderMatch({
     initialEntities: makeBenchmarkInitialEntities(),
   });
 
+  const blueId = normalizeBotId(blueBot);
+  const redId = normalizeBotId(redBot);
   const blue = makeBotController(seed ^ 0x9e3779b9);
   const red = makeBotController(seed ^ 0x85ebca6b);
 
@@ -87,9 +89,8 @@ export function runLadderMatch({
     const blueAction = maybeSelectAction({
       engine,
       actor: "blue",
-      tierId: blueTier,
+      botId: blueId,
       controller: blue,
-      trainedModel: trainedModelBlue,
     });
     if (blueAction) {
       actions.push(blueAction);
@@ -98,9 +99,8 @@ export function runLadderMatch({
     const redAction = maybeSelectAction({
       engine,
       actor: "red",
-      tierId: redTier,
+      botId: redId,
       controller: red,
-      trainedModel: trainedModelRed,
     });
     if (redAction) {
       actions.push(redAction);
@@ -120,15 +120,15 @@ export function runLadderMatch({
 }
 
 export function runBenchmark({
-  botA,
+  botA = EDGER_BOT_ID,
   botB,
   seed = 1337,
   rounds = 100,
   maxTicks = undefined,
-  trainedModelA = null,
-  trainedModelB = null,
 }) {
   const rng = createRng(seed);
+  const leftBot = normalizeBotId(botA);
+  const rightBot = normalizeBotId(botB);
 
   let winsA = 0;
   let winsB = 0;
@@ -138,11 +138,9 @@ export function runBenchmark({
     const matchSeed = 1 + Math.floor(rng() * 2_000_000_000);
     const swapSides = i % 2 === 1;
 
-    const match = runLadderMatch({
-      blueTier: swapSides ? botB : botA,
-      redTier: swapSides ? botA : botB,
-      trainedModelBlue: swapSides ? trainedModelB : trainedModelA,
-      trainedModelRed: swapSides ? trainedModelA : trainedModelB,
+    const match = runBotMatch({
+      blueBot: swapSides ? rightBot : leftBot,
+      redBot: swapSides ? leftBot : rightBot,
       seed: matchSeed,
       maxTicks,
     });
@@ -174,44 +172,87 @@ export function runBenchmark({
   };
 }
 
+export function runEdgerBenchmarkSuite({
+  opponents = INTERNAL_BASELINE_BOTS,
+  seed = 20260630,
+  roundsPerOpponent = 30,
+  maxTicks = MATCH_CONFIG.regulation_ticks + MATCH_CONFIG.overtime_ticks + 40,
+} = {}) {
+  const normalizedOpponents = Array.isArray(opponents)
+    ? opponents.map(normalizeBotId).filter((botId) => botId !== EDGER_BOT_ID)
+    : [];
+  const uniqueOpponents = [...new Set(normalizedOpponents.length > 0 ? normalizedOpponents : INTERNAL_BASELINE_BOTS)];
+  const rng = createRng(seed);
+  const pairs = uniqueOpponents.map((opponent) => {
+    const pairSeed = 1 + Math.floor(rng() * 2_000_000_000);
+    const benchmark = runBenchmark({
+      botA: EDGER_BOT_ID,
+      botB: opponent,
+      seed: pairSeed,
+      rounds: roundsPerOpponent,
+      maxTicks,
+    });
+    return {
+      bot: EDGER_BOT_ID,
+      opponent,
+      seed: pairSeed,
+      rounds: benchmark.rounds,
+      wins: benchmark.winsA,
+      losses: benchmark.winsB,
+      draws: benchmark.draws,
+      resolved: benchmark.resolved,
+      win_rate: benchmark.winRateA,
+    };
+  });
+
+  return {
+    seed,
+    rounds_per_opponent: roundsPerOpponent,
+    max_ticks: maxTicks,
+    bot: EDGER_BOT_ID,
+    opponents: uniqueOpponents,
+    pairs,
+  };
+}
+
 export function runBenchmarkMatrix({
-  tiers = ["noob", "mid", "top", "pro", "goat", "god"],
+  tiers,
+  bots,
   seed = 1337,
   roundsPerPair = 100,
   maxTicks = undefined,
-  trainedModelsByTier = {},
 } = {}) {
-  const normalizedTiers = Array.isArray(tiers)
-    ? tiers.filter((tierId, index) => typeof tierId === "string" && tiers.indexOf(tierId) === index)
+  const requested = Array.isArray(bots) ? bots : tiers;
+  const normalizedBots = Array.isArray(requested)
+    ? requested.map(normalizeBotId).filter((botId, index, all) => all.indexOf(botId) === index)
     : [];
+  const botList = normalizedBots.length >= 2 ? normalizedBots : [EDGER_BOT_ID, ...INTERNAL_BASELINE_BOTS];
   const rng = createRng(seed);
   const pairs = [];
 
-  for (let i = 0; i < normalizedTiers.length; i += 1) {
-    for (let j = i + 1; j < normalizedTiers.length; j += 1) {
-      const lower = normalizedTiers[i];
-      const higher = normalizedTiers[j];
+  for (let i = 0; i < botList.length; i += 1) {
+    for (let j = i + 1; j < botList.length; j += 1) {
+      const botA = botList[i];
+      const botB = botList[j];
       const pairSeed = 1 + Math.floor(rng() * 2_000_000_000);
       const benchmark = runBenchmark({
-        botA: higher,
-        botB: lower,
+        botA,
+        botB,
         seed: pairSeed,
         rounds: roundsPerPair,
         maxTicks,
-        trainedModelA: trainedModelsByTier[higher] ?? null,
-        trainedModelB: trainedModelsByTier[lower] ?? null,
       });
 
       pairs.push({
-        higher_tier: higher,
-        lower_tier: lower,
+        bot_a: botA,
+        bot_b: botB,
         seed: pairSeed,
         rounds: benchmark.rounds,
-        wins_higher: benchmark.winsA,
-        wins_lower: benchmark.winsB,
+        wins_a: benchmark.winsA,
+        wins_b: benchmark.winsB,
         draws: benchmark.draws,
         resolved: benchmark.resolved,
-        win_rate_higher: benchmark.winRateA,
+        win_rate_a: benchmark.winRateA,
       });
     }
   }
@@ -219,7 +260,7 @@ export function runBenchmarkMatrix({
   return {
     seed,
     rounds_per_pair: roundsPerPair,
-    tiers: normalizedTiers,
+    bots: botList,
     pairs,
   };
 }

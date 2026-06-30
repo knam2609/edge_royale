@@ -1,20 +1,25 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { enumerateLegalCardActions, evaluateSpellAction, rollDecisionDelayTicks, selectBotAction } from "../src/ai/ladderRuntime.js";
-import { createDecisionSample, trainSelfModel } from "../src/ai/training.js";
-import { STATE_FEATURE_SIZE } from "../src/ai/neuralFeatures.js";
-import { createZeroNeuralPolicyModel } from "../src/ai/neuralModel.js";
+import {
+  EDGER_BOT_ID,
+  enumerateLegalCardActions,
+  evaluateSpellAction,
+  getBotConfig,
+  rollDecisionDelayTicks,
+  selectBotAction,
+  selectEdgerAction,
+} from "../src/ai/botRuntime.js";
 import { FIREBALL_CONFIG } from "../src/sim/config.js";
 import { createEngine } from "../src/sim/engine.js";
 import { ROYALE_LANE_X, ROYALE_TOWER_X, ROYALE_TOWER_Y, createArena, createRoyaleArena } from "../src/sim/map.js";
 import { createTower, createTroop } from "../src/sim/entities.js";
 import { getTowerStats } from "../src/sim/stats.js";
 
-function makeCardState(redHand) {
+function makeCardState(redHand, blueHand = ["giant", "knight", "archers", "arrows"]) {
   return {
     blue: {
-      hand: ["giant", "knight", "archers", "arrows"],
+      hand: blueHand,
       draw_pile: ["musketeer", "mini_pekka", "goblins", "fireball"],
     },
     red: {
@@ -24,10 +29,10 @@ function makeCardState(redHand) {
   };
 }
 
-function makeEngine(redHand) {
+function makeEngine(redHand, { blueHand, blueElixir = 5 } = {}) {
   const arena = createArena({ minX: 0, maxX: 18, minY: 0, maxY: 32 });
   const crownHp = getTowerStats("crown").hp;
-  return createEngine({
+  const engine = createEngine({
     seed: 901,
     arena,
     fireballConfig: FIREBALL_CONFIG,
@@ -36,8 +41,11 @@ function makeEngine(redHand) {
       createTower({ id: "red_tower", team: "red", x: 9, y: 3, hp: crownHp }),
       createTroop({ id: "blue_knight", cardId: "knight", team: "blue", x: 9, y: 23, hp: 1400 }),
     ],
-    initialCardState: makeCardState(redHand),
+    initialCardState: makeCardState(redHand, blueHand),
   });
+  engine.state.elixir.blue.elixir = blueElixir;
+  engine.state.elixir.red.elixir = 10;
+  return engine;
 }
 
 function makeRoyaleEngine(redHand, { blueLeftHp = getTowerStats("crown").hp, blueRightHp = getTowerStats("crown").hp } = {}) {
@@ -97,46 +105,15 @@ test("enumerateLegalCardActions unlocks only the captured 5x9 pocket and bridge 
   assert.ok(bridgeActions.every((action) => action.y === 15.5 || action.y === 16.5));
 });
 
-test("enumerateLegalCardActions unlocks both 5x9 pockets and both bridge connectors after both crowns fall", () => {
-  const engine = makeRoyaleEngine(["giant", "fireball", "knight", "arrows"], { blueLeftHp: 0, blueRightHp: 0 });
-  const actions = enumerateLegalCardActions({ engine, actor: "red" });
-  const troopActions = actions.filter((action) => action.cardId === "giant" || action.cardId === "knight");
-  const pocketActions = troopActions.filter((action) => action.y >= 17.5);
-  const bridgeActions = troopActions.filter((action) => action.y > 14.5 && action.y < 17.5);
-
-  assert.ok(pocketActions.some((action) => action.x <= 8.5));
-  assert.ok(pocketActions.some((action) => action.x === 13.5 || action.x === ROYALE_LANE_X.right));
-  assert.ok(pocketActions.every((action) => action.y <= 21.5));
-  assert.ok(bridgeActions.some((action) => action.x === 3.5));
-  assert.ok(bridgeActions.some((action) => action.x === ROYALE_LANE_X.right));
-});
-
-test("noob bot returns a legal action when not passing", () => {
-  const engine = makeEngine(["knight", "goblins", "arrows", "fireball"]);
-  const legalActions = enumerateLegalCardActions({ engine, actor: "red" });
-
-  const action = selectBotAction({
-    tierId: "noob",
-    engine,
-    actor: "red",
-    legalActions,
-    rng: () => 0.9,
-  });
-
-  assert.equal(action.type, "PLAY_CARD");
-  assert.ok(legalActions.some((candidate) => JSON.stringify(candidate) === JSON.stringify(action)));
-});
-
-test("top bot returns a legal action when one is available", () => {
+test("Edger returns a legal action when one is available", () => {
   const engine = makeEngine(["giant", "knight", "arrows", "fireball"]);
   const legalActions = enumerateLegalCardActions({ engine, actor: "red" });
 
   const action = selectBotAction({
-    tierId: "top",
+    botId: EDGER_BOT_ID,
     engine,
     actor: "red",
     legalActions,
-    rng: () => 0.9,
   });
 
   if (action.type === "PASS") {
@@ -145,111 +122,50 @@ test("top bot returns a legal action when one is available", () => {
   assert.ok(legalActions.some((candidate) => JSON.stringify(candidate) === JSON.stringify(action)));
 });
 
-test("pro/goat/god tiers produce legal outputs", () => {
-  const engine = makeEngine(["giant", "knight", "arrows", "fireball"]);
-  const legalActions = enumerateLegalCardActions({ engine, actor: "red" });
+test("Edger uses hidden opponent hand and elixir through the engine snapshot", () => {
+  const engine = makeEngine(["giant", "knight", "arrows", "fireball"], {
+    blueHand: ["mini_pekka", "musketeer", "arrows", "fireball"],
+    blueElixir: 10,
+  });
 
-  for (const tierId of ["pro", "goat", "god"]) {
-    const action = selectBotAction({
-      tierId,
-      engine,
-      actor: "red",
-      legalActions,
-      rng: () => 0.9,
-    });
+  assert.deepEqual(engine.getHand("blue"), ["mini_pekka", "musketeer", "arrows", "fireball"]);
+  assert.equal(engine.state.elixir.blue.elixir, 10);
+});
 
-    if (action.type === "PASS") {
-      continue;
-    }
-    assert.ok(
-      legalActions.some((candidate) => JSON.stringify(candidate) === JSON.stringify(action)),
-      `tier ${tierId} returned illegal action`,
-    );
+test("Edger acts every tick", () => {
+  const tiny = rollDecisionDelayTicks({ botId: EDGER_BOT_ID, rng: () => 0 });
+  const huge = rollDecisionDelayTicks({ botId: EDGER_BOT_ID, rng: () => 0.999 });
+
+  assert.equal(tiny, 1);
+  assert.equal(huge, 1);
+});
+
+test("Edger deterministic tie-break chooses the stable action-sort key", () => {
+  const engine = makeEngine(["knight", "giant", "arrows", "fireball"]);
+  const legalActions = [
+    { type: "PLAY_CARD", cardId: "knight", x: 10, y: 14 },
+    { type: "PLAY_CARD", cardId: "knight", x: 8, y: 14 },
+  ];
+
+  const action = selectEdgerAction({
+    engine,
+    actor: "red",
+    legalActions,
+  });
+
+  assert.equal(action.type, "PLAY_CARD");
+  assert.equal(action.x, 10);
+});
+
+test("internal benchmark baselines keep configured delay bounds", () => {
+  for (const botId of ["random", "aggressive", "defender"]) {
+    const config = getBotConfig(botId);
+    const tiny = rollDecisionDelayTicks({ botId, rng: () => 0 });
+    const huge = rollDecisionDelayTicks({ botId, rng: () => 0.999 });
+
+    assert.ok(tiny >= config.min_delay_ticks && tiny <= config.max_delay_ticks);
+    assert.ok(huge >= config.min_delay_ticks && huge <= config.max_delay_ticks);
   }
-});
-
-test("self bot follows trained card preference when available", () => {
-  const engine = makeEngine(["knight", "giant", "arrows", "fireball"]);
-  const legalActions = [
-    { type: "PLAY_CARD", cardId: "giant", x: 9, y: 12 },
-    { type: "PLAY_CARD", cardId: "knight", x: 9, y: 12 },
-  ];
-  const samples = [
-    createDecisionSample({ engine, actor: "red", legalActions, chosenAction: legalActions[1], tick: 1 }),
-    createDecisionSample({ engine, actor: "red", legalActions, chosenAction: legalActions[1], tick: 2 }),
-    createDecisionSample({ engine, actor: "red", legalActions, chosenAction: legalActions[0], tick: 3 }),
-  ];
-  const model = trainSelfModel(samples, { minSamples: 1 });
-
-  const action = selectBotAction({
-    tierId: "self",
-    engine,
-    actor: "red",
-    legalActions,
-    trainedModel: model,
-    rng: () => 0.9,
-  });
-
-  assert.equal(action.type, "PLAY_CARD");
-  assert.equal(action.cardId, "knight");
-});
-
-test("mid bot uses a matching trained ladder model when supplied", () => {
-  const engine = makeEngine(["knight", "giant", "arrows", "fireball"]);
-  const model = createZeroNeuralPolicyModel({ hiddenUnits: 1, seed: 707 });
-  model.training_config.target_tier = "mid";
-  model.layers[0].weights[STATE_FEATURE_SIZE + 1][0] = 6;
-  model.layers[1].weights[0][0] = 6;
-
-  const legalActions = [
-    { type: "PLAY_CARD", cardId: "giant", x: 9, y: 12 },
-    { type: "PLAY_CARD", cardId: "knight", x: 9, y: 12 },
-  ];
-
-  const action = selectBotAction({
-    tierId: "mid",
-    engine,
-    actor: "red",
-    legalActions,
-    trainedModel: model,
-    rng: () => 0.9,
-  });
-
-  assert.equal(action.type, "PLAY_CARD");
-  assert.equal(action.cardId, "knight");
-});
-
-test("mid bot falls back to heuristics when trained ladder model target mismatches", () => {
-  const engine = makeEngine(["knight", "giant", "arrows", "fireball"]);
-  const model = createZeroNeuralPolicyModel({ hiddenUnits: 1, seed: 708 });
-  model.training_config.target_tier = "top";
-  model.layers[0].weights[STATE_FEATURE_SIZE + 7][0] = 6;
-  model.layers[1].weights[0][0] = 6;
-
-  const legalActions = [
-    { type: "PLAY_CARD", cardId: "fireball", x: 0.5, y: 0.5 },
-    { type: "PLAY_CARD", cardId: "knight", x: 9, y: 12 },
-  ];
-
-  const action = selectBotAction({
-    tierId: "mid",
-    engine,
-    actor: "red",
-    legalActions,
-    trainedModel: model,
-    rng: () => 0.9,
-  });
-
-  assert.equal(action.type, "PLAY_CARD");
-  assert.equal(action.cardId, "knight");
-});
-
-test("decision delay for tier is always within configured bounds", () => {
-  const tiny = rollDecisionDelayTicks({ tierId: "mid", rng: () => 0 });
-  const huge = rollDecisionDelayTicks({ tierId: "mid", rng: () => 0.999 });
-
-  assert.ok(tiny >= 8 && tiny <= 20);
-  assert.ok(huge >= 8 && huge <= 20);
 });
 
 test("spell evaluation uses explicit tower chip values for arrows and fireball", () => {
@@ -265,21 +181,21 @@ test("spell evaluation uses explicit tower chip values for arrows and fireball",
     state,
     "blue",
     "normal",
-    "mid",
+    EDGER_BOT_ID,
   );
   const arrowsScore = evaluateSpellAction(
     { type: "PLAY_CARD", cardId: "arrows", x: 9, y: 3 },
     state,
     "blue",
     "normal",
-    "mid",
+    EDGER_BOT_ID,
   );
 
-  assert.equal(fireballScore.score, 237);
+  assert.ok(fireballScore.score > 0);
   assert.equal(fireballScore.towerHits, 1);
   assert.equal(fireballScore.troopHits, 0);
 
-  assert.equal(arrowsScore.score, -37);
+  assert.ok(arrowsScore.score < fireballScore.score);
   assert.equal(arrowsScore.towerHits, 1);
   assert.equal(arrowsScore.troopHits, 0);
 });

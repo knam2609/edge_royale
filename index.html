@@ -107,18 +107,9 @@
         color: rgba(238, 245, 255, 0.82);
       }
 
-      #bot-tier-select {
-        width: 100%;
-        border-radius: 12px;
-        border: 1px solid rgba(255, 255, 255, 0.2);
-        padding: 10px 12px;
-        background: rgba(255, 255, 255, 0.1);
-        color: #f4f8ff;
-      }
-
       .actions {
         display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 8px;
       }
 
@@ -139,10 +130,6 @@
 
       #reset-btn {
         background: linear-gradient(180deg, #f4d7ab, #d6a66c);
-      }
-
-      #train-btn {
-        background: linear-gradient(180deg, #ffe28a, var(--gold));
       }
 
       #profile-summary {
@@ -198,12 +185,7 @@
             <p class="subtitle" id="setup-subtitle">
               Portrait battle frame calibrated to the Clash Royale arena reference.
             </p>
-            <label for="bot-tier-select">
-              Bot Level
-              <select id="bot-tier-select" aria-label="Bot level"></select>
-            </label>
             <div class="actions">
-              <button id="train-btn">Train</button>
               <button id="start-btn">Start</button>
               <button id="reset-btn">Reset</button>
             </div>
