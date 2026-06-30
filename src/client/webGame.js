@@ -7,36 +7,18 @@ import { getTroopDeployRegions, getTroopPlacementStatus } from "../sim/placement
 import { createRng } from "../sim/random.js";
 import { getTowerStats } from "../sim/stats.js";
 import {
-  BOT_TIERS,
+  EDGER_BOT_ID,
   enumerateLegalCardActions,
-  getBotTierConfig,
-  normalizeBotTierId,
+  getBotConfig,
   rollDecisionDelayTicks,
   selectBotAction,
-} from "../ai/ladderRuntime.js";
-import {
-  DEFAULT_LADDER_MODEL_MANIFEST_PATH,
-  PLAYABLE_MODEL_TIERS,
-  getConfiguredLadderModelPath,
-  normalizeLadderModelManifest,
-  normalizeLoadedLadderModelsByTier,
-} from "../ai/ladderModelManifest.js";
+} from "../ai/botRuntime.js";
 import {
   createDefaultProfile,
   getProfileProgress,
   normalizeProfile,
   recordMatch,
-  setSelectedTier,
 } from "../ai/profile.js";
-import {
-  appendSamples,
-  createDecisionSample,
-  createEmptyTrainingStore,
-  getSelfTrainingStatus,
-  normalizeTrainingStore,
-  summarizeTrainingStore,
-} from "../ai/training.js";
-import { trainSelfModelWithRl } from "../ai/selfTraining.js";
 import {
   computePortraitBattleLayout,
   findHandSlotHit as findHandSlotHitForLayout,
@@ -44,14 +26,12 @@ import {
   viewportToWorld,
   worldToViewport,
 } from "./layout.js";
-import { PROFILE_STORAGE_KEY, SELF_MODEL_STORAGE_KEY, TRAINING_STORAGE_KEY } from "./storageKeys.js";
+import { PROFILE_STORAGE_KEY } from "./storageKeys.js";
 
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 const startBtn = document.getElementById("start-btn");
 const resetBtn = document.getElementById("reset-btn");
-const trainBtn = document.getElementById("train-btn");
-const botTierSelect = document.getElementById("bot-tier-select");
 const profileSummary = document.getElementById("profile-summary");
 const setupOverlay = document.getElementById("setup-overlay");
 const setupTitle = document.getElementById("setup-title");
@@ -174,20 +154,13 @@ const appState = {
   pendingActions: [],
   statusMessage: "Click Start to begin.",
   selectedCardIndex: 0,
-  selectedBotTier: "noob",
+  opponentBotId: EDGER_BOT_ID,
   engine: null,
   canvasMetrics: { width: canvas.width, height: canvas.height, dpr: 1 },
   dragState: null,
   suppressNextClick: false,
   profile: createDefaultProfile(),
-  trainingStore: createEmptyTrainingStore(),
-  selfModel: null,
-  ladderModelManifest: { version: 1, tiers: {}, warnings: [] },
-  ladderModelsByTier: {},
-  ladderModelWarnings: [],
-  ladderModelStatus: "missing",
   matchRecorded: false,
-  pendingTrainingSamples: [],
   botRng: createRng(20260306),
   botNextDecisionTick: 1,
   lastFrameTime: performance.now(),
@@ -255,58 +228,17 @@ function saveStoredJson(key, value) {
   }
 }
 
-function getTierLabel(tierId) {
-  return getBotTierConfig(tierId).label;
-}
-
-function getOpponentModelSource(tierId = appState.selectedBotTier) {
-  if (tierId === "self") {
-    return appState.selfModel?.ready ? "model" : "heuristic";
-  }
-  return appState.ladderModelsByTier[tierId] ? "model" : "heuristic";
-}
-
-function getRuntimeBotModel(tierId = appState.selectedBotTier) {
-  if (tierId === "self") {
-    return appState.selfModel;
-  }
-  return appState.ladderModelsByTier[tierId] ?? null;
-}
-
-function syncTierSelectOptions() {
-  const profile = normalizeProfile(appState.profile);
-  const locked = new Set(
-    BOT_TIERS.map((tier) => tier.id).filter((tierId) => !profile.unlocked_tiers.includes(tierId)),
-  );
-
-  botTierSelect.innerHTML = "";
-  for (const tier of BOT_TIERS) {
-    const option = document.createElement("option");
-    option.value = tier.id;
-    option.textContent = locked.has(tier.id) ? `${tier.label} (Locked)` : tier.label;
-    option.disabled = locked.has(tier.id);
-    botTierSelect.append(option);
-  }
-
-  const selected = profile.unlocked_tiers.includes(appState.selectedBotTier)
-    ? appState.selectedBotTier
-    : profile.selected_tier;
-  appState.selectedBotTier = normalizeBotTierId(selected);
-  botTierSelect.value = appState.selectedBotTier;
+function getOpponentLabel() {
+  return getBotConfig(appState.opponentBotId).label;
 }
 
 function refreshProfileSummary() {
   const profile = normalizeProfile(appState.profile);
   const progress = getProfileProgress(profile);
-  const training = summarizeTrainingStore(appState.trainingStore);
-  const selfReady = Boolean(appState.selfModel?.ready);
-
-  const selfStatus = progress.self_play_ready
-    ? "Self unlock ready"
-    : `Self unlock in ${progress.matches_needed_for_self} matches + ${progress.top_wins_needed_for_self} top wins`;
-  const botSource = getOpponentModelSource(appState.selectedBotTier);
-
-  profileSummary.textContent = `Tier: ${getTierLabel(appState.selectedBotTier)} | Bot source: ${botSource} | Matches: ${progress.total_matches} | Training samples: ${training.sample_count} | ${selfStatus} | Self model: ${selfReady ? "ready" : "not trained"}`;
+  profileSummary.textContent =
+    `Opponent: ${getOpponentLabel()} | Matches: ${progress.total_matches} | ` +
+    `Record: ${progress.wins}-${progress.losses}-${progress.draws} | ` +
+    `Win rate: ${(progress.win_rate * 100).toFixed(0)}%`;
 }
 
 function syncSetupOverlay() {
@@ -324,98 +256,9 @@ function persistProfile() {
   saveStoredJson(PROFILE_STORAGE_KEY, appState.profile);
 }
 
-function persistTrainingStore() {
-  saveStoredJson(TRAINING_STORAGE_KEY, appState.trainingStore);
-}
-
-function persistSelfModel() {
-  saveStoredJson(SELF_MODEL_STORAGE_KEY, appState.selfModel);
-}
-
 function hydrateAppState() {
   appState.profile = normalizeProfile(loadStoredJson(PROFILE_STORAGE_KEY, createDefaultProfile()));
-  appState.trainingStore = normalizeTrainingStore(loadStoredJson(TRAINING_STORAGE_KEY, createEmptyTrainingStore()));
-
-  const loadedModel = loadStoredJson(SELF_MODEL_STORAGE_KEY, null);
-  appState.selfModel = loadedModel && typeof loadedModel === "object" ? loadedModel : null;
-
-  appState.selectedBotTier = normalizeBotTierId(appState.profile.selected_tier);
-  syncTierSelectOptions();
   refreshProfileSummary();
-}
-
-function manifestPathToFetchUrl(path) {
-  return `/${String(path).replace(/^\/+/, "")}`;
-}
-
-async function fetchJsonOrNull(url) {
-  const response = await fetch(url, { cache: "no-store" });
-  if (response.status === 404) {
-    return null;
-  }
-  if (!response.ok) {
-    throw new Error(`${response.status} ${response.statusText}`.trim());
-  }
-  return response.json();
-}
-
-async function hydrateLadderModels() {
-  appState.ladderModelStatus = "loading";
-  refreshProfileSummary();
-
-  let rawManifest = null;
-  try {
-    rawManifest = await fetchJsonOrNull(manifestPathToFetchUrl(DEFAULT_LADDER_MODEL_MANIFEST_PATH));
-  } catch (error) {
-    appState.ladderModelStatus = "error";
-    appState.ladderModelWarnings = [`could not load ladder model manifest: ${error.message}`];
-    refreshProfileSummary();
-    return;
-  }
-
-  if (!rawManifest) {
-    appState.ladderModelStatus = "missing";
-    appState.ladderModelManifest = { version: 1, tiers: {}, warnings: [] };
-    appState.ladderModelsByTier = {};
-    appState.ladderModelWarnings = [];
-    refreshProfileSummary();
-    return;
-  }
-
-  const manifest = normalizeLadderModelManifest(rawManifest);
-  const rawModelsByTier = {};
-  const fetchWarnings = [];
-
-  await Promise.all(
-    PLAYABLE_MODEL_TIERS.map(async (tierId) => {
-      const modelPath = getConfiguredLadderModelPath(manifest, tierId);
-      if (!modelPath) {
-        return;
-      }
-
-      try {
-        const rawModel = await fetchJsonOrNull(manifestPathToFetchUrl(modelPath));
-        if (rawModel) {
-          rawModelsByTier[tierId] = rawModel;
-        } else {
-          fetchWarnings.push(`tier ${tierId} model at ${modelPath} was not found; using heuristic`);
-        }
-      } catch (error) {
-        fetchWarnings.push(`tier ${tierId} model at ${modelPath} could not load: ${error.message}`);
-      }
-    }),
-  );
-
-  const loaded = normalizeLoadedLadderModelsByTier({ manifest, rawModelsByTier });
-  appState.ladderModelStatus = "loaded";
-  appState.ladderModelManifest = loaded.manifest;
-  appState.ladderModelsByTier = loaded.modelsByTier;
-  appState.ladderModelWarnings = [...fetchWarnings, ...loaded.warnings];
-  refreshProfileSummary();
-
-  if (appState.mode === "ready" && appState.ladderModelWarnings.length > 0) {
-    appState.statusMessage = `Ladder model config loaded with ${appState.ladderModelWarnings.length} warning(s); invalid tiers use heuristics.`;
-  }
 }
 
 let cachedBattleLayoutKey = "";
@@ -859,11 +702,7 @@ function createInitialEntities() {
 
 function resetGame() {
   const profile = normalizeProfile(appState.profile);
-  if (!profile.unlocked_tiers.includes(appState.selectedBotTier)) {
-    appState.selectedBotTier = profile.selected_tier;
-  }
-
-  const seedBase = 20260306 + profile.total_matches * 37 + appState.selectedBotTier.length * 13;
+  const seedBase = 20260306 + profile.total_matches * 37 + appState.opponentBotId.length * 13;
   appState.engine = createEngine({
     seed: seedBase,
     arena,
@@ -874,7 +713,6 @@ function resetGame() {
   appState.botRng = createRng(seedBase ^ 0x5f3759df);
   appState.botNextDecisionTick = 1;
   appState.matchRecorded = false;
-  appState.pendingTrainingSamples = [];
   appState.pendingActions = [];
   appState.mode = "ready";
   appState.paused = false;
@@ -883,8 +721,7 @@ function resetGame() {
   appState.suppressNextClick = false;
   appState.lagMs = 0;
   resetVisualState();
-  appState.statusMessage = `Ready. Opponent: ${getTierLabel(appState.selectedBotTier)}. Pick a card and click or drag to play.`;
-  syncTierSelectOptions();
+  appState.statusMessage = `Ready. Opponent: ${getOpponentLabel()}. Pick a card and click or drag to play.`;
   refreshProfileSummary();
 }
 
@@ -963,21 +800,6 @@ function queuePlayerCardPlay(worldPosition, { cardIndex = appState.selectedCardI
   appState.pendingActions.push(action);
   appState.selectedCardIndex = cardIndex;
 
-  const sample = createDecisionSample({
-    engine: appState.engine,
-    actor: "blue",
-    legalActions: enumerateLegalCardActions({
-      engine: appState.engine,
-      actor: "blue",
-    }),
-    chosenAction: action,
-    tick: nextTick,
-    sourceTier: appState.selectedBotTier,
-  });
-  if (sample) {
-    appState.pendingTrainingSamples.push(sample);
-  }
-
   return true;
 }
 
@@ -991,18 +813,17 @@ function buildBotActions(tick) {
     actor: "red",
   });
   const decisionDelay = rollDecisionDelayTicks({
-    tierId: appState.selectedBotTier,
+    botId: appState.opponentBotId,
     rng: appState.botRng,
   });
   appState.botNextDecisionTick = tick + decisionDelay;
 
   const selected = selectBotAction({
-    tierId: appState.selectedBotTier,
+    botId: appState.opponentBotId,
     engine: appState.engine,
     actor: "red",
     legalActions,
     rng: appState.botRng,
-    trainedModel: getRuntimeBotModel(appState.selectedBotTier),
   });
 
   if (!selected || selected.type !== "PLAY_CARD") {
@@ -1032,40 +853,17 @@ function formatWinnerStatus(result) {
   return `${who} (${reason}). Crowns ${score}, tower HP ${hp}.`;
 }
 
-function appendMatchTrainingSamples(matchResult) {
-  if (appState.pendingTrainingSamples.length === 0) {
+function recordCompletedMatch(matchResult) {
+  if (appState.matchRecorded) {
     return;
   }
 
-  const reward = matchResult?.winner === "blue" ? 1 : matchResult?.winner === "red" ? -1 : 0;
-  const rewardedSamples = appState.pendingTrainingSamples.map((sample) => ({
-    ...sample,
-    reward,
-  }));
-  appState.trainingStore = appendSamples(appState.trainingStore, rewardedSamples);
-  persistTrainingStore();
-  appState.pendingTrainingSamples = [];
-}
-
-function applyMatchProgression(matchResult) {
-  if (appState.matchRecorded) {
-    return [];
-  }
-
-  appendMatchTrainingSamples(matchResult);
-
-  const progression = recordMatch(appState.profile, {
-    opponentTier: appState.selectedBotTier,
+  appState.profile = recordMatch(appState.profile, {
     winner: matchResult.winner,
   });
-
-  appState.profile = setSelectedTier(progression.profile, appState.selectedBotTier);
   persistProfile();
   appState.matchRecorded = true;
-  syncTierSelectOptions();
   refreshProfileSummary();
-
-  return progression.newlyUnlocked;
 }
 
 function stepGameTick() {
@@ -1091,10 +889,8 @@ function stepGameTick() {
   const matchResult = appState.engine.getMatchResult();
   if (matchResult) {
     appState.mode = "game_over";
-    const newlyUnlocked = applyMatchProgression(matchResult);
-    const unlockMessage =
-      newlyUnlocked.length > 0 ? ` Unlocked: ${newlyUnlocked.map((tierId) => getTierLabel(tierId)).join(", ")}.` : "";
-    appState.statusMessage = `${formatWinnerStatus(matchResult)}${unlockMessage}`;
+    recordCompletedMatch(matchResult);
+    appState.statusMessage = formatWinnerStatus(matchResult);
   }
 }
 
@@ -2813,7 +2609,7 @@ function drawHud() {
   const clockText = formatBattleClock(activeClock);
   const topBanner = layout.topBanner;
   const timerBox = layout.timerBox;
-  const opponentName = fitTextToWidth(getTierLabel(appState.selectedBotTier), topBanner.width - 88 * layout.scale);
+  const opponentName = fitTextToWidth(getOpponentLabel(), topBanner.width - 88 * layout.scale);
 
   fillRoundedRect(topBanner.x, topBanner.y, topBanner.width, topBanner.height, 18 * layout.scale, "rgba(84,122,44,0.14)");
   fillRoundedRect(topBanner.x + 4 * layout.scale, topBanner.y + 10 * layout.scale, 50 * layout.scale, 56 * layout.scale, 14 * layout.scale, "#6f4d37");
@@ -2826,7 +2622,7 @@ function drawHud() {
   ctx.fillText(opponentName, topBanner.x + 62 * layout.scale, topBanner.y + 30 * layout.scale);
   ctx.fillStyle = "#fff3d8";
   ctx.font = `${Math.max(14, 18 * layout.scale)}px Trebuchet MS`;
-  ctx.fillText("Royale Trainers", topBanner.x + 62 * layout.scale, topBanner.y + 60 * layout.scale);
+  ctx.fillText("Oracle Opponent", topBanner.x + 62 * layout.scale, topBanner.y + 60 * layout.scale);
 
   fillRoundedRect(timerBox.x, timerBox.y, timerBox.width, timerBox.height, 14 * layout.scale, "rgba(12,16,21,0.9)");
   strokeRoundedRect(timerBox.x, timerBox.y, timerBox.width, timerBox.height, 14 * layout.scale, "rgba(0,0,0,0.78)", Math.max(2, 2.2 * layout.scale));
@@ -3030,17 +2826,6 @@ canvas.addEventListener("click", (event) => {
 });
 
 startBtn.addEventListener("click", () => {
-  const profile = normalizeProfile(appState.profile);
-  if (!profile.unlocked_tiers.includes(appState.selectedBotTier)) {
-    appState.statusMessage = `${getTierLabel(appState.selectedBotTier)} is locked. Beat lower tiers first.`;
-    syncTierSelectOptions();
-    return;
-  }
-
-  appState.profile = setSelectedTier(profile, appState.selectedBotTier);
-  persistProfile();
-  refreshProfileSummary();
-
   if (appState.mode === "game_over") {
     resetGame();
   }
@@ -3048,88 +2833,11 @@ startBtn.addEventListener("click", () => {
   appState.mode = "playing";
   appState.paused = false;
   appState.lagMs = 0;
-  appState.statusMessage = `Battle started vs ${getTierLabel(appState.selectedBotTier)}. Cycle cards to pressure towers.`;
+  appState.statusMessage = `Battle started vs ${getOpponentLabel()}. Cycle cards to pressure towers.`;
 });
 
 resetBtn.addEventListener("click", () => {
   resetGame();
-});
-
-botTierSelect.addEventListener("change", () => {
-  const requestedTier = normalizeBotTierId(botTierSelect.value);
-  const profile = normalizeProfile(appState.profile);
-
-  if (!profile.unlocked_tiers.includes(requestedTier)) {
-    appState.statusMessage = `${getTierLabel(requestedTier)} is locked.`;
-    syncTierSelectOptions();
-    return;
-  }
-
-  appState.selectedBotTier = requestedTier;
-  appState.profile = setSelectedTier(profile, requestedTier);
-  persistProfile();
-  refreshProfileSummary();
-
-  if (appState.mode === "ready") {
-    appState.statusMessage = `Ready. Opponent: ${getTierLabel(appState.selectedBotTier)}.`;
-  }
-});
-
-function yieldToBrowser() {
-  return new Promise((resolve) => {
-    window.setTimeout(resolve, 0);
-  });
-}
-
-trainBtn.addEventListener("click", async () => {
-  const trainingStatus = getSelfTrainingStatus(appState.trainingStore.samples, {
-    currentModel: appState.selfModel,
-  });
-  if (!trainingStatus.ready_to_train) {
-    refreshProfileSummary();
-    if (trainingStatus.reason === "not_enough_new_samples") {
-      const remaining = Math.max(
-        0,
-        trainingStatus.min_new_samples_required - trainingStatus.new_sample_count,
-      );
-      appState.statusMessage = `Need ${remaining} new legal decision samples before retraining self model.`;
-      return;
-    }
-
-    const remaining = Math.max(
-      0,
-      trainingStatus.min_samples_required - trainingStatus.legal_sample_count,
-    );
-    appState.statusMessage = `Need ${remaining} more legal decision samples before self model is ready.`;
-    return;
-  }
-
-  trainBtn.disabled = true;
-  appState.statusMessage = "Training self model in background...";
-  refreshProfileSummary();
-  await yieldToBrowser();
-
-  let result;
-  try {
-    result = trainSelfModelWithRl(appState.trainingStore.samples, {
-      unlockedTiers: normalizeProfile(appState.profile).unlocked_tiers,
-    });
-  } finally {
-    trainBtn.disabled = false;
-  }
-  const model = result.model;
-  appState.selfModel = model;
-  persistSelfModel();
-  refreshProfileSummary();
-
-  if (model.ready) {
-    const suffix = result.accepted ? " RL accepted." : result.reason === "not_ready" ? "" : " RL kept imitation baseline.";
-    appState.statusMessage = `Self-play model trained (${model.sample_count} samples).${suffix}`;
-    return;
-  }
-
-  const remaining = Math.max(0, model.min_samples_required - model.sample_count);
-  appState.statusMessage = `Need ${remaining} more samples before self model is ready.`;
 });
 
 window.addEventListener("keydown", (event) => {
@@ -3180,6 +2888,31 @@ window.advanceTime = (ms) => {
   }
 };
 
+window.__edgeRoyaleSmokeFinishMatch = () => {
+  if (appState.mode === "ready") {
+    appState.mode = "playing";
+  }
+
+  const blueKing = appState.engine.state.entities.find(
+    (entity) => entity.team === "blue" && entity.entity_type === "tower" && entity.tower_role === "king",
+  );
+  if (blueKing) {
+    blueKing.hp = 0;
+  }
+
+  appState.engine.step([]);
+  syncVisualState();
+
+  const matchResult = appState.engine.getMatchResult();
+  if (matchResult) {
+    appState.mode = "game_over";
+    recordCompletedMatch(matchResult);
+    appState.statusMessage = formatWinnerStatus(matchResult);
+  }
+
+  render();
+};
+
 window.render_game_to_text = () => {
   const tick = appState.engine.state.tick;
   const phase = getMatchPhase({ tick, isOvertime: appState.engine.state.isOvertime });
@@ -3194,17 +2927,11 @@ window.render_game_to_text = () => {
       axis_y: "down",
       world_bounds: { min_x: arena.minX, max_x: arena.maxX, min_y: arena.minY, max_y: arena.maxY },
     },
-    bot_tier: appState.selectedBotTier,
-    bot_source: getOpponentModelSource(appState.selectedBotTier),
+    bot_tier: appState.opponentBotId,
+    bot_source: "oracle",
     status_message: appState.statusMessage,
     profile_summary_text: profileSummary.textContent,
-    ladder_model_status: appState.ladderModelStatus,
-    ladder_model_warnings: appState.ladderModelWarnings,
-    unlocked_tiers: normalizeProfile(appState.profile).unlocked_tiers,
-    training: {
-      samples: appState.trainingStore.samples.length,
-      model_ready: Boolean(appState.selfModel?.ready),
-    },
+    profile: getProfileProgress(appState.profile),
     mode: appState.mode,
     tick,
     phase,
@@ -3265,7 +2992,6 @@ window.render_game_to_text = () => {
 
 hydrateAppState();
 resetGame();
-void hydrateLadderModels();
 resizeCanvasToDisplaySize();
 render();
 requestAnimationFrame(frame);

@@ -7,17 +7,19 @@ Ship `edge_royale` as a lightweight, single-player Clash Royale-inspired game wi
 - one arena
 - one fixed 8-card deck
 - deterministic simulation
-- progressively stronger local bot tiers
-- unlock progression
-- replay/data hooks that can later support self-play training
+- one playable bot named Edger
+- simple local match stats
+- replay hooks for determinism and debugging
 
-Favor forward progress on the shipped game over speculative architecture.
+Favor forward progress on the shipped Edger game over speculative architecture.
 
 ## Product Boundaries
 
-- MVP is human vs bot only. No online PvP.
+- MVP is human vs Edger only. No online PvP.
 - Keep the fixed deck unless the task explicitly expands scope.
 - Preserve deterministic simulation as a hard constraint.
+- Edger is a deterministic handcrafted oracle bot: it may use exact opponent elixir, hand, and deck queue.
+- Do not add player-facing bot levels, unlock gates, self-play mirror gameplay, model manifests, or training/export pipelines unless the task explicitly reopens that product direction.
 - UI is a renderer/input layer over engine state, not an alternate rules implementation.
 - Current movement behavior is lane-locked with mild local collision resolution. Treat that as intentional unless the task explicitly reopens movement/pathing design.
 
@@ -45,11 +47,11 @@ Use this rule when artifacts disagree:
 
 - `src/sim`: deterministic gameplay engine, combat, map, placement, match rules
 - `src/client`: browser UI, layout, input handling, rendering
-- `src/ai`: bot policies, tier logic, training/profile helpers, benchmarks
+- `src/ai`: Edger policy, internal benchmark baselines, profile helpers, benchmarks
 - `src/replay`: replay serialization and schema helpers
-- `tests`: simulation, UI-layout, replay, AI, progression, and regression coverage
+- `tests`: simulation, UI-layout, replay, AI, profile, and regression coverage
 - `scripts/dev-server.mjs`: local static server
-- `scripts/bot-benchmark.mjs`: benchmark matrix runner
+- `scripts/bot-benchmark.mjs`: Edger benchmark gate
 
 ## Default Workflow
 
@@ -75,15 +77,16 @@ Git history is the archive. Do not append session diaries to `progress.md`, and 
 
 ### AI
 
-- Keep tiers behaviorally distinct and ordered by strength.
+- Keep Edger legal-action-only and deterministic.
+- Edger may use hidden opponent information; benchmark baselines may not become player-facing levels.
 - Do not trust anecdotal match feel alone; use benchmark output.
-- If you change heuristics, record the benchmark command and what it showed in `progress.md`.
-- Promotion targets live in `docs/BOT_LEVELS.md`; if the implementation cannot meet them yet, say so explicitly rather than implying it does.
+- If you change Edger heuristics, run the Edger benchmark gate and record the command and result in `progress.md`.
 
 ### Client
 
 - Keep the engine as source of truth.
 - Protect portrait usability and the Royale-style battlefield framing already established in `src/client/layout.js` and `src/client/webGame.js`.
+- Do not reintroduce bot level selectors, unlock messaging, or training buttons.
 - When changing placement, HUD, or combat readability, verify both code-level tests and a browser smoke check when feasible.
 
 ### Scope
@@ -97,23 +100,22 @@ Minimum expectations by task type:
 
 - Docs-only change:
   - No test run required, but note that validation was docs-only.
-- Sim, replay, progression, or rules change:
+- Sim, replay, profile, or rules change:
   - Run `npm test`.
-- AI heuristic or tier-strength change:
+- Edger heuristic or benchmark change:
   - Run `npm test`.
-  - Run `npm run bot:bench -- ...` with explicit seed/rounds/tiers and record the outcome.
+  - Run `npm run bot:bench -- --opponents random,aggressive,defender --rounds 30 --seed 20260630 --max-ticks 6040 --min-win-rate 0.6` and record the outcome.
 - Client/input/rendering change:
   - Run `npm test`.
-  - Run a browser smoke check if possible.
+  - Run `npm run smoke:browser` if possible.
   - If sandbox blocks local serving, use an escalated run and record it.
 
 If you cannot run a needed validation step, say exactly what was not run and why.
 
 ## Current Hot Spots
 
-- Ladder ordering is still not stable enough to serve as a real promotion gate.
-- Telemetry/export pipeline work from the roadmap is still incomplete.
-- Browser validation is useful but not yet fully standardized into one repeatable repo command.
+- Edger's first oracle heuristic is intentionally simple; tactical quality still needs focused tuning.
+- Browser validation is useful but not yet fully standardized beyond `npm run smoke:browser`.
 
 ## `progress.md` Contract
 
