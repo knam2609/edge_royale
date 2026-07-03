@@ -1,0 +1,22 @@
+{
+  "model_id": "edger_policy_bootstrap_20260701",
+  "report_date": "2026-07-01",
+  "status": "bootstrap_runtime_seed",
+  "promotion_passed": false,
+  "notes": [
+    "Runtime model schema, generated JS import path, and deterministic argmax policy path are present.",
+    "Full PPO/self-play training and promotion gate enforcement remain backlog work.",
+    "The bootstrap model passed the point-win-rate benchmark gate but did not meet the heuristic Wilson lower-bound promotion criterion."
+  ],
+  "validation": {
+    "npm test": "passed: 94 tests, duration 297286.172542ms",
+    "npm run edger:evaluate -- --model artifacts/edger-training/promoted/edger_policy_current.json": "passed command; heuristic point win_rate 0.650, Wilson lower bound 0.433",
+    "npm run bot:bench -- --opponents edger_heuristic,random,aggressive,defender --rounds 30 --seed 20260630 --max-ticks 6040 --min-win-rate 0.6": "passed point win-rate gate",
+    "npm run smoke:browser": "failed before browser launch: Timed out while importing Playwright"
+  },
+  "required_follow_up": [
+    "Train and evaluate a PPO/self-play candidate that clears the heuristic Wilson lower-bound gate.",
+    "Move promotion criteria enforcement into npm run edger:promote.",
+    "Run npm run smoke:browser after the existing Playwright import issue is fixed."
+  ]
+}

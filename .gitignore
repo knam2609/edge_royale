@@ -1,6 +1,10 @@
 node_modules/
 output/
 artifacts/*
+!artifacts/edger-training/
+artifacts/edger-training/*
+!artifacts/edger-training/promoted/
+!artifacts/edger-training/promoted/**
 !artifacts/training/
 artifacts/training/*
 !artifacts/training/ladder-models.json

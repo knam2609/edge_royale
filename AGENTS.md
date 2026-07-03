@@ -18,8 +18,9 @@ Favor forward progress on the shipped Edger game over speculative architecture.
 - MVP is human vs Edger only. No online PvP.
 - Keep the fixed deck unless the task explicitly expands scope.
 - Preserve deterministic simulation as a hard constraint.
-- Edger is a deterministic handcrafted oracle bot: it may use exact opponent elixir, hand, and deck queue.
-- Do not add player-facing bot levels, unlock gates, self-play mirror gameplay, model manifests, or training/export pipelines unless the task explicitly reopens that product direction.
+- Edger is a deterministic offline-trained ML policy: it may use exact opponent elixir, hand, and deck queue.
+- The frozen handcrafted oracle baseline is `edger_heuristic` with alias `heuristic`.
+- Do not add player-facing bot levels, unlock gates, self-play mirror gameplay, model selectors, training UI, or expanded training/export scope unless the task explicitly reopens that product direction.
 - UI is a renderer/input layer over engine state, not an alternate rules implementation.
 - Current movement behavior is lane-locked with mild local collision resolution. Treat that as intentional unless the task explicitly reopens movement/pathing design.
 
@@ -114,7 +115,7 @@ If you cannot run a needed validation step, say exactly what was not run and why
 
 ## Current Hot Spots
 
-- Edger's first oracle heuristic is intentionally simple; tactical quality still needs focused tuning.
+- Edger's first ML runtime model is a bootstrap policy seed; tactical quality and full PPO/self-play training still need focused work.
 - Browser validation is useful but not yet fully standardized beyond `npm run smoke:browser`.
 
 ## `progress.md` Contract

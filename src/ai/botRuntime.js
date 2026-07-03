@@ -2,18 +2,30 @@ import { ARROWS_CONFIG, FIREBALL_CONFIG, getMatchPhase } from "../sim/config.js"
 import { getCard } from "../sim/cards.js";
 import { snapPositionToGrid } from "../sim/map.js";
 import { buildTroopPlacementCandidates, getTroopPlacementStatus } from "../sim/placement.js";
+import { ACTION_SPACE_VERSION, PASS_ACTION, actionSortKey, appendPassAction, isPassAction } from "./actionSpace.js";
+import { EDGER_POLICY_MODEL } from "./generated/edgerPolicyCurrent.js";
+import { selectMlPolicyAction } from "./mlPolicy.js";
 import { getSpellDamageAgainstTarget } from "./spellHeuristics.js";
 
-export const ACTION_SPACE_VERSION = "full_snapped_grid_v1";
+export { ACTION_SPACE_VERSION, PASS_ACTION, actionSortKey, appendPassAction, isPassAction };
+
 export const EDGER_BOT_ID = "edger";
+export const HEURISTIC_BOT_ID = "edger_heuristic";
 export const INTERNAL_BASELINE_BOTS = Object.freeze(["random", "aggressive", "defender"]);
-export const BENCHMARK_BOTS = Object.freeze([EDGER_BOT_ID, ...INTERNAL_BASELINE_BOTS]);
+export const BENCHMARK_BOTS = Object.freeze([EDGER_BOT_ID, HEURISTIC_BOT_ID, ...INTERNAL_BASELINE_BOTS]);
 
 const BOT_CONFIG = Object.freeze({
   edger: Object.freeze({
     id: "edger",
     label: "Edger",
-    description: "Deterministic hidden-info oracle opponent.",
+    description: "Deterministic offline-trained hidden-info policy opponent.",
+    min_delay_ticks: 1,
+    max_delay_ticks: 1,
+  }),
+  edger_heuristic: Object.freeze({
+    id: "edger_heuristic",
+    label: "Edger Heuristic",
+    description: "Frozen handcrafted oracle baseline for internal benchmarks.",
     min_delay_ticks: 1,
     max_delay_ticks: 1,
   }),
@@ -44,6 +56,7 @@ const BOT_CONFIG = Object.freeze({
 });
 
 const LEGACY_BOT_ALIASES = Object.freeze({
+  heuristic: HEURISTIC_BOT_ID,
   noob: "random",
   mid: "aggressive",
   top: "defender",
@@ -91,6 +104,15 @@ const BOT_STRATEGY = Object.freeze({
     defense_bonus_scale: 1.25,
     pressure_bonus_scale: 0.82,
   }),
+  edger_heuristic: Object.freeze({
+    tower_chip_bonus: 88,
+    arrows_tower_only_penalty: 360,
+    overstack_penalty: 30,
+    giant_backline_bonus: 68,
+    bridge_bonus_scale: 1.55,
+    defense_bonus_scale: 1.7,
+    pressure_bonus_scale: 1.55,
+  }),
   edger: Object.freeze({
     tower_chip_bonus: 88,
     arrows_tower_only_penalty: 360,
@@ -105,12 +127,12 @@ const BOT_STRATEGY = Object.freeze({
 const SPELL_THRESHOLD = Object.freeze({
   aggressive: Object.freeze({ normal: 230, double: 185, overtime: 150 }),
   defender: Object.freeze({ normal: 190, double: 150, overtime: 120 }),
+  edger_heuristic: Object.freeze({ normal: 1100, double: 950, overtime: 750 }),
   edger: Object.freeze({ normal: 1100, double: 950, overtime: 750 }),
 });
 
 const EPSILON = 1e-9;
 const SPELL_TARGET_CACHE = new WeakMap();
-export const PASS_ACTION = Object.freeze({ type: "PASS" });
 
 function getTeam(actor) {
   return actor === "red" ? { own: "red", enemy: "blue" } : { own: "blue", enemy: "red" };
@@ -122,10 +144,6 @@ function roundPlacement(value) {
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
-}
-
-function isPassAction(action) {
-  return action?.type === "PASS";
 }
 
 function getMidY(arena) {
@@ -207,13 +225,6 @@ function isLegalTroopPlacement(actor, state, placement) {
   }).ok;
 }
 
-function actionSortKey(action) {
-  if (isPassAction(action)) {
-    return "~PASS";
-  }
-  return `${action.cardId}|${Number(action.x).toFixed(2)}|${Number(action.y).toFixed(2)}`;
-}
-
 function positionKey(x, y) {
   return `${Number(x).toFixed(2)}|${Number(y).toFixed(2)}`;
 }
@@ -223,14 +234,6 @@ function cardCost(action) {
     return 0;
   }
   return getCard(action.cardId)?.cost ?? 0;
-}
-
-export function appendPassAction(legalActions = []) {
-  const normalized = Array.isArray(legalActions) ? [...legalActions] : [];
-  if (!normalized.some((action) => isPassAction(action))) {
-    normalized.push(PASS_ACTION);
-  }
-  return normalized;
 }
 
 export function enumerateLegalCardActions({ engine, actor = "red" }) {
@@ -313,7 +316,7 @@ function buildSpellScoringKeys(state, actor) {
 }
 
 function buildScoringActionSubset({ legalActions, engine, actor, botId }) {
-  if (normalizeBotId(botId) !== EDGER_BOT_ID) {
+  if (normalizeBotId(botId) !== HEURISTIC_BOT_ID) {
     return legalActions;
   }
 
@@ -328,10 +331,10 @@ function buildScoringActionSubset({ legalActions, engine, actor, botId }) {
 }
 
 function getStrategy(botId) {
-  return BOT_STRATEGY[botId] ?? BOT_STRATEGY.edger;
+  return BOT_STRATEGY[botId] ?? BOT_STRATEGY[HEURISTIC_BOT_ID];
 }
 
-export function evaluateSpellAction(action, state, actor, phase, botId = EDGER_BOT_ID) {
+export function evaluateSpellAction(action, state, actor, phase, botId = HEURISTIC_BOT_ID) {
   const strategy = getStrategy(normalizeBotId(botId));
   const cardId = action.cardId;
   const config = cardId === "fireball" ? FIREBALL_CONFIG : ARROWS_CONFIG;
@@ -462,6 +465,7 @@ function opponentHasAnswer(opponent, cardId) {
 
 function evaluateTroopAction(action, state, actor, botId, engine) {
   const normalizedBot = normalizeBotId(botId);
+  const isOracleHeuristic = normalizedBot === HEURISTIC_BOT_ID || normalizedBot === EDGER_BOT_ID;
   const strategy = getStrategy(normalizedBot);
   const card = getCard(action.cardId);
   const threat = evaluateThreat(state, actor);
@@ -486,7 +490,7 @@ function evaluateTroopAction(action, state, actor, botId, engine) {
   if (threat.density > 0 && isOnOwnSide(actor, action.y, state.arena)) {
     defenseBonus = (92 + Math.min(4, threat.density) * 30 + laneBonus(action, threat.lane_x)) * strategy.defense_bonus_scale;
     if (threat.tank && (action.cardId === "mini_pekka" || action.cardId === "musketeer")) {
-      defenseBonus += normalizedBot === EDGER_BOT_ID ? 125 : 70;
+      defenseBonus += isOracleHeuristic ? 125 : 70;
     }
   }
 
@@ -510,7 +514,7 @@ function evaluateTroopAction(action, state, actor, botId, engine) {
     score -= card.cost * 10;
   }
 
-  if (normalizedBot === EDGER_BOT_ID && card) {
+  if (isOracleHeuristic && card) {
     const elixirLead = currentElixir - opponent.elixir;
     if (opponent.elixir <= 3 && threat.density <= 1) {
       score += 95 + card.cost * 12;
@@ -683,14 +687,14 @@ function chooseDefenderBaseline({ legalActions, engine, actor, phase, rng }) {
   return PASS_ACTION;
 }
 
-export function selectEdgerAction({ legalActions, engine, actor = "red" }) {
+export function selectHeuristicAction({ legalActions, engine, actor = "red" }) {
   if (legalActions.length === 0) {
     return PASS_ACTION;
   }
 
   const phase = getMatchPhase({ tick: engine.state.tick, isOvertime: engine.state.isOvertime });
-  const scoringActions = buildScoringActionSubset({ legalActions, engine, actor, botId: EDGER_BOT_ID });
-  const best = chooseHighestScoreAction({ actions: scoringActions, engine, actor, botId: EDGER_BOT_ID, phase });
+  const scoringActions = buildScoringActionSubset({ legalActions, engine, actor, botId: HEURISTIC_BOT_ID });
+  const best = chooseHighestScoreAction({ actions: scoringActions, engine, actor, botId: HEURISTIC_BOT_ID, phase });
   if (!best.action) {
     return PASS_ACTION;
   }
@@ -702,7 +706,7 @@ export function selectEdgerAction({ legalActions, engine, actor = "red" }) {
       engine,
       actor,
       minScore: threat.tank ? 170 : 135,
-      botId: EDGER_BOT_ID,
+      botId: HEURISTIC_BOT_ID,
       phase,
     });
     if (bestDefense && (threat.tank || getCard(best.action.cardId)?.type !== "spell")) {
@@ -712,16 +716,55 @@ export function selectEdgerAction({ legalActions, engine, actor = "red" }) {
 
   const card = getCard(best.action.cardId);
   if (card?.type === "spell") {
-    const threshold = SPELL_THRESHOLD.edger[phase] ?? SPELL_THRESHOLD.edger.normal;
+    const threshold = SPELL_THRESHOLD[HEURISTIC_BOT_ID][phase] ?? SPELL_THRESHOLD[HEURISTIC_BOT_ID].normal;
     if (best.score >= threshold) {
       return best.action;
     }
-    return chooseTroopFallback({ actions: legalActions, engine, actor, minScore: 70, botId: EDGER_BOT_ID, phase }) ??
+    return chooseTroopFallback({ actions: legalActions, engine, actor, minScore: 70, botId: HEURISTIC_BOT_ID, phase }) ??
       PASS_ACTION;
   }
 
   const threshold = threat.density > 0 ? 50 : 70;
   return best.score >= threshold ? best.action : PASS_ACTION;
+}
+
+export function selectEdgerAction({ legalActions, engine, actor = "red", model = EDGER_POLICY_MODEL }) {
+  const phase = getMatchPhase({ tick: engine.state.tick, isOvertime: engine.state.isOvertime });
+  const threat = evaluateThreat(engine.state, actor);
+  const spellKeys = buildSpellScoringKeys(engine.state, actor);
+  const scoreActionPrior = (action) => {
+    if (isPassAction(action)) {
+      return 0;
+    }
+    const card = getCard(action.cardId);
+    if (card?.type === "spell" && !spellKeys.has(positionKey(action.x, action.y))) {
+      return -1000;
+    }
+    const score = evaluateActionScore({
+      action,
+      engine,
+      actor,
+      botId: HEURISTIC_BOT_ID,
+      phase,
+    });
+    if (!Number.isFinite(score)) {
+      return -1000;
+    }
+    const threshold = card?.type === "spell"
+      ? SPELL_THRESHOLD[HEURISTIC_BOT_ID][phase] ?? SPELL_THRESHOLD[HEURISTIC_BOT_ID].normal
+      : threat.density > 0
+        ? 50
+        : 70;
+    return score - threshold;
+  };
+
+  return selectMlPolicyAction({
+    model,
+    legalActions,
+    engine,
+    actor,
+    scoreActionPrior,
+  });
 }
 
 export function normalizeBotId(botId) {
@@ -762,10 +805,14 @@ export function selectBotAction({
   actor = "red",
   legalActions,
   rng = Math.random,
+  edgerModel = EDGER_POLICY_MODEL,
 }) {
   const normalizedBot = normalizeBotId(botId ?? tierId);
   const phase = getMatchPhase({ tick: engine.state.tick, isOvertime: engine.state.isOvertime });
 
+  if (normalizedBot === HEURISTIC_BOT_ID) {
+    return selectHeuristicAction({ legalActions, engine, actor });
+  }
   if (normalizedBot === "random") {
     return chooseRandomBaseline({ legalActions, rng });
   }
@@ -776,5 +823,5 @@ export function selectBotAction({
     return chooseDefenderBaseline({ legalActions, engine, actor, phase, rng });
   }
 
-  return selectEdgerAction({ legalActions, engine, actor });
+  return selectEdgerAction({ legalActions, engine, actor, model: edgerModel });
 }

@@ -3,13 +3,18 @@ import assert from "node:assert/strict";
 
 import {
   EDGER_BOT_ID,
+  HEURISTIC_BOT_ID,
   enumerateLegalCardActions,
   evaluateSpellAction,
   getBotConfig,
+  normalizeBotId,
   rollDecisionDelayTicks,
   selectBotAction,
   selectEdgerAction,
+  selectHeuristicAction,
 } from "../src/ai/botRuntime.js";
+import { EDGER_POLICY_MODEL } from "../src/ai/generated/edgerPolicyCurrent.js";
+import { validateEdgerPolicyModel } from "../src/ai/mlPolicy.js";
 import { FIREBALL_CONFIG } from "../src/sim/config.js";
 import { createEngine } from "../src/sim/engine.js";
 import { ROYALE_LANE_X, ROYALE_TOWER_X, ROYALE_TOWER_Y, createArena, createRoyaleArena } from "../src/sim/map.js";
@@ -105,6 +110,27 @@ test("enumerateLegalCardActions unlocks only the captured 5x9 pocket and bridge 
   assert.ok(bridgeActions.every((action) => action.y === 15.5 || action.y === 16.5));
 });
 
+function cloneModel(model = EDGER_POLICY_MODEL) {
+  return JSON.parse(JSON.stringify(model));
+}
+
+function makePassFavoredModel() {
+  const model = cloneModel();
+  model.model_id = "test_pass_favored_policy";
+  model.weights.scorer.weights.fill(0);
+  model.weights.scorer.weights[64 + 1] = 10;
+  return model;
+}
+
+function makeTieModel() {
+  const model = cloneModel();
+  model.model_id = "test_tie_policy";
+  model.weights.scorer.weights.fill(0);
+  model.weights.scorer.weights[64 + 1] = -1;
+  model.weights.scorer.bias = [0];
+  return model;
+}
+
 test("Edger returns a legal action when one is available", () => {
   const engine = makeEngine(["giant", "knight", "arrows", "fireball"]);
   const legalActions = enumerateLegalCardActions({ engine, actor: "red" });
@@ -120,6 +146,44 @@ test("Edger returns a legal action when one is available", () => {
     return;
   }
   assert.ok(legalActions.some((candidate) => JSON.stringify(candidate) === JSON.stringify(action)));
+});
+
+test("edger_heuristic preserves the handcrafted policy alias", () => {
+  assert.equal(normalizeBotId("heuristic"), HEURISTIC_BOT_ID);
+
+  const engine = makeEngine(["giant", "knight", "arrows", "fireball"]);
+  const legalActions = enumerateLegalCardActions({ engine, actor: "red" });
+  const direct = selectHeuristicAction({ engine, actor: "red", legalActions });
+  const routed = selectBotAction({
+    botId: HEURISTIC_BOT_ID,
+    engine,
+    actor: "red",
+    legalActions,
+    rng: () => 0,
+  });
+
+  assert.deepEqual(routed, direct);
+});
+
+test("edger routes through the ML policy model", () => {
+  const engine = makeEngine(["giant", "knight", "arrows", "fireball"]);
+  const legalActions = enumerateLegalCardActions({ engine, actor: "red" });
+  const heuristic = selectBotAction({
+    botId: HEURISTIC_BOT_ID,
+    engine,
+    actor: "red",
+    legalActions,
+  });
+  const modelSelected = selectBotAction({
+    botId: EDGER_BOT_ID,
+    engine,
+    actor: "red",
+    legalActions,
+    edgerModel: makePassFavoredModel(),
+  });
+
+  assert.equal(heuristic.type, "PLAY_CARD");
+  assert.equal(modelSelected.type, "PASS");
 });
 
 test("Edger uses hidden opponent hand and elixir through the engine snapshot", () => {
@@ -140,7 +204,7 @@ test("Edger acts every tick", () => {
   assert.equal(huge, 1);
 });
 
-test("Edger deterministic tie-break chooses the stable action-sort key", () => {
+test("Edger ML deterministic tie-break chooses the stable action-sort key", () => {
   const engine = makeEngine(["knight", "giant", "arrows", "fireball"]);
   const legalActions = [
     { type: "PLAY_CARD", cardId: "knight", x: 10, y: 14 },
@@ -151,10 +215,26 @@ test("Edger deterministic tie-break chooses the stable action-sort key", () => {
     engine,
     actor: "red",
     legalActions,
+    model: makeTieModel(),
   });
 
   assert.equal(action.type, "PLAY_CARD");
   assert.equal(action.x, 10);
+});
+
+test("ML policy model validation fails closed", () => {
+  const valid = cloneModel();
+  assert.equal(validateEdgerPolicyModel(valid), valid);
+
+  assert.throws(() => validateEdgerPolicyModel({ ...valid, schema_version: "wrong" }), /schema_version/);
+
+  const wrongDimensions = cloneModel();
+  wrongDimensions.weights.action_encoder.weights = wrongDimensions.weights.action_encoder.weights.slice(1);
+  assert.throws(() => validateEdgerPolicyModel(wrongDimensions), /action_encoder\.weights/);
+
+  const nonFinite = cloneModel();
+  nonFinite.weights.scorer.weights[0] = Number.NaN;
+  assert.throws(() => validateEdgerPolicyModel(nonFinite), /finite/);
 });
 
 test("internal benchmark baselines keep configured delay bounds", () => {

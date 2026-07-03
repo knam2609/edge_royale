@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { runBenchmark, runBenchmarkMatrix, runBotMatch, runEdgerBenchmarkSuite } from "../src/ai/benchmark.js";
-import { EDGER_BOT_ID, INTERNAL_BASELINE_BOTS } from "../src/ai/botRuntime.js";
+import { EDGER_BOT_ID, HEURISTIC_BOT_ID, INTERNAL_BASELINE_BOTS } from "../src/ai/botRuntime.js";
 
 const SMOKE_MAX_TICKS = 120;
 
@@ -41,7 +41,7 @@ test("benchmark output is deterministic for same seed and config", () => {
 
 test("benchmark matrix is deterministic and enumerates pairwise bots", () => {
   const config = {
-    bots: [EDGER_BOT_ID, "random", "aggressive"],
+    bots: [EDGER_BOT_ID, HEURISTIC_BOT_ID, "random"],
     seed: 202,
     roundsPerPair: 1,
     maxTicks: SMOKE_MAX_TICKS,
@@ -68,6 +68,20 @@ test("short benchmark smoke run preserves accounting invariants", () => {
   assert.equal(result.winsA + result.winsB + result.draws, 2);
   assert.ok(result.resolved >= 0);
   assert.ok(result.winRateA >= 0 && result.winRateA <= 1);
+});
+
+test("benchmark suite can evaluate Edger against frozen heuristic", () => {
+  const suite = runEdgerBenchmarkSuite({
+    opponents: ["heuristic"],
+    seed: 303,
+    roundsPerOpponent: 1,
+    maxTicks: SMOKE_MAX_TICKS,
+  });
+
+  assert.deepEqual(suite.opponents, [HEURISTIC_BOT_ID]);
+  assert.equal(suite.pairs.length, 1);
+  assert.equal(suite.pairs[0].opponent, HEURISTIC_BOT_ID);
+  assert.equal(suite.pairs[0].rounds, 1);
 });
 
 test("Edger clears the initial internal baseline benchmark floor", () => {

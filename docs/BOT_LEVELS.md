@@ -12,9 +12,38 @@ Edger:
 - acts every simulation tick
 - returns only legal `PLAY_CARD` actions or `PASS`
 - has no deliberate blunders, mercy rule, rubber-banding, or progression scaling
-- is implemented as handcrafted oracle heuristics, not a neural model
+- is implemented as a deterministic offline-trained ML policy
 
-## 2) Action Space
+The in-game `edger` policy path:
+
+- enumerates legal `PLAY_CARD` candidates with `enumerateLegalCardActions(...)`
+- appends stable `PASS`
+- encodes oracle state features with own/opponent elixir, hand, deck queue, tower state, phase, troop aggregates, and action features
+- scores each legal candidate with a stateless feed-forward MLP
+- chooses the highest logit with stable action-sort tie-breaks
+- imports the promoted model from generated JavaScript, not an async browser fetch
+
+The previous handcrafted oracle is frozen as `edger_heuristic`, with alias `heuristic`, for benchmarks and regression comparison only.
+
+## 2) Model Format
+
+Promoted model JSON lives at `artifacts/edger-training/promoted/edger_policy_current.json`.
+Runtime JavaScript is generated at `src/ai/generated/edgerPolicyCurrent.js`.
+
+Current schema:
+
+- `schema_version: "edger_policy_model_v1"`
+- `action_space_version: "full_snapped_grid_v1"`
+- `feature_schema_version: "edger_oracle_features_v1"`
+- `architecture.type: "masked_action_scorer_mlp"`
+- `architecture.state_hidden: 64`
+- `architecture.action_hidden: 32`
+- `architecture.activation: "relu"`
+
+Runtime validation rejects version mismatches, wrong dimensions, missing weights, and non-finite weight values.
+Feature schema changes require retraining and promotion.
+
+## 3) Action Space
 
 - `PLAY_CARD(cardId, x, y)`
 - `PASS`
@@ -22,18 +51,45 @@ Edger:
 Edger and internal baselines can only choose legal placements and cards currently in hand with sufficient elixir.
 Troop actions use legal deploy grid cells. Spell actions use snapped arena grid cells.
 
-## 3) Internal Baselines
+## 4) Training and Promotion
+
+Developer-only commands:
+
+```bash
+npm run edger:train
+npm run edger:evaluate -- --model artifacts/edger-training/promoted/edger_policy_current.json
+npm run edger:promote -- --model <candidate-json>
+```
+
+Raw runs belong under ignored `artifacts/edger-training/runs/`.
+Promoted JSON and reports belong under tracked `artifacts/edger-training/promoted/`.
+
+The current tracked model is a deterministic bootstrap runtime seed that uses the model contract and a heuristic-prior feature. Full masked PPO/self-play training with `@tensorflow/tfjs`, behavior cloning, self-play snapshots, tactical scenario scoring, and promotion reports remains active backlog work.
+
+A candidate can replace the in-game model only when all pass:
+
+- model vs `edger_heuristic`: point win rate `>= 0.55` and Wilson lower bound above `0.50`
+- model vs `random`, `aggressive`, and `defender`: each resolved win rate `>= 0.60`
+- tactical scenario league improves over heuristic aggregate score and required defense/spell/tower-finishing scenarios pass
+- repeated same-seed policy matches produce identical action streams
+- replay round-trip from generated actions preserves final hash/events
+- runtime scoring stays within the chosen per-tick budget
+- browser UI exposes no training, levels, unlocks, or bot selector
+
+## 5) Internal Baselines
 
 Internal baselines exist only for tests and `npm run bot:bench`.
 They are not player-facing levels and must not appear in the browser UI.
 
+- `edger_heuristic`: frozen handcrafted oracle baseline; alias `heuristic`.
 - `random`: noisy legal actions with frequent passing.
 - `aggressive`: over-commits into bridge pressure and spell chip.
 - `defender`: waits longer, prioritizes defense, and commits mostly near elixir cap.
 
-These baselines are intentionally weaker than Edger and exist to keep a deterministic benchmark signal.
+`random`, `aggressive`, and `defender` are intentionally weaker smoke baselines.
+`edger_heuristic` is the stronger frozen comparison baseline for promotion decisions.
 
-## 4) Profile Rules
+## 6) Profile Rules
 
 The browser profile stores only aggregate match stats against Edger:
 
@@ -46,23 +102,22 @@ The browser profile stores only aggregate match stats against Edger:
 Old ladder/self-play profiles are ignored because profile storage uses `edge_royale_profile_v2`.
 There are no unlocks and no self-play unlock rule.
 
-## 5) Benchmark Gate
+## 7) Benchmark Gate
 
 Run the Edger gate with:
 
 ```bash
-npm run bot:bench -- --opponents random,aggressive,defender --rounds 30 --seed 20260630 --max-ticks 6040 --min-win-rate 0.6
+npm run bot:bench -- --opponents edger_heuristic,random,aggressive,defender --rounds 30 --seed 20260630 --max-ticks 6040 --min-win-rate 0.6
 ```
 
 The gate fails when Edger has no resolved games or has less than `0.60` resolved win rate against any internal baseline.
 
-## 6) Removed Systems
+## 8) Removed Systems
 
 The project intentionally does not ship:
 
 - bot levels or ordered tiers
 - progression unlock gates
 - player mirroring/self-play gameplay
-- local player-decision training
-- neural model runtime manifests
-- training export/promotion workflows
+- browser training UI
+- player-facing model manifests
