@@ -1,0 +1,149 @@
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+
+import {
+  EDGER_ACTION_FEATURE_DIM,
+  EDGER_FEATURE_SCHEMA_VERSION,
+  EDGER_POLICY_ARCHITECTURE,
+  EDGER_POLICY_MODEL_SCHEMA_VERSION,
+  EDGER_STATE_FEATURE_DIM,
+  validateEdgerPolicyModel,
+} from "../src/ai/mlPolicy.js";
+import { ACTION_SPACE_VERSION } from "../src/ai/actionSpace.js";
+
+export const DEFAULT_PROMOTED_MODEL_PATH = "artifacts/edger-training/promoted/edger_policy_current.json";
+export const DEFAULT_GENERATED_JS_PATH = "src/ai/generated/edgerPolicyCurrent.js";
+
+export function getCurrentGitCommit() {
+  try {
+    return execFileSync("git", ["rev-parse", "--short=12", "HEAD"], { encoding: "utf8" }).trim();
+  } catch {
+    return "unknown";
+  }
+}
+
+function makeIdentityWeights(inputDim, outputDim) {
+  const weights = new Array(inputDim * outputDim).fill(0);
+  for (let i = 0; i < Math.min(inputDim, outputDim); i += 1) {
+    weights[i * outputDim + i] = 1;
+  }
+  return weights;
+}
+
+function makeScorerWeights() {
+  const inputDim = EDGER_POLICY_ARCHITECTURE.state_hidden + EDGER_POLICY_ARCHITECTURE.action_hidden;
+  const weights = new Array(inputDim).fill(0);
+  const actionOffset = EDGER_POLICY_ARCHITECTURE.state_hidden;
+
+  weights[actionOffset + 1] = 0.06; // PASS baseline.
+  weights[actionOffset + 2] = -0.05; // Cost pressure.
+  weights[actionOffset + 21] = 0.08; // Giant setup.
+  weights[actionOffset + 24] = 0.35; // Spell value estimate.
+  weights[actionOffset + 25] = 1.0; // Tower finishing.
+  weights[actionOffset + 26] = 0.55; // Defense response.
+  weights[actionOffset + 27] = 0.45; // Pressure.
+  weights[actionOffset + 28] = 0.25; // Low-opponent-elixir punish.
+  weights[actionOffset + 29] = 0.03; // Keeps some elixir bank.
+  weights[actionOffset + 30] = -2.2; // Negative handcrafted-prior margin.
+  weights[actionOffset + 31] = 2.2; // Positive handcrafted-prior margin.
+
+  return weights;
+}
+
+export function createBootstrapPolicyModel({
+  modelId = "edger_policy_bootstrap_20260701",
+  seed = 20260701,
+  gitCommit = getCurrentGitCommit(),
+} = {}) {
+  const model = {
+    model_id: modelId,
+    schema_version: EDGER_POLICY_MODEL_SCHEMA_VERSION,
+    action_space_version: ACTION_SPACE_VERSION,
+    feature_schema_version: EDGER_FEATURE_SCHEMA_VERSION,
+    architecture: { ...EDGER_POLICY_ARCHITECTURE },
+    weights: {
+      state_encoder: {
+        input_dim: EDGER_STATE_FEATURE_DIM,
+        output_dim: EDGER_POLICY_ARCHITECTURE.state_hidden,
+        weights: makeIdentityWeights(EDGER_STATE_FEATURE_DIM, EDGER_POLICY_ARCHITECTURE.state_hidden),
+        bias: new Array(EDGER_POLICY_ARCHITECTURE.state_hidden).fill(0),
+      },
+      action_encoder: {
+        input_dim: EDGER_ACTION_FEATURE_DIM,
+        output_dim: EDGER_POLICY_ARCHITECTURE.action_hidden,
+        weights: makeIdentityWeights(EDGER_ACTION_FEATURE_DIM, EDGER_POLICY_ARCHITECTURE.action_hidden),
+        bias: new Array(EDGER_POLICY_ARCHITECTURE.action_hidden).fill(0),
+      },
+      scorer: {
+        input_dim: EDGER_POLICY_ARCHITECTURE.state_hidden + EDGER_POLICY_ARCHITECTURE.action_hidden,
+        output_dim: 1,
+        weights: makeScorerWeights(),
+        bias: [0],
+      },
+    },
+    training: {
+      seed,
+      git_commit: gitCommit,
+      reward_version: "edger_reward_v1",
+      opponent_pool: ["edger_heuristic", "random", "aggressive", "defender"],
+      self_play_pool: [],
+      method: "bootstrap_heuristic_prior_export",
+      notes: "Deterministic bootstrap model; PPO/self-play trainer is tracked as follow-up work.",
+    },
+    evaluation: {
+      heuristic_win_rate: null,
+      baseline_win_rates: {},
+      scenario_scores: {},
+      runtime_timing: {},
+      promotion_status: "bootstrap_runtime_seed",
+    },
+  };
+  validateEdgerPolicyModel(model);
+  return model;
+}
+
+function sortObject(value) {
+  if (Array.isArray(value)) {
+    return value.map(sortObject);
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+  return Object.keys(value)
+    .sort()
+    .reduce((acc, key) => {
+      acc[key] = sortObject(value[key]);
+      return acc;
+    }, {});
+}
+
+export function canonicalizeModel(model) {
+  return sortObject(validateEdgerPolicyModel(model));
+}
+
+export function canonicalJson(model) {
+  return `${JSON.stringify(canonicalizeModel(model), null, 2)}\n`;
+}
+
+export function loadModelJson(modelPath) {
+  const text = fs.readFileSync(modelPath, "utf8");
+  return validateEdgerPolicyModel(JSON.parse(text));
+}
+
+export function writeJsonFile(filePath, model) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, canonicalJson(model));
+}
+
+export function writeGeneratedJs(filePath, model) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const json = canonicalJson(model).trimEnd();
+  fs.writeFileSync(
+    filePath,
+    `// Generated by scripts/edger-promote.mjs from ${DEFAULT_PROMOTED_MODEL_PATH}.\n` +
+      `// Do not edit by hand; update the canonical JSON and rerun npm run edger:promote.\n` +
+      `export const EDGER_POLICY_MODEL = ${json};\n\n` +
+      `export default EDGER_POLICY_MODEL;\n`,
+  );
+}

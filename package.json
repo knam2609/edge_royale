@@ -7,7 +7,10 @@
     "dev": "node scripts/dev-server.mjs",
     "test": "node --test",
     "smoke:browser": "node scripts/browser-smoke.mjs",
-    "bot:bench": "node scripts/bot-benchmark.mjs"
+    "bot:bench": "node scripts/bot-benchmark.mjs",
+    "edger:train": "node scripts/edger-train.mjs",
+    "edger:evaluate": "node scripts/edger-evaluate.mjs",
+    "edger:promote": "node scripts/edger-promote.mjs"
   },
   "engines": {
     "node": ">=20"

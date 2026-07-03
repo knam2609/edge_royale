@@ -5,6 +5,7 @@ import { createArena } from "../sim/map.js";
 import { createRng } from "../sim/random.js";
 import {
   EDGER_BOT_ID,
+  HEURISTIC_BOT_ID,
   INTERNAL_BASELINE_BOTS,
   enumerateLegalCardActions,
   normalizeBotId,
@@ -32,7 +33,7 @@ function makeBotController(seed) {
   };
 }
 
-function maybeSelectAction({ engine, actor, botId, controller }) {
+function maybeSelectAction({ engine, actor, botId, controller, edgerModel }) {
   const tick = engine.state.tick + 1;
   if (tick < controller.nextDecisionTick) {
     return null;
@@ -48,6 +49,7 @@ function maybeSelectAction({ engine, actor, botId, controller }) {
     actor,
     legalActions,
     rng: controller.rng,
+    edgerModel,
   });
 
   if (!action || action.type !== "PLAY_CARD") {
@@ -69,6 +71,7 @@ export function runBotMatch({
   redBot,
   seed,
   maxTicks = MATCH_CONFIG.regulation_ticks + MATCH_CONFIG.overtime_ticks + 40,
+  edgerModel = undefined,
 }) {
   const arena = makeBenchmarkArena();
   const engine = createEngine({
@@ -91,6 +94,7 @@ export function runBotMatch({
       actor: "blue",
       botId: blueId,
       controller: blue,
+      edgerModel,
     });
     if (blueAction) {
       actions.push(blueAction);
@@ -101,6 +105,7 @@ export function runBotMatch({
       actor: "red",
       botId: redId,
       controller: red,
+      edgerModel,
     });
     if (redAction) {
       actions.push(redAction);
@@ -125,6 +130,7 @@ export function runBenchmark({
   seed = 1337,
   rounds = 100,
   maxTicks = undefined,
+  edgerModel = undefined,
 }) {
   const rng = createRng(seed);
   const leftBot = normalizeBotId(botA);
@@ -143,6 +149,7 @@ export function runBenchmark({
       redBot: swapSides ? leftBot : rightBot,
       seed: matchSeed,
       maxTicks,
+      edgerModel,
     });
 
     const winner = match.result?.winner ?? null;
@@ -173,15 +180,17 @@ export function runBenchmark({
 }
 
 export function runEdgerBenchmarkSuite({
-  opponents = INTERNAL_BASELINE_BOTS,
+  opponents = [HEURISTIC_BOT_ID, ...INTERNAL_BASELINE_BOTS],
   seed = 20260630,
   roundsPerOpponent = 30,
   maxTicks = MATCH_CONFIG.regulation_ticks + MATCH_CONFIG.overtime_ticks + 40,
+  edgerModel = undefined,
 } = {}) {
   const normalizedOpponents = Array.isArray(opponents)
     ? opponents.map(normalizeBotId).filter((botId) => botId !== EDGER_BOT_ID)
     : [];
-  const uniqueOpponents = [...new Set(normalizedOpponents.length > 0 ? normalizedOpponents : INTERNAL_BASELINE_BOTS)];
+  const defaultOpponents = [HEURISTIC_BOT_ID, ...INTERNAL_BASELINE_BOTS];
+  const uniqueOpponents = [...new Set(normalizedOpponents.length > 0 ? normalizedOpponents : defaultOpponents)];
   const rng = createRng(seed);
   const pairs = uniqueOpponents.map((opponent) => {
     const pairSeed = 1 + Math.floor(rng() * 2_000_000_000);
@@ -191,6 +200,7 @@ export function runEdgerBenchmarkSuite({
       seed: pairSeed,
       rounds: roundsPerOpponent,
       maxTicks,
+      edgerModel,
     });
     return {
       bot: EDGER_BOT_ID,
@@ -226,7 +236,7 @@ export function runBenchmarkMatrix({
   const normalizedBots = Array.isArray(requested)
     ? requested.map(normalizeBotId).filter((botId, index, all) => all.indexOf(botId) === index)
     : [];
-  const botList = normalizedBots.length >= 2 ? normalizedBots : [EDGER_BOT_ID, ...INTERNAL_BASELINE_BOTS];
+  const botList = normalizedBots.length >= 2 ? normalizedBots : [EDGER_BOT_ID, HEURISTIC_BOT_ID, ...INTERNAL_BASELINE_BOTS];
   const rng = createRng(seed);
   const pairs = [];
 
