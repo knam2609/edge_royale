@@ -81,6 +81,20 @@ Evaluate a promoted policy model:
 npm run edger:evaluate -- --model artifacts/edger-training/promoted/edger_policy_current.json
 ```
 
+Train and evaluate a candidate policy:
+
+```bash
+npm run edger:train -- --mode ppo --seed 20260704 --profile smoke --out-dir /private/tmp/edger-train-smoke
+npm run edger:evaluate -- --model /private/tmp/edger-train-smoke/edger_policy_candidate.json --json-out /private/tmp/edger-train-smoke/evaluation_report.json
+npm run edger:promote -- --model /private/tmp/edger-train-smoke/edger_policy_candidate.json --report /private/tmp/edger-train-smoke/evaluation_report.json --require-gates
+```
+
+Run the daily training orchestration locally:
+
+```bash
+npm run edger:daily -- --seed 20260704 --profile daily
+```
+
 Run the browser smoke:
 
 ```bash

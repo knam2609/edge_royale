@@ -10,12 +10,14 @@
     "bot:bench": "node scripts/bot-benchmark.mjs",
     "edger:train": "node scripts/edger-train.mjs",
     "edger:evaluate": "node scripts/edger-evaluate.mjs",
-    "edger:promote": "node scripts/edger-promote.mjs"
+    "edger:promote": "node scripts/edger-promote.mjs",
+    "edger:daily": "node scripts/edger-daily.mjs"
   },
   "engines": {
     "node": ">=20"
   },
   "devDependencies": {
+    "@tensorflow/tfjs": "^4.22.0",
     "playwright": "^1.58.2"
   }
 }

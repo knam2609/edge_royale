@@ -42,10 +42,10 @@ Core principles:
 
 ## 3) Current Roadmap
 
-1. Finish the ML Edger runtime hardening: performance budget, model validation coverage, replay coverage, and browser smoke.
-2. Implement the full masked PPO/self-play trainer with behavior cloning from `edger_heuristic`.
-3. Add tactical scenario league coverage for defense, spell value, tower finishing, elixir advantage, and pocket pressure.
-4. Promote only models that beat `edger_heuristic` and hidden baselines under the documented gate.
+1. Harden the daily PPO/self-play training loop with faster rollouts and better candidate quality.
+2. Expand tactical scenario league coverage for defense, spell value, tower finishing, elixir advantage, and pocket pressure.
+3. Promote only models that beat `edger_heuristic` and hidden baselines under the documented gate.
+4. Keep GitHub Actions daily training green and artifact-producing at 4am Australia/Melbourne.
 5. Polish match readability, HUD clarity, and portrait usability without exposing training or model selection.
 6. Preserve replay compatibility for simulation debugging.
 
