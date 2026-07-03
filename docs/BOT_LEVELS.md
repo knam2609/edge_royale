@@ -56,15 +56,16 @@ Troop actions use legal deploy grid cells. Spell actions use snapped arena grid 
 Developer-only commands:
 
 ```bash
-npm run edger:train
-npm run edger:evaluate -- --model artifacts/edger-training/promoted/edger_policy_current.json
-npm run edger:promote -- --model <candidate-json>
+npm run edger:train -- --mode ppo --seed <seed> --profile <smoke|daily> --out-dir <run-dir>
+npm run edger:evaluate -- --model artifacts/edger-training/promoted/edger_policy_current.json --json-out <report-json>
+npm run edger:promote -- --model <candidate-json> --report <report-json> --require-gates
+npm run edger:daily -- --seed <seed> --profile daily
 ```
 
 Raw runs belong under ignored `artifacts/edger-training/runs/`.
 Promoted JSON and reports belong under tracked `artifacts/edger-training/promoted/`.
 
-The current tracked model is a deterministic bootstrap runtime seed that uses the model contract and a heuristic-prior feature. Full masked PPO/self-play training with `@tensorflow/tfjs`, behavior cloning, self-play snapshots, tactical scenario scoring, and promotion reports remains active backlog work.
+The trainer exports deterministic masked PPO candidates from heuristic behavior cloning plus seeded self-play rollouts. The `@tensorflow/tfjs` package is a training-only development dependency; runtime/browser code must not import it. Daily automation runs from GitHub Actions at 4am Australia/Melbourne, uploads run artifacts for 30 days, and only opens a promotion PR when every required gate passes.
 
 A candidate can replace the in-game model only when all pass:
 
@@ -73,7 +74,7 @@ A candidate can replace the in-game model only when all pass:
 - tactical scenario league improves over heuristic aggregate score and required defense/spell/tower-finishing scenarios pass
 - repeated same-seed policy matches produce identical action streams
 - replay round-trip from generated actions preserves final hash/events
-- runtime scoring stays within the chosen per-tick budget
+- runtime scoring p95 stays within the `5ms` per-tick budget on fixed fixtures
 - browser UI exposes no training, levels, unlocks, or bot selector
 
 ## 5) Internal Baselines

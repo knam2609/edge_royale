@@ -1,8 +1,10 @@
 import process from "node:process";
+import fs from "node:fs";
+import path from "node:path";
 
-import { runBotMatch, runEdgerBenchmarkSuite } from "../src/ai/benchmark.js";
 import { HEURISTIC_BOT_ID, INTERNAL_BASELINE_BOTS, normalizeBotId } from "../src/ai/botRuntime.js";
 import { DEFAULT_PROMOTED_MODEL_PATH, loadModelJson } from "./edger-model-utils.mjs";
+import { evaluateCandidateModel, summarizeBenchmarkForConsole } from "./edger-evaluation-core.mjs";
 
 function parseArgs(argv) {
   const parsed = {
@@ -11,6 +13,7 @@ function parseArgs(argv) {
     roundsPerOpponent: 30,
     opponents: [HEURISTIC_BOT_ID, ...INTERNAL_BASELINE_BOTS],
     maxTicks: 6040,
+    jsonOut: null,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -28,6 +31,8 @@ function parseArgs(argv) {
         .split(",")
         .map((botId) => normalizeBotId(botId.trim()))
         .filter(Boolean);
+    } else if (arg === "--json-out" && argv[i + 1]) {
+      parsed.jsonOut = argv[++i];
     }
   }
 
@@ -44,61 +49,25 @@ function parseArgs(argv) {
   return parsed;
 }
 
-function wilsonLowerBound(wins, resolved, z = 1.96) {
-  if (resolved <= 0) {
-    return 0;
-  }
-  const phat = wins / resolved;
-  const denom = 1 + (z * z) / resolved;
-  const center = phat + (z * z) / (2 * resolved);
-  const spread = z * Math.sqrt((phat * (1 - phat) + (z * z) / (4 * resolved)) / resolved);
-  return (center - spread) / denom;
-}
-
-function printSuite(suite) {
-  console.log(`model=${suite.model_id}`);
-  console.log(`seed=${suite.seed} rounds_per_opponent=${suite.rounds_per_opponent} max_ticks=${suite.max_ticks}`);
-  console.log("opponent         | win_rate | wilson_lb | wins-losses | draws | resolved");
-  console.log("---------------- | -------- | --------- | ----------- | ----- | --------");
-  for (const pair of suite.pairs) {
-    const lower = wilsonLowerBound(pair.wins, pair.resolved);
-    const wins = `${pair.wins}-${pair.losses}`;
-    console.log(
-      `${pair.opponent.padEnd(16)} | ${pair.win_rate.toFixed(3).padEnd(8)} | ${lower.toFixed(3).padEnd(9)} | ${wins.padEnd(11)} | ${String(pair.draws).padEnd(5)} | ${String(pair.resolved).padEnd(8)}`,
-    );
-  }
-}
-
 const args = parseArgs(process.argv.slice(2));
 const model = loadModelJson(args.model);
-const deterministicA = runBotMatch({
-  blueBot: "edger",
-  redBot: HEURISTIC_BOT_ID,
-  seed: args.seed,
-  maxTicks: Math.min(args.maxTicks, 600),
-  edgerModel: model,
-});
-const deterministicB = runBotMatch({
-  blueBot: "edger",
-  redBot: HEURISTIC_BOT_ID,
-  seed: args.seed,
-  maxTicks: Math.min(args.maxTicks, 600),
-  edgerModel: model,
-});
-const deterministic = JSON.stringify(deterministicA) === JSON.stringify(deterministicB);
-
-const suite = runEdgerBenchmarkSuite({
-  opponents: args.opponents,
+const report = evaluateCandidateModel(model, {
+  modelPath: args.model,
+  // The full promotion gate always includes the documented internal opponents.
+  // `--opponents` is parsed for CLI compatibility but intentionally not used to
+  // weaken candidate promotion evaluation.
   seed: args.seed,
   roundsPerOpponent: args.roundsPerOpponent,
   maxTicks: args.maxTicks,
-  edgerModel: model,
 });
 
-suite.model_id = model.model_id;
-printSuite(suite);
-console.log(`deterministic_same_seed=${deterministic ? "yes" : "no"}`);
+if (args.jsonOut) {
+  fs.mkdirSync(path.dirname(args.jsonOut), { recursive: true });
+  fs.writeFileSync(args.jsonOut, `${JSON.stringify(report, null, 2)}\n`);
+}
 
-if (!deterministic) {
+console.log(summarizeBenchmarkForConsole(report));
+
+if (!report.gates.determinism.passed || !report.gates.replay.passed) {
   process.exitCode = 1;
 }

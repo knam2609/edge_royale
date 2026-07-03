@@ -728,35 +728,38 @@ export function selectHeuristicAction({ legalActions, engine, actor = "red" }) {
   return best.score >= threshold ? best.action : PASS_ACTION;
 }
 
-export function selectEdgerAction({ legalActions, engine, actor = "red", model = EDGER_POLICY_MODEL }) {
+export function getEdgerPolicyPrior({ action, engine, actor = "red" }) {
   const phase = getMatchPhase({ tick: engine.state.tick, isOvertime: engine.state.isOvertime });
   const threat = evaluateThreat(engine.state, actor);
   const spellKeys = buildSpellScoringKeys(engine.state, actor);
-  const scoreActionPrior = (action) => {
-    if (isPassAction(action)) {
-      return 0;
-    }
-    const card = getCard(action.cardId);
-    if (card?.type === "spell" && !spellKeys.has(positionKey(action.x, action.y))) {
-      return -1000;
-    }
-    const score = evaluateActionScore({
-      action,
-      engine,
-      actor,
-      botId: HEURISTIC_BOT_ID,
-      phase,
-    });
-    if (!Number.isFinite(score)) {
-      return -1000;
-    }
-    const threshold = card?.type === "spell"
-      ? SPELL_THRESHOLD[HEURISTIC_BOT_ID][phase] ?? SPELL_THRESHOLD[HEURISTIC_BOT_ID].normal
-      : threat.density > 0
-        ? 50
-        : 70;
-    return score - threshold;
-  };
+
+  if (isPassAction(action)) {
+    return 0;
+  }
+  const card = getCard(action.cardId);
+  if (card?.type === "spell" && !spellKeys.has(positionKey(action.x, action.y))) {
+    return -1000;
+  }
+  const score = evaluateActionScore({
+    action,
+    engine,
+    actor,
+    botId: HEURISTIC_BOT_ID,
+    phase,
+  });
+  if (!Number.isFinite(score)) {
+    return -1000;
+  }
+  const threshold = card?.type === "spell"
+    ? SPELL_THRESHOLD[HEURISTIC_BOT_ID][phase] ?? SPELL_THRESHOLD[HEURISTIC_BOT_ID].normal
+    : threat.density > 0
+      ? 50
+      : 70;
+  return score - threshold;
+}
+
+export function selectEdgerAction({ legalActions, engine, actor = "red", model = EDGER_POLICY_MODEL }) {
+  const scoreActionPrior = (action) => getEdgerPolicyPrior({ action, engine, actor });
 
   return selectMlPolicyAction({
     model,

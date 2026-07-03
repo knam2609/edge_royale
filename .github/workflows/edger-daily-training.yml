@@ -1,0 +1,128 @@
+name: Daily Edger Training
+
+on:
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: "Deterministic training seed"
+        required: false
+        type: string
+      profile:
+        description: "Training profile"
+        required: false
+        default: "daily"
+        type: choice
+        options:
+          - daily
+          - smoke
+  schedule:
+    # 4am Australia/Melbourne is 17:00 UTC during AEDT and 18:00 UTC during AEST.
+    # The timezone guard below skips whichever scheduled entry is not 4am locally.
+    - cron: "0 17 * * *"
+    - cron: "0 18 * * *"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: edger-daily-training
+  cancel-in-progress: false
+
+jobs:
+  train:
+    name: Train and Gate Edger
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check Melbourne schedule guard
+        if: github.event_name == 'schedule'
+        run: |
+          hour="$(TZ=Australia/Melbourne date +%H)"
+          if [ "$hour" != "04" ]; then
+            echo "Not 4am in Australia/Melbourne; skipping."
+            echo "skip_daily=true" >> "$GITHUB_ENV"
+          fi
+
+      - name: Checkout
+        if: env.skip_daily != 'true'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        if: env.skip_daily != 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        if: env.skip_daily != 'true'
+        run: npm ci
+
+      - name: Run unit suite
+        if: env.skip_daily != 'true'
+        run: npm test
+
+      - name: Resolve training inputs
+        if: env.skip_daily != 'true'
+        run: |
+          seed="${{ inputs.seed }}"
+          profile="${{ inputs.profile }}"
+          if [ -z "$seed" ]; then
+            seed="$(TZ=Australia/Melbourne date +%Y%m%d)"
+          fi
+          if [ -z "$profile" ]; then
+            profile="daily"
+          fi
+          run_dir="artifacts/edger-training/runs/daily-${profile}-${seed}-${GITHUB_RUN_ID}"
+          echo "EDGER_SEED=$seed" >> "$GITHUB_ENV"
+          echo "EDGER_PROFILE=$profile" >> "$GITHUB_ENV"
+          echo "EDGER_RUN_DIR=$run_dir" >> "$GITHUB_ENV"
+
+      - name: Train, evaluate, and promote locally if gates pass
+        if: env.skip_daily != 'true'
+        run: npm run edger:daily -- --seed "$EDGER_SEED" --profile "$EDGER_PROFILE" --out-dir "$EDGER_RUN_DIR"
+
+      - name: Upload training artifacts
+        if: env.skip_daily != 'true' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: edger-daily-training-${{ env.EDGER_PROFILE }}-${{ env.EDGER_SEED }}
+          path: ${{ env.EDGER_RUN_DIR }}
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Detect promotion diff
+        if: env.skip_daily != 'true'
+        id: diff
+        run: |
+          if git diff --quiet -- artifacts/edger-training/promoted src/ai/generated/edgerPolicyCurrent.js; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Push promotion branch
+        if: env.skip_daily != 'true' && steps.diff.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B codex/edger-daily-promotion
+          git add artifacts/edger-training/promoted src/ai/generated/edgerPolicyCurrent.js
+          git commit -m "Promote daily Edger policy"
+          git push --force-with-lease origin codex/edger-daily-promotion
+
+      - name: Open or update promotion PR
+        if: env.skip_daily != 'true' && steps.diff.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh pr view codex/edger-daily-promotion --json number >/tmp/edger-pr.json 2>/dev/null; then
+            number="$(node -e "console.log(JSON.parse(require('fs').readFileSync('/tmp/edger-pr.json','utf8')).number)")"
+            gh pr edit "$number" --title "Promote daily Edger policy" --body "Daily Edger training passed the full promotion gate and browser smoke. Artifacts are attached to the workflow run."
+          else
+            gh pr create --base main --head codex/edger-daily-promotion --title "Promote daily Edger policy" --body "Daily Edger training passed the full promotion gate and browser smoke. Artifacts are attached to the workflow run."
+          fi

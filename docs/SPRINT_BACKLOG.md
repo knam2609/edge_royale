@@ -5,11 +5,13 @@
 - `AI-ML-001` Harden deterministic ML runtime performance.
   - Done when full legal-action scoring stays inside the chosen per-tick budget and the benchmark suite is not materially slower than the frozen heuristic path.
 - `AI-ML-002` Implement masked PPO/self-play trainer.
-  - Done when `npm run edger:train` produces trained candidates from heuristic behavior cloning plus PPO against self-play snapshots and hidden baselines.
+  - Done when daily-trained candidates consistently improve scenario and benchmark quality beyond the bootstrap seed.
 - `AI-ML-003` Build tactical scenario league and promotion reports.
-  - Done when `npm run edger:evaluate` reports defense, spell value, tower finishing, elixir punishment, and pocket pressure scenario scores against `edger_heuristic`.
+  - Done when scenario fixtures are broad enough to catch regressions in defense, spell value, tower finishing, elixir punishment, and pocket pressure.
 - `AI-ML-004` Enforce promotion gates.
-  - Done when `npm run edger:promote` refuses candidates that miss schema, determinism, replay, timing, heuristic, baseline, or scenario requirements.
+  - Done when `npm run edger:promote -- --require-gates` and the daily workflow remain stable under passing and failing candidates.
+- `AI-ML-005` Keep daily Edger training automation healthy.
+  - Done when the GitHub Actions schedule produces retained artifacts daily and opens promotion PRs only after all gates and browser smoke pass.
 - `AI-EDGER-001` Add tactical regression scenarios for Edger defense.
   - Done when Edger correctly answers Giants, swarm pressure, and ranged support using legal actions.
 - `AI-EDGER-002` Add tower-finishing and spell-value regression scenarios.
@@ -37,6 +39,8 @@
 - Single Edger opponent with internal benchmark baselines.
 - Frozen `edger_heuristic` baseline with `heuristic` alias.
 - Deterministic ML runtime path for `edger` with promoted JSON plus generated JS module.
+- Developer-only masked PPO candidate trainer and full-gate evaluation/promote scripts.
+- GitHub Actions daily Edger training workflow with artifact upload and promotion PR handoff.
 - Simple local Edger match profile.
 
 ## Non-Goals
