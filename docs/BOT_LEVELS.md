@@ -65,7 +65,7 @@ npm run edger:daily -- --seed <seed> --profile daily
 Raw runs belong under ignored `artifacts/edger-training/runs/`.
 Promoted JSON and reports belong under tracked `artifacts/edger-training/promoted/`.
 
-The trainer exports deterministic masked PPO candidates from heuristic behavior cloning plus seeded self-play rollouts. The `@tensorflow/tfjs` package is a training-only development dependency; runtime/browser code must not import it. Daily automation runs from GitHub Actions at 4am Australia/Melbourne, uploads run artifacts for 30 days, and only opens a promotion PR when every required gate passes.
+The trainer exports deterministic masked PPO candidates from heuristic behavior cloning plus seeded self-play rollouts. The `@tensorflow/tfjs` package is a training-only development dependency; runtime/browser code must not import it. Daily automation runs from GitHub Actions once per day at 18:00 UTC, uploads run artifacts for 30 days, and only opens a promotion PR when every required gate passes.
 
 A candidate can replace the in-game model only when all pass:
 

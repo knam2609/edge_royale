@@ -1,9 +1,9 @@
 ## Current State
 
-- As of July 4, 2026, Edger remains the only playable browser opponent with no bot selector, training UI, levels, or unlocks.
+- As of July 10, 2026, Edger remains the only playable browser opponent with no bot selector, training UI, levels, or unlocks.
 - `edger` still routes through the deterministic generated JS model import from `src/ai/generated/edgerPolicyCurrent.js`; the promoted tracked artifact is still `artifacts/edger-training/promoted/edger_policy_current.json`.
 - Developer-only PPO candidate training and daily automation have been added: `npm run edger:train -- --mode ppo`, `npm run edger:evaluate -- --json-out`, `npm run edger:promote -- --require-gates`, and `npm run edger:daily`.
-- GitHub Actions daily training is configured for 4am Australia/Melbourne, uploads artifacts for 30 days, and opens/updates a promotion PR only when local promotion gates and browser smoke pass.
+- GitHub Actions daily training is configured to run once per day at 18:00 UTC without an in-job Melbourne-hour skip guard, uploads artifacts for 30 days, and opens/updates a promotion PR only when local promotion gates and browser smoke pass.
 - The current promoted model remains the bootstrap runtime seed until a daily or manual candidate passes every gate and is promoted.
 
 ## Source of Truth
@@ -37,7 +37,7 @@
 
 1. Reduce benchmark/evaluation runtime so full `npm test` and `npm run edger:evaluate` complete in a practical local and CI window.
 2. Fix the local Playwright installation/import path so `npm run smoke:browser` can launch Chromium and complete the Edger-only smoke.
-3. Run the GitHub Actions daily training workflow and confirm artifact upload plus non-promotion behavior on failed gates.
+3. Run or observe the next GitHub Actions daily training workflow and confirm the 18:00 UTC schedule executes training, uploads artifacts, and preserves non-promotion behavior on failed gates.
 4. Improve PPO rollout quality and scenario coverage until candidates can clear the `edger_heuristic` Wilson lower-bound gate.
 5. Expand tactical scenario fixtures for defense, spell value, tower finishing, elixir punishment, and pocket pressure.
 6. Keep UI polish scoped to Edger-only setup/HUD while exposing no model/training controls.
@@ -49,6 +49,10 @@
 - July 4, 2026: `npm run edger:evaluate -- --model /private/tmp/edger-train-smoke/edger_policy_candidate.json --json-out /private/tmp/edger-train-smoke/evaluation_report.json` -> interrupted after roughly 4 minutes with no console result.
 - July 4, 2026: `npm test` -> interrupted after about `395636.852625ms`; 93 tests passed, 0 failed, and `tests/bot-regression.test.js` was cancelled.
 - July 4, 2026: `npm run smoke:browser` -> failed before browser launch with `Playwright is required for browser smoke: Timed out while importing Playwright.`
+- July 10, 2026: `git diff --check` -> passed.
+- July 10, 2026: `ruby -e "require 'yaml'; YAML.load_file('.github/workflows/edger-daily-training.yml'); puts 'valid yaml'"` -> passed.
+- July 10, 2026: `command -v actionlint || true` -> no local `actionlint` found, so no GitHub Actions semantic lint was run.
+- July 10, 2026: `npm test` was not run because this pass only changed workflow scheduling/docs/progress, not simulation, replay, profile, rules, AI heuristics, or client behavior.
 
 ## Risks / Notes
 

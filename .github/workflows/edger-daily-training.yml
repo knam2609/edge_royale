@@ -16,9 +16,8 @@ on:
           - daily
           - smoke
   schedule:
-    # 4am Australia/Melbourne is 17:00 UTC during AEDT and 18:00 UTC during AEST.
-    # The timezone guard below skips whichever scheduled entry is not 4am locally.
-    - cron: "0 17 * * *"
+    # Run once per day at 18:00 UTC. This is 4am Australia/Melbourne during AEST
+    # and 5am during AEDT; queued scheduled jobs should still train when they start.
     - cron: "0 18 * * *"
 
 permissions:
@@ -36,38 +35,24 @@ jobs:
     timeout-minutes: 45
 
     steps:
-      - name: Check Melbourne schedule guard
-        if: github.event_name == 'schedule'
-        run: |
-          hour="$(TZ=Australia/Melbourne date +%H)"
-          if [ "$hour" != "04" ]; then
-            echo "Not 4am in Australia/Melbourne; skipping."
-            echo "skip_daily=true" >> "$GITHUB_ENV"
-          fi
-
       - name: Checkout
-        if: env.skip_daily != 'true'
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Setup Node
-        if: env.skip_daily != 'true'
         uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: npm
 
       - name: Install dependencies
-        if: env.skip_daily != 'true'
         run: npm ci
 
       - name: Run unit suite
-        if: env.skip_daily != 'true'
         run: npm test
 
       - name: Resolve training inputs
-        if: env.skip_daily != 'true'
         run: |
           seed="${{ inputs.seed }}"
           profile="${{ inputs.profile }}"
@@ -83,11 +68,10 @@ jobs:
           echo "EDGER_RUN_DIR=$run_dir" >> "$GITHUB_ENV"
 
       - name: Train, evaluate, and promote locally if gates pass
-        if: env.skip_daily != 'true'
         run: npm run edger:daily -- --seed "$EDGER_SEED" --profile "$EDGER_PROFILE" --out-dir "$EDGER_RUN_DIR"
 
       - name: Upload training artifacts
-        if: env.skip_daily != 'true' && always()
+        if: always() && env.EDGER_RUN_DIR != ''
         uses: actions/upload-artifact@v4
         with:
           name: edger-daily-training-${{ env.EDGER_PROFILE }}-${{ env.EDGER_SEED }}
@@ -96,7 +80,6 @@ jobs:
           if-no-files-found: warn
 
       - name: Detect promotion diff
-        if: env.skip_daily != 'true'
         id: diff
         run: |
           if git diff --quiet -- artifacts/edger-training/promoted src/ai/generated/edgerPolicyCurrent.js; then
@@ -106,7 +89,7 @@ jobs:
           fi
 
       - name: Push promotion branch
-        if: env.skip_daily != 'true' && steps.diff.outputs.changed == 'true'
+        if: steps.diff.outputs.changed == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -116,7 +99,7 @@ jobs:
           git push --force-with-lease origin codex/edger-daily-promotion
 
       - name: Open or update promotion PR
-        if: env.skip_daily != 'true' && steps.diff.outputs.changed == 'true'
+        if: steps.diff.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
