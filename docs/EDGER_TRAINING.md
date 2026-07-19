@@ -204,6 +204,7 @@ npm run edger:evaluate:scaling -- --candidate <candidate.json> --checkpoint <bc.
 npm run edger:scaling:report -- <three-checkpoint-and-league arguments>
 npm run edger:train:league -- <campaign arguments>
 npm run edger:benchmark:throughput -- --candidate <candidate.json> --workers 16 --enforce
+npm run edger:reference:v2 -- --champion <live-v1.json> --anchors <paths> --out <reference.json>
 npm run edger:export:v2 -- --checkpoint <candidate.pt> --out <candidate.json>
 npm run edger:generate:v2 -- --model <candidate.json> --out <candidate.js>
 npm run edger:evaluate:v2 -- <candidate/champion/anchor/reference/external-report arguments>
