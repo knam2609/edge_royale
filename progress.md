@@ -1,10 +1,11 @@
 ## Current State
 
-- As of July 18, 2026, the daily PPO trainer and daily promotion workflow have been removed.
-- Live browser Edger still uses tracked `edger_policy_model_v1` from `artifacts/edger-training/promoted/edger_policy_current.json` and `src/ai/generated/edgerPolicyCurrent.js`.
-- `edger_policy_model_v2` exists beside v1 in shadow mode with a 36,402-parameter, synchronous generated-JavaScript-compatible actor and no handcrafted inference prior.
-- The cumulative v2 foundation now covers full production episodes, content-addressed local/S3 storage, manual player replay import, manifests/caches, PyTorch BC/offline improvement, scaling evidence, exact-JS snapshot workers, and V-trace checkpoints.
-- The full v2 evaluator, checksum-bound promotion command, and successful-campaign promotion PR path are implemented; v2 still cannot be promoted until a real full campaign passes them.
+- As of July 19, 2026, the cumulative-v2 foundation is committed at `a62aa6b`; campaign operationalization is committed at `8dbca03`; live-v1 reference generation is committed at `b04c59e`.
+- Live browser Edger remains the tracked v1 artifact. No v2 artifact was promoted or wired into gameplay.
+- Collection is now paired, parallel, clean-SHA-bound, receipt-resumable, failure-reporting, and deterministic across worker counts.
+- Scaling now reduces only nested training sets, keeps complete identical validation/test sets, runs a fixed five-opponent 200-game suite, and binds manifests/checkpoints/models/suite checksums.
+- CI has a manual ten-shard S3 collector, no ephemeral corpus fallback, native Node 20 configuration, explicit Chromium installation, and a browser smoke supervisor/worker.
+- League inputs distinguish the shadow learner parent, live champion/reference, and historical anchors. Exact-JS throughput and live-v1 reference report commands exist.
 
 ## Source of Truth
 
@@ -12,58 +13,53 @@
 - Product overview and commands: `README.md`
 - Gameplay: `docs/GAME_RULES.md` and `docs/CARD_SPECS.md`
 - Live/shadow runtime: `docs/BOT_LEVELS.md`
-- Corpus, learning, league, and scheduling: `docs/EDGER_TRAINING.md`
+- Corpus, scaling, learning, league, and scheduling: `docs/EDGER_TRAINING.md`
 - Roadmap/backlog: `docs/IMPLEMENTATION_PLAN.md` and `docs/SPRINT_BACKLOG.md`
-- Current behavior: `src/sim/productionMatch.js`, `src/ai/v2/observation.js`, `src/ai/v2/policy.js`, `scripts/edger-corpus-core.mjs`, `scripts/edger-v2-training.py`, `scripts/edger-league*.mjs`, and `scripts/edger-v2-evaluation*.mjs`
+- Current implementation: `scripts/edger-collection-core.mjs`, `scripts/edger-corpus*.mjs`, `scripts/edger-dataset*.mjs`, `scripts/edger-scaling-evaluate.mjs`, `scripts/edger-v2-training.py`, `scripts/edger-league*.mjs`, and `scripts/edger-v2-evaluation*.mjs`
 
 ## What Works
 
-- Browser, corpus collection, replay import, and rollout workers share the exact six-tower 18×32 production match.
-- `edger_training_episode_v1` records complete matches with compatibility versions, policy/checkpoint lineage, sparse decisions, result, final hash, replay events/checksum, source, and content ID.
-- Gzip content-addressed object writes are idempotent locally or through `s3://` using the AWS CLI; incompatible imports are quarantined.
-- Whole-game hash splits and fixed 1%/10%/100% subset manifests are stable; disposable PyTorch caches are Parquet/Zstd; player data is capped at 10% and unknown human probabilities are excluded from V-trace.
-- V2 observation/action schemas, legal masks, deterministic stable argmax, parameter/size caps, PyTorch training, offline KL rollback, float32 export, and generated-JS parity are implemented.
-- Snapshot league scheduling preassigns paired seeds, supports champion/heuristic/seven history/four contenders, implements 40/20/20/20 allocation and PFSP, and records exact-JS trajectories with behavior log-probabilities.
-- Full evaluation creates two champion seed blocks, heuristic/anchor/weak matchups, 10,000 repeated safety games, parity/replay/tactical/timing/external gates, and a checksum-bound byte-identical promotion artifact.
-- Daily automation now performs corpus health and deterministic canaries; full campaigns are separate and cumulative.
+- `--workers 1-32`, `--pair-offset`, even paired matches, stable spec hashes, ordered results, verified receipts, resume, failed reports, coverage, timings, provenance, and 16-worker cost projection are implemented.
+- `.github/workflows/edger-corpus-collect.yml` preflights S3 and defines ten 1,000-game shards at pair offsets `0,500,…,4500` with four workers each.
+- `edger_frozen_league_report_v1` runs 40 paired-side games each against live v1, heuristic, random, aggressive, and defender.
+- Scaling reports reject non-nested train sets, changed held-out IDs, manifest/checkpoint mismatches, changed suite specs, model/checkpoint checksum mismatches, illegal actions, or replay failures.
+- Offline AWR reports final accepted KL separately from rejected KL and records whether rollback occurred.
+- Native Node 20 browser smoke validates the game-over replay download and recursively rejects identity fields.
+- The 11,300-game throughput projection gate and live-v1 reference generator are operational.
 
 ## Known Gaps
 
-- No real corpus or 1%/10%/100% scaling campaign has been run yet; local validation used passive/small synthetic smoke corpora.
-- A one-worker two-game full snapshot-league smoke took roughly 86 seconds; production evaluation throughput needs improvement.
-- Browser smoke cannot currently run in this local environment because importing Playwright times out.
-- The legacy 90-match benchmark test remains too slow for the local validation window; all other tests pass.
+- `EDGER_CORPUS_STORE` is unset locally and absent from GitHub Actions repository variables. The required durable S3 URI was not supplied, so the authoritative 64-game pilot and all later production stages were not run.
+- The eight-game local canary corpus is validation-only: it has 7 train, 0 validation, and 1 test episode. Its scaling report correctly rejected missing held-out loss evidence.
+- No authoritative 10,000-game corpus, valid scaling decision, offline KL result, league smoke/campaign, full live-v1 reference, or full promotion evaluation exists yet.
+- The implementation commits are local on `main`; after this handoff update the branch is ahead of `origin/main` by four commits.
 
 ## Next Tasks
 
-1. Collect and validate the first useful full production simulator corpus.
-2. Run fixed 1%/10%/100% BC experiments and generate a real scaling report.
-3. Optimize exact-JS rollout throughput before the first 10,000-match safety run.
-4. Run the conservative offline phase and retain KL/evaluation evidence.
-5. Run the first 16–32 worker V-trace campaign only after scaling passes.
-6. Run the full v2 evaluator and review its promotion PR without weakening failed gates.
-7. Fix/standardize local Playwright import and rerun browser smoke.
+1. Supply/configure an S3-compatible `EDGER_CORPUS_STORE` and runner credentials, then push the four reviewed commits so workflows can use them.
+2. Run the 64-game S3 pilot with seed `20260718`, eight workers, pair offset `0`, and retain its report/receipts/manifest/cache/smoke checkpoint.
+3. Proceed with the ten-shard 10,000-game workflow only if the pilot’s 16-worker projection is at most eight hours.
+4. Train/export/frozen-evaluate 1%/10%/100% BC with seed `20260718`, one epoch, batch 32, and learning rate `1e-3`; stop without threshold changes if scaling fails.
+5. From a passing 100% checkpoint, run one AWR epoch at `1e-4`; retain accepted or rolled-back evidence with final KL at most `0.05`.
+6. Run the 32-game league smoke, then the 1,000-game paired 16-worker V-trace campaign from the shadow parent.
+7. Generate the full live-v1 reference, enforce throughput on the designated runner, run the full evaluator, and open—but never auto-merge—the checksum-bound promotion PR only if every gate passes.
 
 ## Validation
 
-- July 18, 2026: passive full-match episode smoke -> result at tick 6000; replay actions/events/result/final hash reproduced; 60 sparse decisions derived with `13824` board and `96` global values each.
-- July 18, 2026: Parquet/PyTorch smoke -> 60 decision rows written with Zstd; BC checkpoint completed; current exported actor had 36,402 parameters and 744,944 bytes.
-- July 18, 2026: PyTorch/generated-JS golden fixture -> maximum logit difference `0`, masked argmax agreement `100%`.
-- July 18, 2026: `node scripts/edger-league.mjs --scaling-report <smoke> --model <bootstrap-v2> --store <tmp> --manifest-out <tmp> --matches 2 --workers 1 --seed 99` -> passed; two full paired matches, 41 stored decisions.
-- July 18, 2026: V-trace smoke on the two league episodes -> passed; wrote an immutable child checkpoint with human exclusion and clipped V-trace metadata.
-- July 18, 2026: v2 evaluator smoke -> 16 production matches; safety, repeated streams, zero illegal actions, replay, and candidate-specific PyTorch/JS parity passed; smoke correctly remained non-promotable.
-- July 18, 2026: optimized synchronous v2 timing after 10 warmups -> `p95_ms=4.3023` over 100 samples on the local reference process, below the 5 ms gate.
-- July 18, 2026: every JavaScript source/test passed `node --check`; `python3 -m py_compile scripts/edger-v2-training.py`, both workflow YAML parses, package JSON parsing, and `git diff --check` passed.
-- July 18, 2026: every test except `tests/bot-regression.test.js` -> passed, 108 tests in 5.1 seconds.
-- July 18, 2026: `npm test` -> 105 tests passed with zero failures; the final legacy `tests/bot-regression.test.js` process was cancelled after 647.9 seconds while its 90-match gate remained CPU-bound.
-- July 18, 2026: `npm run edger:canary` -> passed at tick 80 with final state hash `d8a8e16d` and replay checksum `1377582fed82914b3fe95d157e2143e3cce7021a52cf1b17ff748cbad2558531`.
-- July 18, 2026: `npm run smoke:browser` -> not completed; the smoke script timed out while importing Playwright.
-- The full Edger benchmark gate was not rerun because the promoted v1 model and frozen handcrafted heuristic were not changed; the first v2 promotion remains gated by the full evaluator.
+- July 19, 2026: native arm64 Node `v20.20.2`; clean `npm ci` -> 3 packages installed, 0 vulnerabilities; `node_modules/playwright/cli.js install chromium` -> Chromium/FFmpeg/headless shell installed.
+- July 19, 2026: `PATH="/private/tmp/edge-royale-node20-native/node_modules/node-bin-darwin-arm64/bin:$PATH" npm test` -> 116 passed, 0 failed, including the legacy 90-match Edger floor; `284008.826459 ms`.
+- July 19, 2026: the same native-Node PATH with `npm run smoke:browser` -> passed, including identity-free downloaded replay validation.
+- July 19, 2026: `npm run edger:canary -- --seed 20260718 --canary-ticks 80` -> passed; final hash `d8a8e16d`, replay checksum `1377582fed82914b3fe95d157e2143e3cce7021a52cf1b17ff748cbad2558531`.
+- July 19, 2026: one-worker and four-worker eight-match collector canaries at pair offset `6000` -> identical ordered episode/action/final/replay hashes; spec checksum `bee3bf0b2d6e1434963e613b43daa668c7152a1e3e2f541563129e9a5b3e3690`; four-worker fresh run `4.728 s`; exact rerun resumed 8/8 receipts in `0.596 s` with zero duplicate episode IDs.
+- July 19, 2026: 32-match/16-worker exact-JS throughput -> `8.567756` matches/s, projected `21.981641` minutes for 11,300 matches; result checksum `6bdde1874f63bd0e3c7f62c4ab111405950b617cc23c93f21a96e4f8936d2582`.
+- July 19, 2026: local eight-episode manifest/replay validation -> 8/8 passed; manifest `1ccbcf6c83a090fc1f86514137c5d56de75e5fafb60444bc36ed73b0e8093f68`; 493 decisions.
+- July 19, 2026: non-authoritative 1%/10%/100% BC smoke used seed `20260718`, one epoch, batch 32, learning rate `1e-3`; all three 200-game frozen suites used spec checksum `b0517c71c5dcada16a16b23149b3b6f7ab96d08e45cfe7e2403a2a9a5695399b`, had zero illegal actions, and passed 200/200 replay checks. Scores were `0`, `0`, and `0.415`; scaling report rejected the corpus because validation loss was unavailable.
+- July 19, 2026: `npm run edger:reference:v2 -- --champion artifacts/edger-training/promoted/edger_policy_current.json --games-per-opponent 2 --workers 2 --seed 20260718 --out artifacts/edger-training/smoke/live-v1-reference-smoke.json` -> 2/2 replay checks, zero illegal actions.
+- July 19, 2026: all JavaScript syntax checks, Python compilation, workflow YAML parsing, focused tests, and `git diff --check` passed.
 
 ## Risks / Notes
 
-- Live behavior is intentionally unchanged: v1 remains promoted and v2 remains shadow-only.
-- Full production trajectories are expensive; never restore short one-tower training to hide that cost.
-- Failed campaigns retain reports/checkpoints without changing a promoted artifact; successful campaigns prepare the exact evaluated artifact on a review branch.
-- `edger_heuristic`, `random`, `aggressive`, and `defender` remain internal and must not appear as player-facing choices.
-- Player replay export is explicit and local; there is no identity field or automatic upload.
+- Live v1 is intentionally unchanged; all generated smoke models and reports are ignored, non-authoritative artifacts.
+- Do not use the local canary projection as the S3 pilot decision. Measure the required 64-game durable run on its designated environment.
+- Production collection/training refuses a dirty worktree and records the full Git SHA.
+- Failed scaling, offline, league, or evaluation stages must retain evidence and must not weaken thresholds or update the live artifact.
