@@ -147,6 +147,11 @@ npm run edger:benchmark:throughput -- \
   --target-matches 11300 \
   --max-minutes 180 \
   --enforce
+npm run edger:reference:v2 -- \
+  --champion artifacts/edger-training/promoted/edger_policy_current.json \
+  --anchors /path/to/anchor-1.json,/path/to/anchor-2.json \
+  --workers 16 \
+  --out /path/to/live-v1-reference.json
 ```
 
 V2 has a separate full evaluator and checksum-bound promotion command:
