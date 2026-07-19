@@ -661,14 +661,29 @@ export function listLocalEpisodeUris(store = DEFAULT_CORPUS_STORE) {
       throw new Error(`invalid S3 corpus URI ${store}`);
     }
     const bucketUri = `s3://${parsed[1]}`;
+    const objectPrefix = [parsed[2], "objects", "sha256"]
+      .filter(Boolean)
+      .join("/");
     const output = execFileSync(
       "aws",
-      ["s3", "ls", `${store.replace(/\/+$/, "")}/objects/sha256/`, "--recursive"],
-      { encoding: "utf8" },
+      [
+        "s3api",
+        "list-objects-v2",
+        "--bucket",
+        parsed[1],
+        "--prefix",
+        `${objectPrefix}/`,
+        "--query",
+        "Contents[].Key",
+        "--output",
+        "text",
+      ],
+      { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 },
     );
     return output
-      .split("\n")
-      .map((line) => line.trim().split(/\s+/).at(-1))
+      .trim()
+      .split(/\s+/)
+      .filter((key) => key && key !== "None")
       .filter((key) => key?.endsWith(".edger-episode.json.gz"))
       .map((key) => `${bucketUri}/${key}`);
   }
