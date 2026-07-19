@@ -1,11 +1,12 @@
 ## Current State
 
-- As of July 20, 2026, readiness PR `#8` and parity correction PR `#9` are merged. The immutable campaign SHA is `f25a4880e65f0eed6eda8c3ecc33d42d2ad6af33`.
+- As of July 20, 2026, readiness PR `#8`, parity correction PR `#9`, and OIDC-duration PR `#10` are merged. The immutable campaign SHA is `f25a4880e65f0eed6eda8c3ecc33d42d2ad6af33`.
 - The authoritative native-arm64 64-game pilot passed every gate and its eight evidence files are retained under `campaigns/20260718-v2-first/pilot/`.
 - The invalidated `b5ac17e` pilot remains preserved separately under `campaigns/20260718-v2-first/pilot/failed-b5ac17e/`.
 - All ten production shards at `f25a488` passed strict aggregation. Workflow run `29692403151` then stopped during manifest construction when its default one-hour OIDC session expired; no frozen manifest was published.
 - The failed run's aggregate, failure report, and ten shard reports are retained under `campaigns/20260718-v2-first/corpus/failed-run-29692403151/`.
-- CloudFormation stack `edge-royale-edger-campaign` is `CREATE_COMPLETE` in `ap-southeast-2`; all five GitHub variables are configured.
+- Recovery run `29695924800` passed under 12-hour OIDC credentials. Frozen manifest `ca8435e58fd500f6045727db283de32ac906b3584b187abb84a5aa569867939c` and its passed validation/aggregate reports are retained under `campaigns/20260718-v2-first/corpus/`.
+- CloudFormation stack `edge-royale-edger-campaign` is `UPDATE_COMPLETE` in `ap-southeast-2`; all five GitHub variables are configured.
 - Live browser Edger remains the tracked v1 artifact. No v2 artifact was promoted or wired into gameplay.
 - Scaling and later campaign stages have not run. No EC2 campaign runner was launched.
 
@@ -34,16 +35,13 @@
 
 ## Known Gaps
 
-- Full manifest construction and 16-worker validation of the stored 10,000 games have not passed; therefore the corpus is not frozen.
 - The scaling suite, offline phase, league smoke/production rollout, full live-v1 reference, and full evaluator have not run.
 - AWS CLI `s3 ls` returns exit 1 for an empty prefix. The implementation uses `s3api list-objects-v2`; `.keep` remains harmless in the active object prefix.
 
 ## Next Tasks
 
-1. Review and merge `codex/edger-oidc-session-duration`, deploy the updated CloudFormation stack, and prove the requested 12-hour OIDC duration.
-2. Rerun the resumable corpus workflow at campaign SHA `f25a4880e65f0eed6eda8c3ecc33d42d2ad6af33`; require strict aggregation, 10,000-episode validation, and a frozen manifest.
-3. Launch the remote production campaign at the same SHA only after the corpus gate passes; obey scaling, KL, league, throughput, and full-evaluation stop gates.
-4. If every gate passes, review the generated promotion PR manually; never auto-merge.
+1. Launch the remote production campaign at campaign SHA `f25a4880e65f0eed6eda8c3ecc33d42d2ad6af33`; obey scaling, KL, league, throughput, and full-evaluation stop gates.
+2. If every gate passes, review the generated promotion PR manually; never auto-merge.
 
 ## Validation
 
@@ -65,6 +63,10 @@
 - July 20, 2026: production collection run `29692403151` -> ten passed shard reports at `f25a488`, 10,000 games, 5,000 paired seeds, global indices `0…9999`, 5,000 games per side, 2,500 per opponent, 10,000 unique episode IDs, 10,000 shard replay checks, zero failures, 64 resumed pilot receipts, and 9,936 fresh games.
 - July 20, 2026: run `29692403151` stopped in `Freeze manifest and verify all 10,000 stored episodes`; OIDC configured at `15:50:59Z`, S3 `HeadObject` returned HTTP 400 at `16:51:03Z`. Local recheck of episode `393a5b…` passed with 5,779 bytes, AES256, and version `OY9CT5JXxc08zKYw5YxD69F_9J5HCVd0`; no manifest or validation report was published.
 - July 20, 2026: OIDC-duration correction -> all three workflow YAML files parsed, all five AWS credential steps request 43,200 seconds, CloudFormation validation passed with `CAPABILITY_NAMED_IAM`, and `git diff --check` passed.
+- July 20, 2026: stack update -> `UPDATE_COMPLETE`; IAM role `edge-royale-edger-github-main` reports `MaxSessionDuration=43200`; all ten recovery jobs in run `29695924800` successfully assumed the requested 43,200-second OIDC sessions.
+- July 20, 2026: recovery run `29695924800` -> all ten resumed shard reports and strict aggregation passed at `f25a488`; frozen manifest `ca8435e58fd500f6045727db283de32ac906b3584b187abb84a5aa569867939c` has 10,000 episodes, 593,576 decisions, and splits 8,016 train/1,015 validation/969 test.
+- July 20, 2026: `npm run edger:corpus:validate -- --manifest artifacts/edger-training/corpus/manifest.json --workers 16 --report artifacts/edger-training/corpus/validation-report.json` in run `29695924800` -> 10,000/10,000 schemas, compressed checksums, episode IDs, and replays passed in `3,673.254 s`; manifest build took `15,625.308 s`; zero failures.
+- July 20, 2026: frozen evidence SHA-256 -> manifest file `bf85a0c3eca5eaeb008bfd818b3b0e726a820f671bc49a15f0b6c89e568c048d`, validation report `6fdcd7aac3ada57b6e05d4d2384f09bccff89e97c5fb0401179cb3ce6ab1ad14`, aggregate report `3cf91876347192ba3bed1008f75199314316712246e1710a206ec74b63f8a13f`.
 
 ## Risks / Notes
 
