@@ -44,6 +44,7 @@ jobs:
         with:
           aws-region: ${{ vars.AWS_REGION }}
           role-to-assume: ${{ vars.EDGER_AWS_ROLE_ARN }}
+          role-duration-seconds: 43200
 
       - run: npm ci
 
@@ -105,6 +106,7 @@ jobs:
         with:
           aws-region: ${{ vars.AWS_REGION }}
           role-to-assume: ${{ vars.EDGER_AWS_ROLE_ARN }}
+          role-duration-seconds: 43200
 
       - run: npm ci
 
@@ -138,7 +140,17 @@ jobs:
             --report artifacts/edger-training/corpus/validation-report.json
           test "$(node -p "require('./artifacts/edger-training/corpus/manifest.json').statistics.episodes")" = "10000"
 
+      - name: Preserve this corpus run's evidence indefinitely
+        if: always()
+        run: |
+          aws s3 cp \
+            artifacts/edger-training/corpus/ \
+            "$CAMPAIGN_URI/corpus/runs/$GITHUB_RUN_ID/" \
+            --recursive \
+            --only-show-errors
+
       - name: Preserve frozen corpus evidence indefinitely
+        if: success()
         run: |
           aws s3 cp \
             artifacts/edger-training/corpus/ \
@@ -147,6 +159,7 @@ jobs:
             --only-show-errors
 
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: edger-corpus-frozen-${{ github.run_id }}
           path: artifacts/edger-training/corpus

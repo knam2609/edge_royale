@@ -41,6 +41,7 @@ jobs:
         with:
           aws-region: ${{ vars.AWS_REGION }}
           role-to-assume: ${{ vars.EDGER_AWS_ROLE_ARN }}
+          role-duration-seconds: 43200
 
       - name: Require immutable production configuration
         run: |
@@ -104,6 +105,7 @@ jobs:
         with:
           aws-region: ${{ vars.AWS_REGION }}
           role-to-assume: ${{ vars.EDGER_AWS_ROLE_ARN }}
+          role-duration-seconds: 43200
 
       - run: npm ci
 

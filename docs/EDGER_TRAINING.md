@@ -200,6 +200,13 @@ replay verification. `edger:corpus:validate --workers 16 --report ...`
 independently checks every compressed checksum, schema, episode ID,
 action/event stream, result, final hash, and replay.
 
+AWS workflows request 12-hour OIDC sessions from a role whose
+`MaxSessionDuration` is also 12 hours. This covers the exhaustive manifest,
+replay, and remote-monitor steps without using stored access keys. Corpus
+aggregation artifacts are copied to a run-specific S3 prefix even when a later
+freeze gate fails; only a fully successful run publishes the canonical frozen
+manifest.
+
 A cumulative campaign becomes due when:
 
 - compatible games grow by at least 20%, or
