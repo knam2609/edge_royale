@@ -10,6 +10,7 @@ import {
   EDGER_V2_EVALUATION_PROFILES,
   buildEdgerV2EvaluationSpecs,
   pairedBootstrapLowerBound,
+  validateExternalCampaignReport,
   validateEdgerV2ReferenceReport,
 } from "../scripts/edger-v2-evaluation-core.mjs";
 import { createEdgerV2BootstrapModel } from "../src/ai/v2/policy.js";
@@ -81,6 +82,23 @@ test("v2 references are bound to the evaluated champion", () => {
     }),
     /does not match champion/,
   );
+});
+
+test("external test and browser reports are bound to the campaign Git commit", () => {
+  const commit = "a".repeat(40);
+  assert.equal(
+    validateExternalCampaignReport(
+      { passed: true, git_commit: commit },
+      { label: "browser smoke", expectedGitCommit: commit },
+    ).passed,
+    true,
+  );
+  const mismatch = validateExternalCampaignReport(
+    { passed: true, git_commit: "b".repeat(40) },
+    { label: "browser smoke", expectedGitCommit: commit },
+  );
+  assert.equal(mismatch.passed, false);
+  assert.match(mismatch.reason, /does not match/);
 });
 
 test("v2 promotion command refuses an incomplete report", () => {

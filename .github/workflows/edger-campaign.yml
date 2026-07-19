@@ -1,157 +1,136 @@
-name: Edger Cumulative Campaign
+name: Edger Production Campaign
 
 on:
   workflow_dispatch:
     inputs:
-      matches:
-        description: "Paired snapshot-league games (even number)"
+      campaign_sha:
+        description: "Reviewed campaign Git SHA (defaults to workflow main SHA)"
         required: false
-        default: "32"
         type: string
 
 permissions:
   contents: write
+  id-token: write
   pull-requests: write
 
 concurrency:
-  group: edger-cumulative-campaign
+  group: edger-production-campaign
   cancel-in-progress: false
 
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  EDGER_CORPUS_STORE: ${{ vars.EDGER_CORPUS_STORE }}
+  EDGER_CAMPAIGN_INPUT_URI: ${{ vars.EDGER_CAMPAIGN_INPUT_URI }}
+  CAMPAIGN_GIT_SHA: ${{ inputs.campaign_sha || github.sha }}
+
 jobs:
-  campaign:
+  remote-campaign:
     runs-on: ubuntu-latest
     timeout-minutes: 360
-    env:
-      EDGER_CORPUS_STORE: ${{ vars.EDGER_CORPUS_STORE }}
-      EDGER_CAMPAIGN_INPUT_URI: ${{ vars.EDGER_CAMPAIGN_INPUT_URI }}
-
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.campaign_sha || github.sha }}
 
       - uses: actions/setup-node@v4
         with:
           node-version-file: .node-version
           cache: npm
 
-      - uses: actions/setup-python@v5
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
-          python-version: "3.11"
-          cache: pip
+          aws-region: ${{ vars.AWS_REGION }}
+          role-to-assume: ${{ vars.EDGER_AWS_ROLE_ARN }}
+
+      - name: Require immutable production configuration
+        run: |
+          test "$(git rev-parse HEAD)" = "$CAMPAIGN_GIT_SHA"
+          test "$AWS_REGION" = "ap-southeast-2"
+          case "$EDGER_CORPUS_STORE" in s3://*) ;; *) exit 1 ;; esac
+          case "$EDGER_CAMPAIGN_INPUT_URI" in s3://*) ;; *) exit 1 ;; esac
+          test "${{ vars.EDGER_REFERENCE_HARDWARE }}" = "aws-c7g.4xlarge-ap-southeast-2"
+
+      - name: Launch the SSM-only c7g campaign runner
+        run: npm run edger:campaign:remote -- launch --git-sha "$CAMPAIGN_GIT_SHA"
+
+      - name: Wait for the immutable full-evaluation gate
+        run: |
+          campaign_uri="${EDGER_CAMPAIGN_INPUT_URI%/campaign-input}"
+          for attempt in $(seq 1 350); do
+            if aws s3 cp \
+              "$campaign_uri/status/completed/full-evaluation.json" \
+              /tmp/full-evaluation.json \
+              --only-show-errors 2>/dev/null; then
+              node -e "
+                const fs = require('fs');
+                const report = JSON.parse(fs.readFileSync('/tmp/full-evaluation.json'));
+                if (report.status !== 'passed' || !report.immutable || report.git_commit !== process.env.CAMPAIGN_GIT_SHA) {
+                  process.exit(1);
+                }
+              "
+              exit 0
+            fi
+            active="$(aws ec2 describe-instances \
+              --filters \
+                "Name=tag:campaign,Values=20260718-v2-first" \
+                "Name=tag:campaign-git-sha,Values=$CAMPAIGN_GIT_SHA" \
+                "Name=instance-state-name,Values=pending,running,stopping,stopped" \
+              --query 'length(Reservations[].Instances[])' \
+              --output text)"
+            if [ "$active" = "0" ]; then
+              echo "Remote runner terminated before the full-evaluation gate passed." >&2
+              exit 1
+            fi
+            sleep 60
+          done
+          echo "Remote campaign exceeded the six-hour GitHub monitor window." >&2
+          exit 1
+
+  promotion-pr:
+    needs: remote-campaign
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.campaign_sha || github.sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ vars.AWS_REGION }}
+          role-to-assume: ${{ vars.EDGER_AWS_ROLE_ARN }}
 
       - run: npm ci
-      - run: npx playwright install --with-deps chromium
-      - run: pip install -r requirements-edger-training.txt
 
-      - name: Require durable S3 corpus storage
+      - name: Download exact checksum-bound promotion inputs
         run: |
-          case "$EDGER_CORPUS_STORE" in
-            s3://*) ;;
-            *) echo "EDGER_CORPUS_STORE must be a configured s3:// URI" >&2; exit 1 ;;
-          esac
-
-      - name: Download shadow parent, live champion, scaling proof, and anchors
-        if: env.EDGER_CAMPAIGN_INPUT_URI != ''
-        run: |
-          mkdir -p artifacts/edger-training/campaign-input
-          aws s3 cp "$EDGER_CAMPAIGN_INPUT_URI/" artifacts/edger-training/campaign-input/ --recursive --only-show-errors
-
-      - name: Require post-scaling campaign inputs
-        run: |
-          test -f artifacts/edger-training/campaign-input/scaling_report.json
-          test -f artifacts/edger-training/campaign-input/shadow-parent.json
-          test -f artifacts/edger-training/campaign-input/shadow-parent.pt
-          test -f artifacts/edger-training/campaign-input/live-champion.json
-          test -f artifacts/edger-training/campaign-input/live-champion-reference.json
-
-      - name: Exact-JavaScript snapshot league and V-trace learner
-        run: |
-          matches="${{ inputs.matches }}"
-          if [ -z "$matches" ]; then matches=32; fi
-          league_args=()
-          if [ -f artifacts/edger-training/campaign-input/league.json ]; then
-            league_args=(--league artifacts/edger-training/campaign-input/league.json)
-          fi
-          historical_paths=()
-          for anchor in artifacts/edger-training/campaign-input/historical-anchor-*.json; do
-            if [ -f "$anchor" ]; then historical_paths+=("$anchor"); fi
-          done
-          historical_args=()
-          if [ "${#historical_paths[@]}" -gt 0 ]; then
-            historical="$(IFS=,; echo "${historical_paths[*]}")"
-            historical_args=(--historical-anchors "$historical")
-          fi
-          npm run edger:train:league -- \
-            --scaling-report artifacts/edger-training/campaign-input/scaling_report.json \
-            --shadow-parent-model artifacts/edger-training/campaign-input/shadow-parent.json \
-            --shadow-parent-checkpoint artifacts/edger-training/campaign-input/shadow-parent.pt \
-            --live-champion-model artifacts/edger-training/campaign-input/live-champion.json \
-            --live-champion-reference artifacts/edger-training/campaign-input/live-champion-reference.json \
-            "${league_args[@]}" \
-            "${historical_args[@]}" \
-            --store "$EDGER_CORPUS_STORE" \
-            --matches "$matches" \
-            --workers 16 \
-            --manifest-out artifacts/edger-training/campaign/manifest.json \
-            --dataset-out artifacts/edger-training/campaign/league.parquet \
-            --out-checkpoint artifacts/edger-training/campaign/candidate.pt \
-            --report-out artifacts/edger-training/campaign/league_report.json
-
-      - name: Export synchronous shadow actor
-        run: |
-          npm run edger:export:v2 -- \
-            --checkpoint artifacts/edger-training/campaign/candidate.pt \
-            --out artifacts/edger-training/campaign/edger_policy_v2_candidate.json
-          npm run edger:generate:v2 -- \
-            --model artifacts/edger-training/campaign/edger_policy_v2_candidate.json \
-            --out artifacts/edger-training/campaign/edgerPolicyV2Candidate.js
-
-      - name: Validate repository and browser
-        run: |
-          npm test
+          campaign_uri="${EDGER_CAMPAIGN_INPUT_URI%/campaign-input}"
           mkdir -p artifacts/edger-training/campaign
-          echo '{"passed":true,"command":"npm test"}' > artifacts/edger-training/campaign/test_report.json
-          npm run smoke:browser
-          echo '{"passed":true,"command":"npm run smoke:browser"}' > artifacts/edger-training/campaign/browser_report.json
+          aws s3 cp \
+            "$campaign_uri/ready-for-promotion/" \
+            artifacts/edger-training/campaign/ \
+            --recursive \
+            --only-show-errors
+          node -e "
+            const fs = require('fs');
+            const report = JSON.parse(fs.readFileSync('artifacts/edger-training/campaign/evaluation-report.json'));
+            if (report.campaign_git_commit !== process.env.CAMPAIGN_GIT_SHA || !report.promotion?.passed) {
+              process.exit(1);
+            }
+          "
 
-      - name: Enforce exact-JavaScript evaluation throughput
+      - name: Revalidate checksums and prepare the reviewed promotion change
         run: |
-          npm run edger:benchmark:throughput -- \
-            --candidate artifacts/edger-training/campaign/edger_policy_v2_candidate.json \
-            --matches 32 \
-            --workers 16 \
-            --target-matches 11300 \
-            --max-minutes 180 \
-            --reference-hardware "${{ vars.EDGER_REFERENCE_HARDWARE || 'github-ubuntu-latest' }}" \
-            --out artifacts/edger-training/campaign/throughput_report.json \
-            --enforce
+          npm run edger:promote:v2 -- \
+            --model artifacts/edger-training/campaign/candidate.json \
+            --report artifacts/edger-training/campaign/evaluation-report.json
 
-      - name: Run full v2 promotion evaluation
-        run: |
-          anchor_paths=()
-          for anchor in artifacts/edger-training/campaign-input/historical-anchor-*.json; do
-            if [ -f "$anchor" ]; then anchor_paths+=("$anchor"); fi
-          done
-          anchor_args=()
-          if [ "${#anchor_paths[@]}" -gt 0 ]; then
-            anchors="$(IFS=,; echo "${anchor_paths[*]}")"
-            anchor_args=(--anchors "$anchors")
-          fi
-          npm run edger:evaluate:v2 -- \
-            --candidate artifacts/edger-training/campaign/edger_policy_v2_candidate.json \
-            --champion artifacts/edger-training/campaign-input/live-champion.json \
-            "${anchor_args[@]}" \
-            --reference artifacts/edger-training/campaign-input/live-champion-reference.json \
-            --test-report artifacts/edger-training/campaign/test_report.json \
-            --browser-report artifacts/edger-training/campaign/browser_report.json \
-            --profile full \
-            --workers 16 \
-            --reference-hardware "${{ vars.EDGER_REFERENCE_HARDWARE || 'github-ubuntu-latest' }}" \
-            --out artifacts/edger-training/campaign/evaluation_report.json
-
-      - name: Prepare reviewed promotion artifact change
-        run: npm run edger:promote:v2 -- --model artifacts/edger-training/campaign/edger_policy_v2_candidate.json --report artifacts/edger-training/campaign/evaluation_report.json
-
-      - name: Open promotion pull request
+      - name: Open promotion pull request without auto-merge
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -166,14 +145,4 @@ jobs:
             --base main \
             --head "$branch" \
             --title "Promote cumulative Edger v2 policy" \
-            --body "The cumulative v2 candidate passed the full paired, anchor, safety, parity, replay, tactical, timing, test, and browser promotion report. Campaign artifacts are attached to workflow run ${GITHUB_RUN_ID}."
-
-      - name: Record completed cumulative corpus state
-        run: npm run edger:campaign:complete -- --manifest artifacts/edger-training/campaign/manifest.json
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: edger-cumulative-campaign-${{ github.run_id }}
-          path: artifacts/edger-training/campaign
-          retention-days: 90
+            --body "The checksum-bound candidate from campaign SHA ${CAMPAIGN_GIT_SHA} passed every immutable production gate. This PR requires manual review and merge."

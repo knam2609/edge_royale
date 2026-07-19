@@ -2,9 +2,15 @@ name: Edger Production Corpus Collection
 
 on:
   workflow_dispatch:
+    inputs:
+      campaign_sha:
+        description: "Reviewed campaign Git SHA (defaults to workflow main SHA)"
+        required: false
+        type: string
 
 permissions:
   contents: read
+  id-token: write
 
 concurrency:
   group: edger-production-corpus-collection
@@ -22,16 +28,27 @@ jobs:
         pair_offset: [0, 500, 1000, 1500, 2000, 2500, 3000, 3500, 4000, 4500]
     env:
       EDGER_CORPUS_STORE: ${{ vars.EDGER_CORPUS_STORE }}
+      CAMPAIGN_GIT_SHA: ${{ inputs.campaign_sha || github.sha }}
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.campaign_sha || github.sha }}
 
       - uses: actions/setup-node@v4
         with:
           node-version-file: .node-version
           cache: npm
 
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ vars.AWS_REGION }}
+          role-to-assume: ${{ vars.EDGER_AWS_ROLE_ARN }}
+
       - run: npm ci
+
+      - name: Require the reviewed campaign SHA
+        run: test "$(git rev-parse HEAD)" = "$CAMPAIGN_GIT_SHA"
 
       - name: Require durable S3 corpus storage
         run: |
@@ -63,4 +80,74 @@ jobs:
         with:
           name: edger-corpus-collection-${{ matrix.pair_offset }}-${{ github.run_id }}
           path: artifacts/edger-training/reports
+          retention-days: 90
+
+  aggregate-and-freeze:
+    needs: collect
+    runs-on: ubuntu-latest
+    timeout-minutes: 720
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      EDGER_CORPUS_STORE: ${{ vars.EDGER_CORPUS_STORE }}
+      CAMPAIGN_URI: s3://edge-royale-edger-904869824856-ap-southeast-2/campaigns/20260718-v2-first
+      CAMPAIGN_GIT_SHA: ${{ inputs.campaign_sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.campaign_sha || github.sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ vars.AWS_REGION }}
+          role-to-assume: ${{ vars.EDGER_AWS_ROLE_ARN }}
+
+      - run: npm ci
+
+      - name: Require the reviewed campaign SHA
+        run: test "$(git rev-parse HEAD)" = "$CAMPAIGN_GIT_SHA"
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: edger-corpus-collection-*
+          path: artifacts/edger-training/shard-reports
+          merge-multiple: true
+
+      - name: Aggregate all ten frozen shard reports
+        run: |
+          report_args=()
+          while IFS= read -r report; do
+            report_args+=(--report "$report")
+          done < <(find artifacts/edger-training/shard-reports -name 'collection-*.json' -type f | sort -V)
+          npm run edger:collection:aggregate -- \
+            "${report_args[@]}" \
+            --out artifacts/edger-training/corpus/aggregate-report.json
+
+      - name: Freeze manifest and verify all 10,000 stored episodes
+        run: |
+          npm run edger:corpus:manifest -- \
+            --store "$EDGER_CORPUS_STORE" \
+            --out artifacts/edger-training/corpus/manifest.json
+          npm run edger:corpus:validate -- \
+            --manifest artifacts/edger-training/corpus/manifest.json \
+            --workers 16 \
+            --report artifacts/edger-training/corpus/validation-report.json
+          test "$(node -p "require('./artifacts/edger-training/corpus/manifest.json').statistics.episodes")" = "10000"
+
+      - name: Preserve frozen corpus evidence indefinitely
+        run: |
+          aws s3 cp \
+            artifacts/edger-training/corpus/ \
+            "$CAMPAIGN_URI/corpus/" \
+            --recursive \
+            --only-show-errors
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: edger-corpus-frozen-${{ github.run_id }}
+          path: artifacts/edger-training/corpus
           retention-days: 90
