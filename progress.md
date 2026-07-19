@@ -3,9 +3,11 @@
 - As of July 20, 2026, readiness PR `#8` and parity correction PR `#9` are merged. The immutable campaign SHA is `f25a4880e65f0eed6eda8c3ecc33d42d2ad6af33`.
 - The authoritative native-arm64 64-game pilot passed every gate and its eight evidence files are retained under `campaigns/20260718-v2-first/pilot/`.
 - The invalidated `b5ac17e` pilot remains preserved separately under `campaigns/20260718-v2-first/pilot/failed-b5ac17e/`.
+- All ten production shards at `f25a488` passed strict aggregation. Workflow run `29692403151` then stopped during manifest construction when its default one-hour OIDC session expired; no frozen manifest was published.
+- The failed run's aggregate, failure report, and ten shard reports are retained under `campaigns/20260718-v2-first/corpus/failed-run-29692403151/`.
 - CloudFormation stack `edge-royale-edger-campaign` is `CREATE_COMPLETE` in `ap-southeast-2`; all five GitHub variables are configured.
 - Live browser Edger remains the tracked v1 artifact. No v2 artifact was promoted or wired into gameplay.
-- Production shards and later campaign stages have not run.
+- Scaling and later campaign stages have not run. No EC2 campaign runner was launched.
 
 ## Source of Truth
 
@@ -28,17 +30,20 @@
 - CloudFormation defines the retained encrypted/versioned private bucket, main-only GitHub OIDC role, SSM instance role/profile, and egress-only VPC.
 - Remote launch/status/terminate provisions an SSM-only `c7g.4xlarge` with encrypted 200 GiB gp3, no key/inbound ports, instance-shutdown termination, and a 24-hour guard.
 - Remote stages are immutable, resumable only at the same SHA, resource-gated below 28 GiB RSS and 160 GiB disk, and preserve failure evidence. Promotion remains an unmerged checksum-bound PR.
+- AWS workflows request sessions long enough for their declared exhaustive jobs, and corpus runs preserve run-specific partial evidence while publishing canonical frozen evidence only on success.
 
 ## Known Gaps
 
-- The 10,000-game corpus, scaling suite, offline phase, league smoke/production rollout, full live-v1 reference, and full evaluator have not run.
+- Full manifest construction and 16-worker validation of the stored 10,000 games have not passed; therefore the corpus is not frozen.
+- The scaling suite, offline phase, league smoke/production rollout, full live-v1 reference, and full evaluator have not run.
 - AWS CLI `s3 ls` returns exit 1 for an empty prefix. The implementation uses `s3api list-objects-v2`; `.keep` remains harmless in the active object prefix.
 
 ## Next Tasks
 
-1. Dispatch ten 1,000-game shards at campaign SHA `f25a4880e65f0eed6eda8c3ecc33d42d2ad6af33`, aggregate strictly, verify all episodes with 16 workers, and freeze the manifest.
-2. Launch the remote production campaign at the same SHA; obey scaling, KL, league, throughput, and full-evaluation stop gates.
-3. If every gate passes, review the generated promotion PR manually; never auto-merge.
+1. Review and merge `codex/edger-oidc-session-duration`, deploy the updated CloudFormation stack, and prove the requested 12-hour OIDC duration.
+2. Rerun the resumable corpus workflow at campaign SHA `f25a4880e65f0eed6eda8c3ecc33d42d2ad6af33`; require strict aggregation, 10,000-episode validation, and a frozen manifest.
+3. Launch the remote production campaign at the same SHA only after the corpus gate passes; obey scaling, KL, league, throughput, and full-evaluation stop gates.
+4. If every gate passes, review the generated promotion PR manually; never auto-merge.
 
 ## Validation
 
@@ -57,6 +62,9 @@
 - July 20, 2026: authoritative manifest `ee1160cacfb4298b3d98e557518b0f17669f003515a150e610253a954fead2d7` -> 64 episodes, 3,682 decisions, splits 52 train/5 validation/7 test; `npm run edger:corpus:validate -- --manifest /private/tmp/edge-royale-pilot-f25a488/manifest.json --workers 16 --report /private/tmp/edge-royale-pilot-f25a488/validation-report.json` passed 64/64 checks in `20.307 s`.
 - July 20, 2026: two-pass pilot cache -> 3,682 rows in deterministic 256-row groups, 708,593 bytes, decision splits 2,977 train/307 validation/398 test.
 - July 20, 2026: one-epoch smoke BC -> validation joint-action loss `6.7823414259`; model `edger_v2_bc_7d9e3364fd134015`; parity passed with maximum logit error `4.76837158203125e-7` and JS/PyTorch argmax `{card:1, placement:0, delay:23}`.
+- July 20, 2026: production collection run `29692403151` -> ten passed shard reports at `f25a488`, 10,000 games, 5,000 paired seeds, global indices `0…9999`, 5,000 games per side, 2,500 per opponent, 10,000 unique episode IDs, 10,000 shard replay checks, zero failures, 64 resumed pilot receipts, and 9,936 fresh games.
+- July 20, 2026: run `29692403151` stopped in `Freeze manifest and verify all 10,000 stored episodes`; OIDC configured at `15:50:59Z`, S3 `HeadObject` returned HTTP 400 at `16:51:03Z`. Local recheck of episode `393a5b…` passed with 5,779 bytes, AES256, and version `OY9CT5JXxc08zKYw5YxD69F_9J5HCVd0`; no manifest or validation report was published.
+- July 20, 2026: OIDC-duration correction -> all three workflow YAML files parsed, all five AWS credential steps request 43,200 seconds, CloudFormation validation passed with `CAPABILITY_NAMED_IAM`, and `git diff --check` passed.
 
 ## Risks / Notes
 
@@ -65,4 +73,5 @@
 - The dedicated bucket did not exist and the AWS account had no GitHub OIDC provider before this change.
 - OIDC runs `29691150328` and `29691229848` exposed the empty-prefix/policy issues before data collection; neither wrote authoritative episodes. Stack policy was corrected and successful run `29691292412` is the proof gate.
 - The first pilot's parity-tool defect invalidated `b5ac17e`; its 138 archived objects remain immutable and do not enter the `f25a488` lineage.
+- The collected 10,000-game `f25a488` lineage is retained and resumable. Run `29692403151` was a control-plane credential-duration failure, not an accepted corpus freeze.
 - Any failed gate must retain evidence, terminate the runner, and leave live v1 untouched.
