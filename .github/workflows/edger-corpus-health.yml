@@ -17,7 +17,7 @@ concurrency:
 jobs:
   health:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 720
     env:
       EDGER_CORPUS_STORE: ${{ vars.EDGER_CORPUS_STORE }}
 
@@ -33,6 +33,7 @@ jobs:
         with:
           aws-region: ${{ vars.AWS_REGION }}
           role-to-assume: ${{ vars.EDGER_AWS_ROLE_ARN }}
+          role-duration-seconds: 43200
 
       - run: npm ci
 
