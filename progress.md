@@ -10,7 +10,7 @@
 - The launch failure report is retained under `campaigns/20260718-v2-first/remote/failed-run-29708015701/`. Resource-aware launch-policy PR `#11` is merged and deployed.
 - Retry run `29708221490` proved the corrected OIDC launch path, then strict-stopped during runner bootstrap because Playwright's unsupported-OS fallback invoked unavailable `apt-get` on Amazon Linux 2023. The instance and root volume were deleted; no campaign stage ran.
 - Four bootstrap-failure evidence objects are retained under `campaigns/20260718-v2-first/remote/failed-run-29708221490/`.
-- A short-lived AL2023 arm64 smoke runner proved the direct Chromium RPM mapping and passed the real browser smoke. The production bootstrap/control-plane correction is not yet merged.
+- A short-lived AL2023 arm64 smoke runner proved the direct Chromium RPM mapping and passed the real browser smoke. Production bootstrap/control-plane PR `#12` is merged.
 - CloudFormation stack `edge-royale-edger-campaign` is `UPDATE_COMPLETE` in `ap-southeast-2`; all five GitHub variables are configured.
 - Live browser Edger remains the tracked v1 artifact. No v2 artifact was promoted or wired into gameplay.
 - Scaling and later campaign stages have not run. No production EC2 campaign runner has been launched.
@@ -42,15 +42,13 @@
 
 ## Known Gaps
 
-- The proven AL2023 browser bootstrap and main-dispatch control-plane checkout must be merged before retry; the runner will still execute only the immutable `f25a488` campaign checkout.
 - The scaling suite, offline phase, league smoke/production rollout, full live-v1 reference, and full evaluator have not run.
 - AWS CLI `s3 ls` returns exit 1 for an empty prefix. The implementation uses `s3api list-objects-v2`; `.keep` remains harmless in the active object prefix.
 
 ## Next Tasks
 
-1. Merge the proven AL2023 browser bootstrap and main-dispatch launcher control-plane correction.
-2. Retry the remote production campaign at campaign SHA `f25a4880e65f0eed6eda8c3ecc33d42d2ad6af33`; obey scaling, KL, league, throughput, and full-evaluation stop gates.
-3. If every gate passes, review the generated promotion PR manually; never auto-merge.
+1. Retry the remote production campaign at campaign SHA `f25a4880e65f0eed6eda8c3ecc33d42d2ad6af33`; obey scaling, KL, league, throughput, and full-evaluation stop gates.
+2. If every gate passes, review the generated promotion PR manually; never auto-merge.
 
 ## Validation
 
@@ -86,6 +84,7 @@
 - July 20, 2026: short-lived AL2023 arm64 bootstrap-smoke instance `i-03099022b62065bcb` installed the direct `dnf` dependency mapping and Playwright Chromium, then focused SSM command `5c720feb-7900-4a9e-9b25-c986ea9beb42` passed Node `v20.20.2`, Playwright `1.58.2`, Chromium launch, page assertions, and identity-free replay export. Evidence is retained under `campaigns/20260718-v2-first/preflight/browser-bootstrap-20260720/`; the instance terminated.
 - July 20, 2026: `node --test tests/edger-campaign-remote.test.js` -> 1 passed, 0 failed; JavaScript syntax, workflow YAML syntax, and `git diff --check` passed.
 - July 20, 2026: native Node 20 `npm test` after the bootstrap/control-plane correction -> 124 passed, 0 failed; `290641.099 ms`.
+- July 20, 2026: PR `#12` merged at `a924567`; exact campaign and bootstrap-smoke filters found zero non-terminal EC2 instances before retry.
 
 ## Risks / Notes
 
