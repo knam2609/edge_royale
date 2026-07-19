@@ -132,6 +132,11 @@
         background: linear-gradient(180deg, #f4d7ab, #d6a66c);
       }
 
+      #export-replay-btn {
+        grid-column: 1 / -1;
+        background: linear-gradient(180deg, #d8e5f4, #a8bdd8);
+      }
+
       #profile-summary {
         min-height: 42px;
         font-size: 11px;
@@ -188,6 +193,7 @@
             <div class="actions">
               <button id="start-btn">Start</button>
               <button id="reset-btn">Reset</button>
+              <button id="export-replay-btn" hidden>Export replay</button>
             </div>
             <div id="profile-summary" aria-live="polite"></div>
             <p class="hints">Keys: `1-4` select, `space` pause, `r` reset, `f` fullscreen.</p>

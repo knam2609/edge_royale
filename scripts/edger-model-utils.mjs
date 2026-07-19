@@ -89,7 +89,7 @@ export function createBootstrapPolicyModel({
       opponent_pool: ["edger_heuristic", "random", "aggressive", "defender"],
       self_play_pool: [],
       method: "bootstrap_heuristic_prior_export",
-      notes: "Deterministic bootstrap model; PPO/self-play trainer is tracked as follow-up work.",
+      notes: "Deterministic live-v1 bootstrap; cumulative v2 training remains shadow-only until promotion.",
     },
     evaluation: {
       heuristic_win_rate: null,

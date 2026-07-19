@@ -10,9 +10,11 @@ import {
   normalizeBotId,
   rollDecisionDelayTicks,
   selectBotAction,
+  selectBotDecision,
   selectEdgerAction,
   selectHeuristicAction,
 } from "../src/ai/botRuntime.js";
+import { createEdgerV2BootstrapModel } from "../src/ai/v2/policy.js";
 import { EDGER_POLICY_MODEL } from "../src/ai/generated/edgerPolicyCurrent.js";
 import { validateEdgerPolicyModel } from "../src/ai/mlPolicy.js";
 import { FIREBALL_CONFIG } from "../src/sim/config.js";
@@ -202,6 +204,21 @@ test("Edger acts every tick", () => {
 
   assert.equal(tiny, 1);
   assert.equal(huge, 1);
+});
+
+test("v2 Edger runtime honors the model-selected decision delay", () => {
+  const engine = makeEngine(["giant", "knight", "arrows", "fireball"]);
+  const legalActions = enumerateLegalCardActions({ engine, actor: "red" });
+  const decision = selectBotDecision({
+    botId: EDGER_BOT_ID,
+    engine,
+    actor: "red",
+    legalActions,
+    edgerModel: createEdgerV2BootstrapModel(),
+  });
+
+  assert.deepEqual(decision.action, { type: "PASS" });
+  assert.equal(decision.delayTicks, 200);
 });
 
 test("Edger ML deterministic tie-break chooses the stable action-sort key", () => {

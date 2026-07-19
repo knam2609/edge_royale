@@ -1,17 +1,18 @@
 import { getCard } from "../sim/cards.js";
 import { ARROWS_CONFIG, FIREBALL_CONFIG, MATCH_CONFIG, TICK_RATE, getMatchPhase } from "../sim/config.js";
-import { createEngine } from "../sim/engine.js";
-import { createTower, getTowerFootprintSize } from "../sim/entities.js";
-import { ROYALE_LANE_X, ROYALE_TOWER_X, ROYALE_TOWER_Y, createRoyaleArena, snapPositionToGrid } from "../sim/map.js";
+import { getTowerFootprintSize } from "../sim/entities.js";
+import { ROYALE_LANE_X, createRoyaleArena, snapPositionToGrid } from "../sim/map.js";
 import { getTroopDeployRegions, getTroopPlacementStatus } from "../sim/placement.js";
+import {
+  PRODUCTION_TOWER_LAYOUT,
+  createProductionEngine,
+} from "../sim/productionMatch.js";
 import { createRng } from "../sim/random.js";
-import { getTowerStats } from "../sim/stats.js";
 import {
   EDGER_BOT_ID,
   enumerateLegalCardActions,
   getBotConfig,
-  rollDecisionDelayTicks,
-  selectBotAction,
+  selectBotDecision,
 } from "../ai/botRuntime.js";
 import {
   createDefaultProfile,
@@ -32,6 +33,7 @@ const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 const startBtn = document.getElementById("start-btn");
 const resetBtn = document.getElementById("reset-btn");
+const exportReplayBtn = document.getElementById("export-replay-btn");
 const profileSummary = document.getElementById("profile-summary");
 const setupOverlay = document.getElementById("setup-overlay");
 const setupTitle = document.getElementById("setup-title");
@@ -80,64 +82,7 @@ const CARD_MONOGRAM = Object.freeze({
 
 const BRIDGE_TILE_SPAN = 3;
 
-const TOWER_LAYOUT = Object.freeze({
-  blue: Object.freeze([
-    Object.freeze({
-      id: "blue_crown_left",
-      team: "blue",
-      tower_role: "crown",
-      x: ROYALE_TOWER_X.left,
-      y: ROYALE_TOWER_Y.blue.crown,
-      hp: getTowerStats("crown").hp,
-    }),
-    Object.freeze({
-      id: "blue_crown_right",
-      team: "blue",
-      tower_role: "crown",
-      x: ROYALE_TOWER_X.right,
-      y: ROYALE_TOWER_Y.blue.crown,
-      hp: getTowerStats("crown").hp,
-    }),
-    Object.freeze({
-      id: "blue_king",
-      team: "blue",
-      tower_role: "king",
-      x: ROYALE_TOWER_X.center,
-      y: ROYALE_TOWER_Y.blue.king,
-      hp: getTowerStats("king").hp,
-      is_active: false,
-    }),
-  ]),
-  red: Object.freeze([
-    Object.freeze({
-      id: "red_crown_left",
-      team: "red",
-      tower_role: "crown",
-      x: ROYALE_TOWER_X.left,
-      y: ROYALE_TOWER_Y.red.crown,
-      hp: getTowerStats("crown").hp,
-    }),
-    Object.freeze({
-      id: "red_crown_right",
-      team: "red",
-      tower_role: "crown",
-      x: ROYALE_TOWER_X.right,
-      y: ROYALE_TOWER_Y.red.crown,
-      hp: getTowerStats("crown").hp,
-    }),
-    Object.freeze({
-      id: "red_king",
-      team: "red",
-      tower_role: "king",
-      x: ROYALE_TOWER_X.center,
-      y: ROYALE_TOWER_Y.red.king,
-      hp: getTowerStats("king").hp,
-      is_active: false,
-    }),
-  ]),
-});
-
-const ALL_TOWER_LAYOUT = Object.freeze([...TOWER_LAYOUT.blue, ...TOWER_LAYOUT.red]);
+const ALL_TOWER_LAYOUT = PRODUCTION_TOWER_LAYOUT;
 
 const ATTACK_ANIMATION_TICKS = Object.freeze({
   giant: 7,
@@ -245,6 +190,7 @@ function syncSetupOverlay() {
   const showOverlay = appState.mode !== "playing";
   setupOverlay.hidden = !showOverlay;
   setupOverlay.setAttribute("aria-hidden", showOverlay ? "false" : "true");
+  exportReplayBtn.hidden = appState.mode !== "game_over";
   setupTitle.textContent = appState.mode === "game_over" ? "Battle Finished" : "Edge Royale";
   setupSubtitle.textContent =
     appState.mode === "game_over"
@@ -254,6 +200,35 @@ function syncSetupOverlay() {
 
 function persistProfile() {
   saveStoredJson(PROFILE_STORAGE_KEY, appState.profile);
+}
+
+function exportManualReplay() {
+  if (appState.mode !== "game_over" || !appState.engine?.getMatchResult()) {
+    return;
+  }
+  const replay = JSON.parse(appState.engine.exportReplay());
+  const payload = {
+    schema_version: "edger_manual_replay_export_v1",
+    seed: appState.engine.state.seed,
+    replay,
+    result: appState.engine.getMatchResult(),
+    final_state_hash: appState.engine.getStateHash(),
+    source: {
+      kind: "manual_opt_in",
+      human_action_actors: ["blue"],
+    },
+  };
+  const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], {
+    type: "application/json",
+  });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `edge-royale-replay-${payload.seed}-${payload.final_state_hash}.json`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
 }
 
 function hydrateAppState() {
@@ -696,19 +671,10 @@ function findHandSlotHit(x, y) {
   return findHandSlotHitForLayout(getBattleLayout(), { x, y });
 }
 
-function createInitialEntities() {
-  return ALL_TOWER_LAYOUT.map((tower) => createTower(tower));
-}
-
 function resetGame() {
   const profile = normalizeProfile(appState.profile);
   const seedBase = 20260306 + profile.total_matches * 37 + appState.opponentBotId.length * 13;
-  appState.engine = createEngine({
-    seed: seedBase,
-    arena,
-    fireballConfig: FIREBALL_CONFIG,
-    initialEntities: createInitialEntities(),
-  });
+  appState.engine = createProductionEngine({ seed: seedBase });
 
   appState.botRng = createRng(seedBase ^ 0x5f3759df);
   appState.botNextDecisionTick = 1;
@@ -812,19 +778,15 @@ function buildBotActions(tick) {
     engine: appState.engine,
     actor: "red",
   });
-  const decisionDelay = rollDecisionDelayTicks({
-    botId: appState.opponentBotId,
-    rng: appState.botRng,
-  });
-  appState.botNextDecisionTick = tick + decisionDelay;
-
-  const selected = selectBotAction({
+  const decision = selectBotDecision({
     botId: appState.opponentBotId,
     engine: appState.engine,
     actor: "red",
     legalActions,
     rng: appState.botRng,
   });
+  appState.botNextDecisionTick = tick + decision.delayTicks;
+  const selected = decision.action;
 
   if (!selected || selected.type !== "PLAY_CARD") {
     return [];
@@ -2838,6 +2800,10 @@ startBtn.addEventListener("click", () => {
 
 resetBtn.addEventListener("click", () => {
   resetGame();
+});
+
+exportReplayBtn.addEventListener("click", () => {
+  exportManualReplay();
 });
 
 window.addEventListener("keydown", (event) => {

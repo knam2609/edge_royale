@@ -1,25 +1,22 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createRng } from "../src/sim/random.js";
 import { EDGER_POLICY_MODEL } from "../src/ai/generated/edgerPolicyCurrent.js";
-import { sampleMaskedActionIndex } from "../scripts/edger-training-core.mjs";
 import {
   checkPromotionReport,
   evaluateScenarioLeague,
   evaluateTiming,
   wilsonLowerBound,
 } from "../scripts/edger-evaluation-core.mjs";
+import {
+  createEdgerV2BootstrapModel,
+  getEdgerV2ActorParameterCount,
+} from "../src/ai/v2/policy.js";
 
-test("masked policy sampling is deterministic for a seeded RNG", () => {
-  const first = createRng(1234);
-  const second = createRng(1234);
-  const logits = [-2, 0, 4, 1];
-
-  assert.deepEqual(
-    sampleMaskedActionIndex({ logits, rng: first, temperature: 0.75 }),
-    sampleMaskedActionIndex({ logits, rng: second, temperature: 0.75 }),
-  );
+test("v2 shadow actor stays below the deployment parameter cap", () => {
+  const model = createEdgerV2BootstrapModel();
+  assert.equal(model.schema_version, "edger_policy_model_v2");
+  assert.ok(getEdgerV2ActorParameterCount(model) < 50_000);
 });
 
 test("Wilson lower bound reflects confidence, not only point win rate", () => {

@@ -1,0 +1,57 @@
+name: Edger Corpus Health
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 18 * * *"
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: edger-corpus-health
+  cancel-in-progress: false
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      EDGER_CORPUS_STORE: ${{ vars.EDGER_CORPUS_STORE || 'artifacts/edger-training/corpus' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - run: npm ci
+
+      - name: Deterministic production canary
+        run: npm run edger:canary -- --seed 20260718 --canary-ticks 80
+
+      - name: Build compatible immutable manifest
+        run: npm run edger:corpus:manifest -- --store "$EDGER_CORPUS_STORE" --out artifacts/edger-training/health/manifest.json
+
+      - name: Validate corpus health and campaign trigger
+        run: npm run edger:corpus:health -- --manifest artifacts/edger-training/health/manifest.json --report artifacts/edger-training/health/report.json
+
+      - name: Upload health report
+        uses: actions/upload-artifact@v4
+        with:
+          name: edger-corpus-health-${{ github.run_id }}
+          path: artifacts/edger-training/health
+          retention-days: 30
+
+      - name: Dispatch a cumulative campaign when configured and due
+        if: vars.EDGER_AUTO_CAMPAIGNS == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          should_trigger="$(node -e "const r=require('./artifacts/edger-training/health/report.json'); process.stdout.write(String(Boolean(r.campaign_trigger.should_trigger)))")"
+          if [ "$should_trigger" = "true" ]; then
+            gh workflow run edger-campaign.yml
+          fi

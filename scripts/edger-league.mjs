@@ -1,0 +1,362 @@
+#!/usr/bin/env node
+
+import fs from "node:fs";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { Worker } from "node:worker_threads";
+
+import { HEURISTIC_BOT_ID } from "../src/ai/botRuntime.js";
+import { validateEdgerV2PolicyModel } from "../src/ai/v2/policy.js";
+import { createRng } from "../src/sim/random.js";
+import {
+  DEFAULT_CORPUS_STORE,
+  buildDatasetManifest,
+  canonicalJson,
+  writeDatasetManifest,
+} from "./edger-corpus-core.mjs";
+import { spawnNativePython } from "./python-runtime.mjs";
+
+const LEAGUE_SCHEMA_VERSION = "edger_snapshot_league_v1";
+
+function parseArgs(argv) {
+  const parsed = {
+    scalingReport: null,
+    model: null,
+    league: null,
+    store: process.env.EDGER_CORPUS_STORE ?? DEFAULT_CORPUS_STORE,
+    manifestOut: "artifacts/edger-training/manifests/edger_league_manifest.json",
+    reportOut: null,
+    matches: 32,
+    workers: 16,
+    seed: 20260718,
+    temperature: 1,
+    datasetOut: null,
+    checkpoint: null,
+    outCheckpoint: null,
+    epochs: 1,
+    batchSize: 32,
+  };
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === "--scaling-report" && argv[index + 1]) {
+      parsed.scalingReport = argv[++index];
+    } else if (arg === "--model" && argv[index + 1]) {
+      parsed.model = argv[++index];
+    } else if (arg === "--league" && argv[index + 1]) {
+      parsed.league = argv[++index];
+    } else if (arg === "--store" && argv[index + 1]) {
+      parsed.store = argv[++index];
+    } else if (arg === "--manifest-out" && argv[index + 1]) {
+      parsed.manifestOut = argv[++index];
+    } else if (arg === "--report-out" && argv[index + 1]) {
+      parsed.reportOut = argv[++index];
+    } else if (arg === "--matches" && argv[index + 1]) {
+      parsed.matches = Number.parseInt(argv[++index], 10);
+    } else if (arg === "--workers" && argv[index + 1]) {
+      parsed.workers = Number.parseInt(argv[++index], 10);
+    } else if (arg === "--seed" && argv[index + 1]) {
+      parsed.seed = Number.parseInt(argv[++index], 10);
+    } else if (arg === "--temperature" && argv[index + 1]) {
+      parsed.temperature = Number.parseFloat(argv[++index]);
+    } else if (arg === "--dataset-out" && argv[index + 1]) {
+      parsed.datasetOut = argv[++index];
+    } else if (arg === "--checkpoint" && argv[index + 1]) {
+      parsed.checkpoint = argv[++index];
+    } else if (arg === "--out-checkpoint" && argv[index + 1]) {
+      parsed.outCheckpoint = argv[++index];
+    } else if (arg === "--epochs" && argv[index + 1]) {
+      parsed.epochs = Number.parseInt(argv[++index], 10);
+    } else if (arg === "--batch-size" && argv[index + 1]) {
+      parsed.batchSize = Number.parseInt(argv[++index], 10);
+    }
+  }
+  if (!parsed.scalingReport || !parsed.model) {
+    throw new Error("--scaling-report and --model are required");
+  }
+  if (!Number.isInteger(parsed.matches) || parsed.matches < 2 || parsed.matches % 2 !== 0) {
+    throw new Error("--matches must be a positive even integer");
+  }
+  if (!Number.isInteger(parsed.workers) || parsed.workers < 1 || parsed.workers > 32) {
+    throw new Error("--workers must be between 1 and 32 (production campaigns use 16-32)");
+  }
+  return parsed;
+}
+
+function validateScalingReport(filePath) {
+  const report = JSON.parse(fs.readFileSync(filePath, "utf8"));
+  const required = [
+    "passed",
+    "full_improves_held_out_joint_action_loss",
+    "full_non_regressing_frozen_league_score",
+  ];
+  const failures = required.filter((key) => report[key] !== true);
+  if (failures.length > 0) {
+    throw new Error(
+      `league training is gated by the scaling experiment: ${failures.join(", ")}`,
+    );
+  }
+  return report;
+}
+
+function normalizeSnapshot(snapshot, fallbackPolicyId) {
+  if (!snapshot?.model_path) {
+    throw new Error(`league snapshot ${fallbackPolicyId} requires model_path`);
+  }
+  const modelPath = path.resolve(snapshot.model_path);
+  const model = validateEdgerV2PolicyModel(
+    JSON.parse(fs.readFileSync(modelPath, "utf8")),
+  );
+  return {
+    kind: "model",
+    policy_id: snapshot.policy_id ?? model.model_id ?? fallbackPolicyId,
+    checkpoint_id: snapshot.checkpoint_id ?? model.training?.checkpoint_id ?? null,
+    model_path: modelPath,
+    league_rating: Number.isFinite(snapshot.league_rating)
+      ? snapshot.league_rating
+      : null,
+    score: Number.isFinite(snapshot.score) ? snapshot.score : 0.5,
+  };
+}
+
+function loadLeague(args, mainModel) {
+  if (!args.league) {
+    return {
+      schema_version: LEAGUE_SCHEMA_VERSION,
+      champion: normalizeSnapshot({
+        model_path: args.model,
+        policy_id: mainModel.model_id,
+        checkpoint_id: mainModel.training?.checkpoint_id,
+      }, "current_champion"),
+      historical: [],
+      contenders: [],
+    };
+  }
+  const raw = JSON.parse(fs.readFileSync(args.league, "utf8"));
+  if (raw.schema_version !== LEAGUE_SCHEMA_VERSION) {
+    throw new Error(`league schema_version must be ${LEAGUE_SCHEMA_VERSION}`);
+  }
+  if ((raw.historical ?? []).length > 7) {
+    throw new Error("snapshot league supports at most seven historical promoted snapshots");
+  }
+  if ((raw.contenders ?? []).length > 4) {
+    throw new Error("snapshot league supports at most four non-dominated contenders");
+  }
+  return {
+    schema_version: LEAGUE_SCHEMA_VERSION,
+    champion: normalizeSnapshot(raw.champion, "current_champion"),
+    historical: (raw.historical ?? []).map((snapshot, index) =>
+      normalizeSnapshot(snapshot, `historical_${index}`)),
+    contenders: (raw.contenders ?? []).map((snapshot, index) =>
+      normalizeSnapshot(snapshot, `contender_${index}`)),
+  };
+}
+
+function weightedChoice(items, weights, rng) {
+  const total = weights.reduce((sum, weight) => sum + weight, 0);
+  let roll = rng() * total;
+  for (let index = 0; index < items.length; index += 1) {
+    roll -= weights[index];
+    if (roll <= 0) {
+      return items[index];
+    }
+  }
+  return items.at(-1);
+}
+
+function selectOpponent(league, rng) {
+  const allocation = rng();
+  if (allocation < 0.4) {
+    return { bucket: "champion", opponent: league.champion };
+  }
+  if (allocation < 0.6) {
+    return {
+      bucket: "heuristic",
+      opponent: {
+        kind: "bot",
+        policy_id: HEURISTIC_BOT_ID,
+        checkpoint_id: null,
+        league_rating: null,
+      },
+    };
+  }
+  if (allocation < 0.8) {
+    const pool = league.historical.length > 0 ? league.historical : [league.champion];
+    return {
+      bucket: "historical_uniform",
+      opponent: pool[Math.floor(rng() * pool.length)],
+    };
+  }
+  const pool = [...league.historical, ...league.contenders];
+  const candidates = pool.length > 0 ? pool : [league.champion];
+  const weights = candidates.map(
+    (snapshot) => (1 - snapshot.score) ** 2 + 0.05,
+  );
+  return {
+    bucket: "pfsp",
+    opponent: weightedChoice(candidates, weights, rng),
+  };
+}
+
+function makeMatchSpecs({ matches, seed, league }) {
+  const rng = createRng(seed);
+  const specs = [];
+  for (let pairIndex = 0; pairIndex < matches / 2; pairIndex += 1) {
+    const matchSeed = 1 + Math.floor(rng() * 2_000_000_000);
+    const selection = selectOpponent(league, rng);
+    for (const mainActor of ["blue", "red"]) {
+      specs.push({
+        match_index: specs.length,
+        pair_index: pairIndex,
+        seed: matchSeed,
+        main_actor: mainActor,
+        allocation_bucket: selection.bucket,
+        opponent: selection.opponent,
+      });
+    }
+  }
+  return specs;
+}
+
+function runWorker(workerData) {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(
+      new URL("./edger-league-worker.mjs", import.meta.url),
+      { workerData },
+    );
+    worker.once("message", (message) => {
+      if (message.ok) {
+        resolve(message.results);
+      } else {
+        reject(new Error(message.error));
+      }
+    });
+    worker.once("error", reject);
+    worker.once("exit", (code) => {
+      if (code !== 0) {
+        reject(new Error(`league worker exited with code ${code}`));
+      }
+    });
+  });
+}
+
+async function collectLeagueEpisodes({ args, mainModel, league, specs }) {
+  const partitions = Array.from(
+    { length: Math.min(args.workers, specs.length) },
+    () => [],
+  );
+  specs.forEach((spec, index) => {
+    partitions[index % partitions.length].push(spec);
+  });
+  const workerData = {
+    mainModelPath: path.resolve(args.model),
+    mainPolicyId: mainModel.model_id,
+    mainCheckpointId: mainModel.training?.checkpoint_id ?? null,
+    mainLeagueRating: mainModel.training?.league_rating ?? null,
+    temperature: args.temperature,
+    store: args.store,
+  };
+  const results = (
+    await Promise.all(
+      partitions.map((partition) =>
+        runWorker({ ...workerData, specs: partition })),
+    )
+  ).flat();
+  return results.sort((left, right) => left.match_index - right.match_index);
+}
+
+function runVtraceIfRequested(args) {
+  const requested = [args.datasetOut, args.checkpoint, args.outCheckpoint];
+  if (requested.every((value) => !value)) {
+    return null;
+  }
+  if (requested.some((value) => !value)) {
+    throw new Error(
+      "--dataset-out, --checkpoint, and --out-checkpoint are required together",
+    );
+  }
+  const dataset = new URL("./edger-dataset.mjs", import.meta.url).pathname;
+  const nodeResult = spawnSync(process.execPath, [
+    dataset,
+    "--manifest",
+    args.manifestOut,
+    "--out",
+    args.datasetOut,
+    "--max-player-fraction",
+    "0",
+  ], { stdio: "inherit" });
+  if (nodeResult.status !== 0) {
+    throw new Error(`league dataset preparation failed with exit ${nodeResult.status}`);
+  }
+  const trainResult = spawnNativePython([
+    "scripts/edger-v2-training.py",
+    "vtrace",
+    "--dataset",
+    args.datasetOut,
+    "--checkpoint",
+    args.checkpoint,
+    "--out",
+    args.outCheckpoint,
+    "--epochs",
+    String(args.epochs),
+    "--batch-size",
+    String(args.batchSize),
+    "--seed",
+    String(args.seed),
+  ], { stdio: "inherit" });
+  if (trainResult.status !== 0) {
+    throw new Error(`V-trace learner failed with exit ${trainResult.status}`);
+  }
+  return {
+    dataset: path.resolve(args.datasetOut),
+    checkpoint: path.resolve(args.outCheckpoint),
+  };
+}
+
+const args = parseArgs(process.argv.slice(2));
+validateScalingReport(args.scalingReport);
+const mainModel = validateEdgerV2PolicyModel(
+  JSON.parse(fs.readFileSync(args.model, "utf8")),
+);
+const league = loadLeague(args, mainModel);
+const specs = makeMatchSpecs({
+  matches: args.matches,
+  seed: args.seed,
+  league,
+});
+
+try {
+  const results = await collectLeagueEpisodes({
+    args,
+    mainModel,
+    league,
+    specs,
+  });
+  const manifest = buildDatasetManifest({ store: args.store });
+  writeDatasetManifest(args.manifestOut, manifest);
+  const training = runVtraceIfRequested(args);
+  const report = {
+    schema_version: "edger_league_campaign_report_v1",
+    seed: args.seed,
+    workers: args.workers,
+    production_worker_range_met: args.workers >= 16 && args.workers <= 32,
+    matches: results.length,
+    paired_seeds: results.length / 2,
+    main_model_id: mainModel.model_id,
+    allocation: specs.reduce((counts, spec) => {
+      counts[spec.allocation_bucket] = (counts[spec.allocation_bucket] ?? 0) + 1;
+      return counts;
+    }, {}),
+    results,
+    manifest: path.resolve(args.manifestOut),
+    manifest_hash: manifest.manifest_hash,
+    training,
+  };
+  if (args.reportOut) {
+    fs.mkdirSync(path.dirname(path.resolve(args.reportOut)), { recursive: true });
+    fs.writeFileSync(args.reportOut, canonicalJson(report));
+  }
+  console.log(canonicalJson(report).trimEnd());
+} catch (error) {
+  console.error(error instanceof Error ? error.stack : String(error));
+  process.exitCode = 1;
+}
