@@ -30,7 +30,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.campaign_sha || github.sha }}
+          ref: ${{ github.sha }}
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -45,7 +46,8 @@ jobs:
 
       - name: Require immutable production configuration
         run: |
-          test "$(git rev-parse HEAD)" = "$CAMPAIGN_GIT_SHA"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git merge-base --is-ancestor "$CAMPAIGN_GIT_SHA" "$GITHUB_SHA"
           test "$AWS_REGION" = "ap-southeast-2"
           case "$EDGER_CORPUS_STORE" in s3://*) ;; *) exit 1 ;; esac
           case "$EDGER_CAMPAIGN_INPUT_URI" in s3://*) ;; *) exit 1 ;; esac

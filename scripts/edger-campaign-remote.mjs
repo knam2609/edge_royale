@@ -1,12 +1,41 @@
 #!/usr/bin/env node
 
 import { execFileSync } from "node:child_process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const DEFAULT_REGION = process.env.AWS_REGION ?? "ap-southeast-2";
 const DEFAULT_STACK = "edge-royale-edger-campaign";
 const DEFAULT_CAMPAIGN_INPUT =
   process.env.EDGER_CAMPAIGN_INPUT_URI ??
   "s3://edge-royale-edger-904869824856-ap-southeast-2/campaigns/20260718-v2-first/campaign-input";
+const PLAYWRIGHT_AL2023_PACKAGES = [
+  "alsa-lib",
+  "at-spi2-atk",
+  "atk",
+  "at-spi2-core",
+  "cairo",
+  "cups-libs",
+  "dbus-libs",
+  "libdrm",
+  "mesa-libgbm",
+  "glib2",
+  "nspr",
+  "nss",
+  "pango",
+  "libX11",
+  "libxcb",
+  "libXcomposite",
+  "libXdamage",
+  "libXext",
+  "libXfixes",
+  "libxkbcommon",
+  "libXrandr",
+  "fontconfig",
+  "freetype",
+  "liberation-fonts",
+  "google-noto-emoji-color-fonts",
+];
 
 function parseArgs(argv) {
   const parsed = {
@@ -113,13 +142,17 @@ async function waitForSsm(instanceId, args) {
   throw new Error(`instance ${instanceId} did not become SSM-online within 15 minutes`);
 }
 
-function bootstrapCommands(args) {
+export function bootstrapCommands(args) {
   const quotedCampaign = JSON.stringify(args.campaignUri);
   const quotedCorpus = JSON.stringify(args.corpusStore);
   const quotedSha = JSON.stringify(args.gitSha);
   return [
     "set -euo pipefail",
-    "dnf install -y git jq nodejs20 nodejs20-npm python3.11 python3.11-pip time",
+    [
+      "dnf install -y",
+      "git jq nodejs20 nodejs20-npm python3.11 python3.11-pip time",
+      ...PLAYWRIGHT_AL2023_PACKAGES,
+    ].join(" "),
     "alternatives --set node /usr/bin/node-20 || true",
     "alternatives --set npm /usr/bin/npm-20 || true",
     "rm -rf /opt/edge_royale",
@@ -132,7 +165,7 @@ function bootstrapCommands(args) {
     "source /opt/edge_royale/.venv/bin/activate",
     "pip install --upgrade pip",
     "pip install -r requirements-edger-training.txt",
-    "npx playwright install --with-deps chromium",
+    "npx playwright install chromium",
     "mkdir -p /var/log/edge-royale",
     "set +e",
     [
@@ -290,18 +323,24 @@ function terminate(args) {
   }, null, 2));
 }
 
-const args = parseArgs(process.argv.slice(2));
-try {
-  if (args.command === "launch") {
-    await launch(args);
-  } else if (args.command === "status") {
-    status(args);
-  } else if (args.command === "terminate") {
-    terminate(args);
-  } else {
-    throw new Error("command must be launch, status, or terminate");
+const isMain =
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (isMain) {
+  const args = parseArgs(process.argv.slice(2));
+  try {
+    if (args.command === "launch") {
+      await launch(args);
+    } else if (args.command === "status") {
+      status(args);
+    } else if (args.command === "terminate") {
+      terminate(args);
+    } else {
+      throw new Error("command must be launch, status, or terminate");
+    }
+  } catch (error) {
+    console.error(error instanceof Error ? error.stack : String(error));
+    process.exitCode = 1;
   }
-} catch (error) {
-  console.error(error instanceof Error ? error.stack : String(error));
-  process.exitCode = 1;
 }

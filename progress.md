@@ -8,6 +8,9 @@
 - Recovery run `29695924800` passed under 12-hour OIDC credentials. Frozen manifest `ca8435e58fd500f6045727db283de32ac906b3584b187abb84a5aa569867939c` and its passed validation/aggregate reports are retained under `campaigns/20260718-v2-first/corpus/`.
 - Remote campaign run `29708015701` strict-stopped before instance creation because the GitHub role applied launch-time instance/volume tag conditions to EC2's separately evaluated network-interface resource. Promotion was skipped and live v1 was unchanged.
 - The launch failure report is retained under `campaigns/20260718-v2-first/remote/failed-run-29708015701/`. Resource-aware launch-policy PR `#11` is merged and deployed.
+- Retry run `29708221490` proved the corrected OIDC launch path, then strict-stopped during runner bootstrap because Playwright's unsupported-OS fallback invoked unavailable `apt-get` on Amazon Linux 2023. The instance and root volume were deleted; no campaign stage ran.
+- Four bootstrap-failure evidence objects are retained under `campaigns/20260718-v2-first/remote/failed-run-29708221490/`.
+- A short-lived AL2023 arm64 smoke runner proved the direct Chromium RPM mapping and passed the real browser smoke. The production bootstrap/control-plane correction is not yet merged.
 - CloudFormation stack `edge-royale-edger-campaign` is `UPDATE_COMPLETE` in `ap-southeast-2`; all five GitHub variables are configured.
 - Live browser Edger remains the tracked v1 artifact. No v2 artifact was promoted or wired into gameplay.
 - Scaling and later campaign stages have not run. No production EC2 campaign runner has been launched.
@@ -31,19 +34,23 @@
 - External test/browser reports are campaign-SHA-bound.
 - Candidate parity now compares the actual masked argmax from both runtimes; forced fixture indices are used only to select conditioned placement/delay logits.
 - CloudFormation defines the retained encrypted/versioned private bucket, main-only GitHub OIDC role, SSM instance role/profile, and egress-only VPC. The OIDC role can launch only the intended Amazon-owned-image, stack-network, tagged `c7g.4xlarge`, IMDSv2, encrypted-gp3 resource set.
+- The real OIDC launch produced the intended `c7g.4xlarge`, Amazon Linux 2023 arm64, 200 GiB encrypted gp3, IMDSv2-required, keyless, ingress-free, SSM-online runner.
+- On Amazon Linux 2023, direct `dnf` Chromium runtime packages plus `npx playwright install chromium` pass the full Edger browser smoke without Playwright's unsupported-distribution dependency installer.
 - Remote launch/status/terminate provisions an SSM-only `c7g.4xlarge` with encrypted 200 GiB gp3, no key/inbound ports, instance-shutdown termination, and a 24-hour guard.
 - Remote stages are immutable, resumable only at the same SHA, resource-gated below 28 GiB RSS and 160 GiB disk, and preserve failure evidence. Promotion remains an unmerged checksum-bound PR.
 - AWS workflows request sessions long enough for their declared exhaustive jobs, and corpus runs preserve run-specific partial evidence while publishing canonical frozen evidence only on success.
 
 ## Known Gaps
 
+- The proven AL2023 browser bootstrap and main-dispatch control-plane checkout must be merged before retry; the runner will still execute only the immutable `f25a488` campaign checkout.
 - The scaling suite, offline phase, league smoke/production rollout, full live-v1 reference, and full evaluator have not run.
 - AWS CLI `s3 ls` returns exit 1 for an empty prefix. The implementation uses `s3api list-objects-v2`; `.keep` remains harmless in the active object prefix.
 
 ## Next Tasks
 
-1. Retry the remote production campaign at campaign SHA `f25a4880e65f0eed6eda8c3ecc33d42d2ad6af33`; obey scaling, KL, league, throughput, and full-evaluation stop gates.
-2. If every gate passes, review the generated promotion PR manually; never auto-merge.
+1. Merge the proven AL2023 browser bootstrap and main-dispatch launcher control-plane correction.
+2. Retry the remote production campaign at campaign SHA `f25a4880e65f0eed6eda8c3ecc33d42d2ad6af33`; obey scaling, KL, league, throughput, and full-evaluation stop gates.
+3. If every gate passes, review the generated promotion PR manually; never auto-merge.
 
 ## Validation
 
@@ -73,6 +80,12 @@
 - July 20, 2026: failure report SHA-256 `21a0de4979a492056c26362fd4861b492e496eebf4d3c2d3a4ade9d120c1d5e5` uploaded with AES256 encryption and version `UJQYr..Kgj6WrgeQhD9gYfwKsW8pDCdv`.
 - July 20, 2026: resource-aware launch-policy correction -> CloudFormation validation passed with `CAPABILITY_NAMED_IAM`; YAML syntax and `git diff --check` passed. `cfn-lint` was unavailable.
 - July 20, 2026: PR `#11` merged at `c3270e3`; stack update completed at `2026-07-19T23:36:15Z`. IAM simulation allowed the exact Amazon-owned AMI, stack subnet/security group, subnet-bound network interface, tagged `c7g.4xlarge` IMDSv2 instance, and tagged encrypted gp3 volume; wrong instance type, wrong subnet, non-Amazon AMI, and unencrypted volume each returned `implicitDeny`.
+- July 20, 2026: run `29708221490` launched `i-0b26a7a0600c575a2`; SSM was online, security-group ingress was `[]`, no key pair was attached, IMDSv2 was required, the root volume was encrypted 200 GiB gp3 with delete-on-termination, and the instance-shutdown behavior was `terminate`.
+- July 20, 2026: bootstrap command `7bbd0188-097e-42a5-a9bd-2721184bf2a6` failed before campaign-log creation with `sh: line 1: apt-get: command not found` from Playwright's Ubuntu fallback. Run `29708221490` failed, promotion was skipped, the instance reached `terminated`, the root volume no longer exists, and exact campaign filters returned zero non-terminal instances.
+- July 20, 2026: final bootstrap failure-report SHA-256 `31bb442bb4cbb97c43d2b2c64c0970335e128b02e12c3236ca03528e916adf99`; S3 version `XDL7pAUQqagX1kGa6ONKzSaACen1WbQd`. Raw SSM invocation, EC2 instance, and EBS volume records are retained beside it.
+- July 20, 2026: short-lived AL2023 arm64 bootstrap-smoke instance `i-03099022b62065bcb` installed the direct `dnf` dependency mapping and Playwright Chromium, then focused SSM command `5c720feb-7900-4a9e-9b25-c986ea9beb42` passed Node `v20.20.2`, Playwright `1.58.2`, Chromium launch, page assertions, and identity-free replay export. Evidence is retained under `campaigns/20260718-v2-first/preflight/browser-bootstrap-20260720/`; the instance terminated.
+- July 20, 2026: `node --test tests/edger-campaign-remote.test.js` -> 1 passed, 0 failed; JavaScript syntax, workflow YAML syntax, and `git diff --check` passed.
+- July 20, 2026: native Node 20 `npm test` after the bootstrap/control-plane correction -> 124 passed, 0 failed; `290641.099 ms`.
 
 ## Risks / Notes
 
@@ -83,4 +96,6 @@
 - The first pilot's parity-tool defect invalidated `b5ac17e`; its 138 archived objects remain immutable and do not enter the `f25a488` lineage.
 - The collected 10,000-game `f25a488` lineage is retained and resumable. Run `29692403151` was a control-plane credential-duration failure, not an accepted corpus freeze.
 - Run `29708015701` was a control-plane IAM failure before EC2 created any instance or campaign stage. Its evidence is immutable; it does not alter the accepted corpus or campaign SHA.
+- Run `29708221490` was a control-plane bootstrap portability failure after infrastructure creation but before the campaign process. Its evidence is immutable; it does not alter the accepted corpus or campaign SHA.
+- The workflow dispatch commit supplies only launcher/bootstrap control code and must contain `f25a488` in its ancestry; the runner clone and every stage remain bound to `f25a488`.
 - Any failed gate must retain evidence, terminate the runner, and leave live v1 untouched.
