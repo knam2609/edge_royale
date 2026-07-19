@@ -15,6 +15,7 @@ import {
   validateEdgerV2PolicyModel,
 } from "../src/ai/v2/policy.js";
 import { createProductionEngine } from "../src/sim/productionMatch.js";
+import { checkCandidateParity } from "../scripts/edger-v2-evaluation-core.mjs";
 import { spawnNativePython } from "../scripts/python-runtime.mjs";
 
 function addSparseNonzeroWeights(model) {
@@ -125,5 +126,23 @@ test("PyTorch and generated-JS v2 logits agree on a golden fixture", { timeout: 
       js.selected.delay_index,
     ],
   );
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("candidate parity compares computed argmax when the forced fixture card is not best", {
+  timeout: 30_000,
+}, () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "edger-v2-candidate-parity-"));
+  const model = createEdgerV2BootstrapModel();
+  model.weights.card_head.bias[0] = -10;
+  model.weights.card_head.bias[1] = 10;
+  const modelPath = path.join(root, "model.json");
+  fs.writeFileSync(modelPath, JSON.stringify(model));
+
+  const parity = checkCandidateParity(modelPath, validateEdgerV2PolicyModel(model));
+
+  assert.equal(parity.passed, true, JSON.stringify(parity));
+  assert.equal(parity.js_argmax.card, 1);
+  assert.equal(parity.pytorch_argmax.card, 1);
   fs.rmSync(root, { recursive: true, force: true });
 });
