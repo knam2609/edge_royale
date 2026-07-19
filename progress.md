@@ -6,9 +6,11 @@
 - All ten production shards at `f25a488` passed strict aggregation. Workflow run `29692403151` then stopped during manifest construction when its default one-hour OIDC session expired; no frozen manifest was published.
 - The failed run's aggregate, failure report, and ten shard reports are retained under `campaigns/20260718-v2-first/corpus/failed-run-29692403151/`.
 - Recovery run `29695924800` passed under 12-hour OIDC credentials. Frozen manifest `ca8435e58fd500f6045727db283de32ac906b3584b187abb84a5aa569867939c` and its passed validation/aggregate reports are retained under `campaigns/20260718-v2-first/corpus/`.
+- Remote campaign run `29708015701` strict-stopped before instance creation because the GitHub role applied launch-time instance/volume tag conditions to EC2's separately evaluated network-interface resource. Promotion was skipped and live v1 was unchanged.
+- The launch failure report is retained under `campaigns/20260718-v2-first/remote/failed-run-29708015701/`. A resource-aware least-privilege policy correction validates locally but is not yet merged or deployed.
 - CloudFormation stack `edge-royale-edger-campaign` is `UPDATE_COMPLETE` in `ap-southeast-2`; all five GitHub variables are configured.
 - Live browser Edger remains the tracked v1 artifact. No v2 artifact was promoted or wired into gameplay.
-- Scaling and later campaign stages have not run. No EC2 campaign runner was launched.
+- Scaling and later campaign stages have not run. No production EC2 campaign runner has been launched.
 
 ## Source of Truth
 
@@ -35,13 +37,15 @@
 
 ## Known Gaps
 
+- The corrected EC2 `RunInstances` policy must be merged, deployed, and proven from the main-only OIDC role before the remote campaign can resume.
 - The scaling suite, offline phase, league smoke/production rollout, full live-v1 reference, and full evaluator have not run.
 - AWS CLI `s3 ls` returns exit 1 for an empty prefix. The implementation uses `s3api list-objects-v2`; `.keep` remains harmless in the active object prefix.
 
 ## Next Tasks
 
-1. Launch the remote production campaign at campaign SHA `f25a4880e65f0eed6eda8c3ecc33d42d2ad6af33`; obey scaling, KL, league, throughput, and full-evaluation stop gates.
-2. If every gate passes, review the generated promotion PR manually; never auto-merge.
+1. Merge and deploy the resource-aware EC2 launch policy; prove that the main-only OIDC role can launch only the intended campaign runner.
+2. Retry the remote production campaign at campaign SHA `f25a4880e65f0eed6eda8c3ecc33d42d2ad6af33`; obey scaling, KL, league, throughput, and full-evaluation stop gates.
+3. If every gate passes, review the generated promotion PR manually; never auto-merge.
 
 ## Validation
 
@@ -67,6 +71,9 @@
 - July 20, 2026: recovery run `29695924800` -> all ten resumed shard reports and strict aggregation passed at `f25a488`; frozen manifest `ca8435e58fd500f6045727db283de32ac906b3584b187abb84a5aa569867939c` has 10,000 episodes, 593,576 decisions, and splits 8,016 train/1,015 validation/969 test.
 - July 20, 2026: `npm run edger:corpus:validate -- --manifest artifacts/edger-training/corpus/manifest.json --workers 16 --report artifacts/edger-training/corpus/validation-report.json` in run `29695924800` -> 10,000/10,000 schemas, compressed checksums, episode IDs, and replays passed in `3,673.254 s`; manifest build took `15,625.308 s`; zero failures.
 - July 20, 2026: frozen evidence SHA-256 -> manifest file `bf85a0c3eca5eaeb008bfd818b3b0e726a820f671bc49a15f0b6c89e568c048d`, validation report `6fdcd7aac3ada57b6e05d4d2384f09bccff89e97c5fb0401179cb3ce6ab1ad14`, aggregate report `3cf91876347192ba3bed1008f75199314316712246e1710a206ec74b63f8a13f`.
+- July 20, 2026: remote campaign run `29708015701` passed OIDC/configuration checks then failed `ec2:RunInstances` on `network-interface/*`; decoded authorization had `allowed=false`, `explicitDeny=false`, and zero matching statements. Exact campaign/run filters found zero non-terminal or run-tagged instances; the promotion job was skipped.
+- July 20, 2026: failure report SHA-256 `21a0de4979a492056c26362fd4861b492e496eebf4d3c2d3a4ade9d120c1d5e5` uploaded with AES256 encryption and version `UJQYr..Kgj6WrgeQhD9gYfwKsW8pDCdv`.
+- July 20, 2026: resource-aware launch-policy correction -> CloudFormation validation passed with `CAPABILITY_NAMED_IAM`; YAML syntax and `git diff --check` passed. `cfn-lint` was unavailable.
 
 ## Risks / Notes
 
@@ -76,4 +83,5 @@
 - OIDC runs `29691150328` and `29691229848` exposed the empty-prefix/policy issues before data collection; neither wrote authoritative episodes. Stack policy was corrected and successful run `29691292412` is the proof gate.
 - The first pilot's parity-tool defect invalidated `b5ac17e`; its 138 archived objects remain immutable and do not enter the `f25a488` lineage.
 - The collected 10,000-game `f25a488` lineage is retained and resumable. Run `29692403151` was a control-plane credential-duration failure, not an accepted corpus freeze.
+- Run `29708015701` was a control-plane IAM failure before EC2 created any instance or campaign stage. Its evidence is immutable; it does not alter the accepted corpus or campaign SHA.
 - Any failed gate must retain evidence, terminate the runner, and leave live v1 untouched.

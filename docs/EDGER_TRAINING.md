@@ -221,6 +221,11 @@ stack creates the retained bucket and runner controls in `ap-southeast-2`.
 
 The instance has 16 vCPU, 32 GiB RAM, encrypted 200 GiB gp3, no inbound ports
 or key pair, instance-initiated termination, and a 24-hour safety shutdown.
+The GitHub role can launch only `c7g.4xlarge` instances with IMDSv2, tagged
+instance/encrypted-gp3 volume resources, an Amazon-owned AMI, and the stack's
+exact subnet and security group. The primary network-interface permission is
+separate because EC2 evaluates that untaggable resource independently during
+`RunInstances`.
 Every completed remote stage is immutable and Git-SHA-bound in S3. Resume
 downloads only matching completed stages. Peak resident memory must stay below
 28 GiB and disk use below 160 GiB. Failed stages upload logs/reports and leave

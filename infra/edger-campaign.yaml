@@ -136,19 +136,61 @@ Resources:
                   - !Sub "${CampaignBucket.Arn}/preflight/*"
                   - !Sub "${CampaignBucket.Arn}/temporary/*"
                   - !Sub "${CampaignBucket.Arn}/corpus/preflight/*"
-              - Sid: LaunchTaggedCampaignInstances
+              - Sid: UseAmazonOwnedCampaignImage
                 Effect: Allow
-                Action:
-                  - ec2:RunInstances
-                Resource: "*"
+                Action: ec2:RunInstances
+                Resource: !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}::image/*"
                 Condition:
                   StringEquals:
+                    ec2:Owner: amazon
+              - Sid: UseCampaignSubnetAndSecurityGroup
+                Effect: Allow
+                Action: ec2:RunInstances
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:subnet/${CampaignSubnet}"
+                  - !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:security-group/${CampaignSecurityGroup.GroupId}"
+              - Sid: CreateCampaignNetworkInterface
+                Effect: Allow
+                Action: ec2:RunInstances
+                Resource: !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:network-interface/*"
+                Condition:
+                  ArnEquals:
+                    ec2:Subnet: !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:subnet/${CampaignSubnet}"
+              - Sid: LaunchTaggedCampaignInstance
+                Effect: Allow
+                Action: ec2:RunInstances
+                Resource: !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
+                Condition:
+                  StringEquals:
+                    aws:RequestTag/project: edge-royale
+                    aws:RequestTag/workload: edger-campaign
+                    ec2:InstanceType: c7g.4xlarge
+                    ec2:MetadataHttpTokens: required
+              - Sid: CreateTaggedCampaignVolume
+                Effect: Allow
+                Action: ec2:RunInstances
+                Resource: !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:volume/*"
+                Condition:
+                  StringEquals:
+                    aws:RequestTag/project: edge-royale
+                    aws:RequestTag/workload: edger-campaign
+                    ec2:VolumeType: gp3
+                  Bool:
+                    ec2:Encrypted: "true"
+              - Sid: TagCampaignLaunchResources
+                Effect: Allow
+                Action: ec2:CreateTags
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
+                  - !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:volume/*"
+                Condition:
+                  StringEquals:
+                    ec2:CreateAction: RunInstances
                     aws:RequestTag/project: edge-royale
                     aws:RequestTag/workload: edger-campaign
               - Sid: ManageCampaignInstances
                 Effect: Allow
                 Action:
-                  - ec2:CreateTags
                   - ec2:DescribeInstances
                   - ec2:DescribeImages
                   - ec2:DescribeInstanceStatus
