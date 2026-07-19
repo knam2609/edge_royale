@@ -12,6 +12,8 @@
   - Blocked on `AI-SCALE-001`; done when paired-seed exact-JS episodes and a lineage-preserving candidate checkpoint complete.
 - `AI-PERF-001` Increase production rollout/evaluation throughput.
   - Done when 10,000 safety games and full promotion evaluation complete in a practical campaign window.
+- `AI-OPS-001` Execute the first production campaign on dedicated AWS infrastructure.
+  - Done when one reviewed SHA clears pilot, strict corpus aggregation/verification, scaling, offline, isolated league, throughput, and full evaluation gates, or retains an immutable failed-gate report with live v1 untouched.
 - `QA-BROWSER-001` Standardize browser smoke.
   - Done when the Node 20 supervisor/worker smoke, replay-download schema check, Chromium launch, and CI run all pass.
 - `DOC-001` Keep cumulative training and Edger-only product docs aligned.
@@ -39,6 +41,9 @@
 - Daily corpus-health/canary workflow and separate cumulative campaign workflow.
 - Full v2 evaluator with two champion blocks, paired bootstrap, anchor regression, weak baselines, frozen league, 10,000 repeated safety games, replay, parity, tactical, timing, test, and browser gates.
 - Checksum-bound v2 promotion refusal and successful-campaign pull-request automation.
+- Bounded-memory two-pass cache generation, deterministic Parquet row-group training, and episode-grouped temporary V-trace targets.
+- Strict ten-report collection aggregation, parallel full-corpus validation, and base-manifest/current-rollout league lineage.
+- Dedicated encrypted/versioned AWS campaign stack, main-only GitHub OIDC, SSM remote control, immutable stage resume, and resource gates.
 
 ## Non-goals
 

@@ -1,0 +1,281 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Dedicated storage, GitHub OIDC, and SSM-only compute roles for the Edge Royale Edger campaign.
+
+Parameters:
+  BucketName:
+    Type: String
+    Default: edge-royale-edger-904869824856-ap-southeast-2
+  GitHubRepository:
+    Type: String
+    Default: knam2609/edge_royale
+
+Resources:
+  CampaignBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Ref BucketName
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+            BucketKeyEnabled: true
+      VersioningConfiguration:
+        Status: Enabled
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireTemporaryObjects
+            Status: Enabled
+            Prefix: temporary/
+            ExpirationInDays: 30
+          - Id: ExpireNonCurrentVersions
+            Status: Enabled
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 90
+      Tags:
+        - Key: project
+          Value: edge-royale
+        - Key: workload
+          Value: edger-campaign
+
+  CampaignBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref CampaignBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: s3:*
+            Resource:
+              - !GetAtt CampaignBucket.Arn
+              - !Sub "${CampaignBucket.Arn}/*"
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+
+  GitHubOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList:
+        - sts.amazonaws.com
+      ThumbprintList:
+        - 6938fd4d98bab03faadb97b34396831e3780aea1
+      Tags:
+        - Key: project
+          Value: edge-royale
+
+  GitHubCampaignRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: edge-royale-edger-github-main
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Ref GitHubOidcProvider
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:sub: !Sub "repo:${GitHubRepository}:ref:refs/heads/main"
+      Policies:
+        - PolicyName: EdgerCampaignStorageAndRunnerControl
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ListCampaignPrefixes
+                Effect: Allow
+                Action:
+                  - s3:GetBucketLocation
+                  - s3:ListBucket
+                Resource: !GetAtt CampaignBucket.Arn
+                Condition:
+                  StringLike:
+                    s3:prefix:
+                      - corpus
+                      - corpus/*
+                      - campaigns
+                      - campaigns/*
+                      - preflight
+                      - preflight/*
+                      - temporary
+                      - temporary/*
+              - Sid: ReadWriteImmutableCampaignData
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:PutObject
+                Resource:
+                  - !Sub "${CampaignBucket.Arn}/corpus/*"
+                  - !Sub "${CampaignBucket.Arn}/campaigns/*"
+              - Sid: ManageTemporaryObjects
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource:
+                  - !Sub "${CampaignBucket.Arn}/preflight/*"
+                  - !Sub "${CampaignBucket.Arn}/temporary/*"
+              - Sid: LaunchTaggedCampaignInstances
+                Effect: Allow
+                Action:
+                  - ec2:RunInstances
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    aws:RequestTag/project: edge-royale
+                    aws:RequestTag/workload: edger-campaign
+              - Sid: ManageCampaignInstances
+                Effect: Allow
+                Action:
+                  - ec2:CreateTags
+                  - ec2:DescribeInstances
+                  - ec2:DescribeImages
+                  - ec2:DescribeInstanceStatus
+                  - ec2:TerminateInstances
+                  - ec2:StopInstances
+                  - ec2:DescribeSubnets
+                  - ec2:DescribeSecurityGroups
+                  - cloudformation:DescribeStacks
+                  - ssm:DescribeInstanceInformation
+                  - ssm:GetCommandInvocation
+                  - ssm:ListCommandInvocations
+                  - ssm:SendCommand
+                  - ssm:GetParameter
+                Resource: "*"
+              - Sid: PassCampaignInstanceRole
+                Effect: Allow
+                Action: iam:PassRole
+                Resource: !GetAtt CampaignInstanceRole.Arn
+
+  CampaignInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: edge-royale-edger-campaign-instance
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: EdgerCampaignStorage
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetBucketLocation
+                  - s3:ListBucket
+                Resource: !GetAtt CampaignBucket.Arn
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:PutObject
+                Resource:
+                  - !Sub "${CampaignBucket.Arn}/corpus/*"
+                  - !Sub "${CampaignBucket.Arn}/campaigns/*"
+                  - !Sub "${CampaignBucket.Arn}/temporary/*"
+
+  CampaignInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: edge-royale-edger-campaign
+      Roles:
+        - !Ref CampaignInstanceRole
+
+  CampaignVpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.73.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: edge-royale-edger-campaign
+
+  CampaignInternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  CampaignVpcGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref CampaignInternetGateway
+      VpcId: !Ref CampaignVpc
+
+  CampaignSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: ap-southeast-2a
+      CidrBlock: 10.73.1.0/24
+      MapPublicIpOnLaunch: true
+      VpcId: !Ref CampaignVpc
+      Tags:
+        - Key: Name
+          Value: edge-royale-edger-campaign
+
+  CampaignRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref CampaignVpc
+
+  CampaignDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: CampaignVpcGatewayAttachment
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref CampaignInternetGateway
+      RouteTableId: !Ref CampaignRouteTable
+
+  CampaignSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref CampaignRouteTable
+      SubnetId: !Ref CampaignSubnet
+
+  CampaignSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Egress-only security group for the SSM-managed Edger runner
+      VpcId: !Ref CampaignVpc
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: edge-royale-edger-campaign-egress-only
+
+Outputs:
+  BucketName:
+    Value: !Ref CampaignBucket
+  GitHubRoleArn:
+    Value: !GetAtt GitHubCampaignRole.Arn
+  InstanceProfileName:
+    Value: !Ref CampaignInstanceProfile
+  InstanceRoleArn:
+    Value: !GetAtt CampaignInstanceRole.Arn
+  SubnetId:
+    Value: !Ref CampaignSubnet
+  SecurityGroupId:
+    Value: !Ref CampaignSecurityGroup

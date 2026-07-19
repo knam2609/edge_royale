@@ -8,6 +8,7 @@ on:
 permissions:
   actions: write
   contents: read
+  id-token: write
 
 concurrency:
   group: edger-corpus-health
@@ -27,6 +28,11 @@ jobs:
         with:
           node-version-file: .node-version
           cache: npm
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ vars.AWS_REGION }}
+          role-to-assume: ${{ vars.EDGER_AWS_ROLE_ARN }}
 
       - run: npm ci
 
