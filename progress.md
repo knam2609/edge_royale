@@ -7,7 +7,7 @@
 - The failed run's aggregate, failure report, and ten shard reports are retained under `campaigns/20260718-v2-first/corpus/failed-run-29692403151/`.
 - Recovery run `29695924800` passed under 12-hour OIDC credentials. Frozen manifest `ca8435e58fd500f6045727db283de32ac906b3584b187abb84a5aa569867939c` and its passed validation/aggregate reports are retained under `campaigns/20260718-v2-first/corpus/`.
 - Remote campaign run `29708015701` strict-stopped before instance creation because the GitHub role applied launch-time instance/volume tag conditions to EC2's separately evaluated network-interface resource. Promotion was skipped and live v1 was unchanged.
-- The launch failure report is retained under `campaigns/20260718-v2-first/remote/failed-run-29708015701/`. A resource-aware least-privilege policy correction validates locally but is not yet merged or deployed.
+- The launch failure report is retained under `campaigns/20260718-v2-first/remote/failed-run-29708015701/`. Resource-aware launch-policy PR `#11` is merged and deployed.
 - CloudFormation stack `edge-royale-edger-campaign` is `UPDATE_COMPLETE` in `ap-southeast-2`; all five GitHub variables are configured.
 - Live browser Edger remains the tracked v1 artifact. No v2 artifact was promoted or wired into gameplay.
 - Scaling and later campaign stages have not run. No production EC2 campaign runner has been launched.
@@ -30,22 +30,20 @@
 - Ten-report aggregation enforces indices `0…9999`, 5,000 paired seeds, balanced Edger sides, 2,500 games per opponent, unique episodes, one SHA/spec cohort, zero failures, and complete replay verification.
 - External test/browser reports are campaign-SHA-bound.
 - Candidate parity now compares the actual masked argmax from both runtimes; forced fixture indices are used only to select conditioned placement/delay logits.
-- CloudFormation defines the retained encrypted/versioned private bucket, main-only GitHub OIDC role, SSM instance role/profile, and egress-only VPC.
+- CloudFormation defines the retained encrypted/versioned private bucket, main-only GitHub OIDC role, SSM instance role/profile, and egress-only VPC. The OIDC role can launch only the intended Amazon-owned-image, stack-network, tagged `c7g.4xlarge`, IMDSv2, encrypted-gp3 resource set.
 - Remote launch/status/terminate provisions an SSM-only `c7g.4xlarge` with encrypted 200 GiB gp3, no key/inbound ports, instance-shutdown termination, and a 24-hour guard.
 - Remote stages are immutable, resumable only at the same SHA, resource-gated below 28 GiB RSS and 160 GiB disk, and preserve failure evidence. Promotion remains an unmerged checksum-bound PR.
 - AWS workflows request sessions long enough for their declared exhaustive jobs, and corpus runs preserve run-specific partial evidence while publishing canonical frozen evidence only on success.
 
 ## Known Gaps
 
-- The corrected EC2 `RunInstances` policy must be merged, deployed, and proven from the main-only OIDC role before the remote campaign can resume.
 - The scaling suite, offline phase, league smoke/production rollout, full live-v1 reference, and full evaluator have not run.
 - AWS CLI `s3 ls` returns exit 1 for an empty prefix. The implementation uses `s3api list-objects-v2`; `.keep` remains harmless in the active object prefix.
 
 ## Next Tasks
 
-1. Merge and deploy the resource-aware EC2 launch policy; prove that the main-only OIDC role can launch only the intended campaign runner.
-2. Retry the remote production campaign at campaign SHA `f25a4880e65f0eed6eda8c3ecc33d42d2ad6af33`; obey scaling, KL, league, throughput, and full-evaluation stop gates.
-3. If every gate passes, review the generated promotion PR manually; never auto-merge.
+1. Retry the remote production campaign at campaign SHA `f25a4880e65f0eed6eda8c3ecc33d42d2ad6af33`; obey scaling, KL, league, throughput, and full-evaluation stop gates.
+2. If every gate passes, review the generated promotion PR manually; never auto-merge.
 
 ## Validation
 
@@ -74,6 +72,7 @@
 - July 20, 2026: remote campaign run `29708015701` passed OIDC/configuration checks then failed `ec2:RunInstances` on `network-interface/*`; decoded authorization had `allowed=false`, `explicitDeny=false`, and zero matching statements. Exact campaign/run filters found zero non-terminal or run-tagged instances; the promotion job was skipped.
 - July 20, 2026: failure report SHA-256 `21a0de4979a492056c26362fd4861b492e496eebf4d3c2d3a4ade9d120c1d5e5` uploaded with AES256 encryption and version `UJQYr..Kgj6WrgeQhD9gYfwKsW8pDCdv`.
 - July 20, 2026: resource-aware launch-policy correction -> CloudFormation validation passed with `CAPABILITY_NAMED_IAM`; YAML syntax and `git diff --check` passed. `cfn-lint` was unavailable.
+- July 20, 2026: PR `#11` merged at `c3270e3`; stack update completed at `2026-07-19T23:36:15Z`. IAM simulation allowed the exact Amazon-owned AMI, stack subnet/security group, subnet-bound network interface, tagged `c7g.4xlarge` IMDSv2 instance, and tagged encrypted gp3 volume; wrong instance type, wrong subnet, non-Amazon AMI, and unencrypted volume each returned `implicitDeny`.
 
 ## Risks / Notes
 
