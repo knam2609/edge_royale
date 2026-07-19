@@ -1,6 +1,7 @@
 ## Current State
 
-- As of July 20, 2026, `codex/edger-first-campaign-readiness` contains the complete production-readiness change set and is ready for review/merge from base `22ef36f`.
+- As of July 20, 2026, readiness PR `#8` is squash-merged and the immutable campaign SHA is `b5ac17eb5d75fc5f45ad432ad3e9d2274b4643ae`.
+- CloudFormation stack `edge-royale-edger-campaign` is `CREATE_COMPLETE` in `ap-southeast-2`; all five GitHub variables are configured.
 - Live browser Edger remains the tracked v1 artifact. No v2 artifact was promoted or wired into gameplay.
 - No authoritative pilot or production campaign data has been collected from the readiness branch yet.
 
@@ -27,18 +28,15 @@
 
 ## Known Gaps
 
-- The CloudFormation stack and GitHub repository variables are not provisioned yet.
 - The authoritative 64-game pilot, 10,000-game corpus, scaling suite, offline phase, league smoke/production rollout, full live-v1 reference, and full evaluator have not run.
-- The readiness branch still needs to be committed, pushed, reviewed, and merged before authoritative collection.
+- AWS CLI `s3 ls` returns exit 1 for an empty prefix. A `.keep` object currently makes the reviewed campaign SHA's initial empty-corpus listing safe; main also fixes the implementation to use `s3api list-objects-v2`.
 
 ## Next Tasks
 
-1. Commit, push, review, and merge `codex/edger-first-campaign-readiness`; record the merged main SHA as the immutable campaign SHA.
-2. Deploy `edge-royale-edger-campaign` in `ap-southeast-2` and set `AWS_REGION`, `EDGER_AWS_ROLE_ARN`, `EDGER_CORPUS_STORE`, `EDGER_CAMPAIGN_INPUT_URI`, and `EDGER_REFERENCE_HARDWARE`.
-3. Run the native-arm64 64-game S3 pilot at the campaign SHA and stop if its fresh 16-worker projection exceeds eight hours.
-4. Dispatch ten 1,000-game shards at the campaign SHA, aggregate strictly, verify all episodes with 16 workers, and freeze the manifest.
-5. Launch the remote production campaign at the same SHA; obey scaling, KL, league, throughput, and full-evaluation stop gates.
-6. If every gate passes, review the generated promotion PR manually; never auto-merge.
+1. Run the native-arm64 64-game S3 pilot at campaign SHA `b5ac17eb5d75fc5f45ad432ad3e9d2274b4643ae` and stop if its fresh 16-worker projection exceeds eight hours.
+2. Dispatch ten 1,000-game shards at the same SHA, aggregate strictly, verify all episodes with 16 workers, and freeze the manifest.
+3. Launch the remote production campaign at the same SHA; obey scaling, KL, league, throughput, and full-evaluation stop gates.
+4. If every gate passes, review the generated promotion PR manually; never auto-merge.
 
 ## Validation
 
@@ -49,10 +47,13 @@
 - July 20, 2026: focused corpus/aggregation/evaluation/parity suite -> 18 passed, 0 failed.
 - July 20, 2026: `aws cloudformation validate-template --region ap-southeast-2 --template-body file://infra/edger-campaign.yaml` -> valid with `CAPABILITY_NAMED_IAM`.
 - July 20, 2026: all workflow YAML parsed; every AWS workflow has `id-token: write` and `aws-actions/configure-aws-credentials@v4`; JavaScript syntax, Python compilation, and `git diff --check` passed.
+- July 20, 2026: CloudFormation deployment -> `CREATE_COMPLETE`; bucket encryption AES256, versioning enabled, all public access blocked, temporary expiry 30 days, non-current expiry 90 days; runner security-group ingress `[]`; GitHub OIDC subject exactly `repo:knam2609/edge_royale:ref:refs/heads/main`.
+- July 20, 2026: GitHub Actions run `29691292412` at campaign SHA -> OIDC assumption, durable-store requirement, deterministic canary, empty manifest, corpus health, and artifact upload all passed.
 
 ## Risks / Notes
 
 - Local free disk was about 12 GiB during readiness work; production caches belong on the 200 GiB remote runner.
 - Campaign workflows accept an explicit reviewed `campaign_sha`, allowing later `progress.md` handoff commits without changing the SHA used for collection/training/evaluation.
 - The dedicated bucket did not exist and the AWS account had no GitHub OIDC provider before this change.
+- OIDC runs `29691150328` and `29691229848` exposed the empty-prefix/policy issues before data collection; neither wrote authoritative episodes. Stack policy was corrected and successful run `29691292412` is the proof gate.
 - Any failed gate must retain evidence, terminate the runner, and leave live v1 untouched.

@@ -99,9 +99,7 @@ Resources:
             Statement:
               - Sid: ListCampaignPrefixes
                 Effect: Allow
-                Action:
-                  - s3:GetBucketLocation
-                  - s3:ListBucket
+                Action: s3:ListBucket
                 Resource: !GetAtt CampaignBucket.Arn
                 Condition:
                   StringLike:
@@ -114,6 +112,10 @@ Resources:
                       - preflight/*
                       - temporary
                       - temporary/*
+              - Sid: ReadBucketLocation
+                Effect: Allow
+                Action: s3:GetBucketLocation
+                Resource: !GetAtt CampaignBucket.Arn
               - Sid: ReadWriteImmutableCampaignData
                 Effect: Allow
                 Action:
@@ -132,6 +134,7 @@ Resources:
                 Resource:
                   - !Sub "${CampaignBucket.Arn}/preflight/*"
                   - !Sub "${CampaignBucket.Arn}/temporary/*"
+                  - !Sub "${CampaignBucket.Arn}/corpus/preflight/*"
               - Sid: LaunchTaggedCampaignInstances
                 Effect: Allow
                 Action:
