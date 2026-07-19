@@ -1,10 +1,11 @@
 ## Current State
 
-- As of July 20, 2026, readiness PR `#8` is merged; its first pilot at `b5ac17eb5d75fc5f45ad432ad3e9d2274b4643ae` stopped when the standalone parity gate exposed a forced-index comparison bug.
-- The failed-pilot corpus and evidence are preserved under `campaigns/20260718-v2-first/pilot/failed-b5ac17e/`. A reviewed parity-gate correction must establish the replacement campaign SHA before collection restarts.
+- As of July 20, 2026, readiness PR `#8` and parity correction PR `#9` are merged. The immutable campaign SHA is `f25a4880e65f0eed6eda8c3ecc33d42d2ad6af33`.
+- The authoritative native-arm64 64-game pilot passed every gate and its eight evidence files are retained under `campaigns/20260718-v2-first/pilot/`.
+- The invalidated `b5ac17e` pilot remains preserved separately under `campaigns/20260718-v2-first/pilot/failed-b5ac17e/`.
 - CloudFormation stack `edge-royale-edger-campaign` is `CREATE_COMPLETE` in `ap-southeast-2`; all five GitHub variables are configured.
 - Live browser Edger remains the tracked v1 artifact. No v2 artifact was promoted or wired into gameplay.
-- No production shards or later campaign stages have run. The 64-game stopped pilot is evidence only and will not enter replacement-SHA lineage.
+- Production shards and later campaign stages have not run.
 
 ## Source of Truth
 
@@ -30,16 +31,14 @@
 
 ## Known Gaps
 
-- The replacement-SHA authoritative pilot, 10,000-game corpus, scaling suite, offline phase, league smoke/production rollout, full live-v1 reference, and full evaluator have not run.
-- AWS CLI `s3 ls` returns exit 1 for an empty prefix. A `.keep` object currently makes the reviewed campaign SHA's initial empty-corpus listing safe; main also fixes the implementation to use `s3api list-objects-v2`.
+- The 10,000-game corpus, scaling suite, offline phase, league smoke/production rollout, full live-v1 reference, and full evaluator have not run.
+- AWS CLI `s3 ls` returns exit 1 for an empty prefix. The implementation uses `s3api list-objects-v2`; `.keep` remains harmless in the active object prefix.
 
 ## Next Tasks
 
-1. Validate, review, and merge `codex/edger-parity-gate-fix`; record the resulting main commit as the replacement immutable campaign SHA.
-2. Clear only the active old-SHA receipts/objects after verifying their retained archive, restore `.keep`, and rerun the native-arm64 64-game pilot at the replacement SHA.
-3. Dispatch ten 1,000-game shards at that SHA, aggregate strictly, verify all episodes with 16 workers, and freeze the manifest.
-4. Launch the remote production campaign at the same SHA; obey scaling, KL, league, throughput, and full-evaluation stop gates.
-5. If every gate passes, review the generated promotion PR manually; never auto-merge.
+1. Dispatch ten 1,000-game shards at campaign SHA `f25a4880e65f0eed6eda8c3ecc33d42d2ad6af33`, aggregate strictly, verify all episodes with 16 workers, and freeze the manifest.
+2. Launch the remote production campaign at the same SHA; obey scaling, KL, league, throughput, and full-evaluation stop gates.
+3. If every gate passes, review the generated promotion PR manually; never auto-merge.
 
 ## Validation
 
@@ -53,11 +52,11 @@
 - July 20, 2026: CloudFormation deployment -> `CREATE_COMPLETE`; bucket encryption AES256, versioning enabled, all public access blocked, temporary expiry 30 days, non-current expiry 90 days; runner security-group ingress `[]`; GitHub OIDC subject exactly `repo:knam2609/edge_royale:ref:refs/heads/main`.
 - July 20, 2026: GitHub Actions run `29691292412` at campaign SHA -> OIDC assumption, durable-store requirement, deterministic canary, empty manifest, corpus health, and artifact upload all passed.
 - July 20, 2026: SSM control-plane smoke instance `i-0e2eb6e5e584492e5` -> Amazon Linux 2023 arm64, 16 vCPU, >30 GiB memory, 200 GiB gp3, no key, S3 read/write passed, SSM command `277f7398-e9be-4e42-aa94-8f1b4092fbaf` passed, instance-initiated shutdown ended in `terminated`.
-- July 20, 2026: stopped pilot at `b5ac17e` -> 64/64 fresh games, 32 paired seeds, 32 games per side, 16 per opponent, 58 Edger wins/6 losses/0 draws, 64/64 receipt replays, zero failures/duplicates; `70.499 s`; 16-worker projection `1.529926 h`; spec checksum `4f0a3ff9e2f5ceca208461af6b9a3c6b62cfd7ce2f4b031dbd22a993ab33804a`.
-- July 20, 2026: stopped-pilot manifest `ee1160cacfb4298b3d98e557518b0f17669f003515a150e610253a954fead2d7` -> 64 episodes, 3,682 decisions, splits 52 train/5 validation/7 test; eight-worker validation passed 64/64 checks in `14.989 s`.
-- July 20, 2026: stopped-pilot cache -> 3,682 rows in deterministic 256-row groups, 708,593 bytes; smoke BC validation joint loss `6.7823414259`; model `edger_v2_bc_228629edeec04d59`.
-- July 20, 2026: old standalone parity incorrectly failed despite maximum logit error `4.76837158203125e-7` because it compared PyTorch's computed card argmax `1` to JavaScript's forced fixture card `0`. Corrected diagnostic passes with JS/PyTorch argmax `{card:1, placement:0, delay:23}`; focused regression suite 8/8 passed.
 - July 20, 2026: parity-gate correction validation -> native Node `v20.20.2`, `npm test`: 123 passed, 0 failed; `git diff --check` passed.
+- July 20, 2026: `npm run edger:corpus:collect -- --store s3://edge-royale-edger-904869824856-ap-southeast-2/corpus --matches 64 --seed 20260718 --pair-offset 0 --workers 8 --opponents edger_heuristic,random,aggressive,defender --report /private/tmp/edge-royale-pilot-f25a488/collection-report.json` at `f25a488` -> 64/64 fresh games, 32 paired seeds, 32 games per side, 16 per opponent, 58 wins/6 losses/0 draws, 64/64 receipt replays, zero failures/duplicates; `79.267 s`; 16-worker projection `1.720204 h`; spec checksum `4f0a3ff9e2f5ceca208461af6b9a3c6b62cfd7ce2f4b031dbd22a993ab33804a`.
+- July 20, 2026: authoritative manifest `ee1160cacfb4298b3d98e557518b0f17669f003515a150e610253a954fead2d7` -> 64 episodes, 3,682 decisions, splits 52 train/5 validation/7 test; `npm run edger:corpus:validate -- --manifest /private/tmp/edge-royale-pilot-f25a488/manifest.json --workers 16 --report /private/tmp/edge-royale-pilot-f25a488/validation-report.json` passed 64/64 checks in `20.307 s`.
+- July 20, 2026: two-pass pilot cache -> 3,682 rows in deterministic 256-row groups, 708,593 bytes, decision splits 2,977 train/307 validation/398 test.
+- July 20, 2026: one-epoch smoke BC -> validation joint-action loss `6.7823414259`; model `edger_v2_bc_7d9e3364fd134015`; parity passed with maximum logit error `4.76837158203125e-7` and JS/PyTorch argmax `{card:1, placement:0, delay:23}`.
 
 ## Risks / Notes
 
@@ -65,5 +64,5 @@
 - Campaign workflows accept an explicit reviewed `campaign_sha`, allowing later `progress.md` handoff commits without changing the SHA used for collection/training/evaluation.
 - The dedicated bucket did not exist and the AWS account had no GitHub OIDC provider before this change.
 - OIDC runs `29691150328` and `29691229848` exposed the empty-prefix/policy issues before data collection; neither wrote authoritative episodes. Stack policy was corrected and successful run `29691292412` is the proof gate.
-- The first pilot's projection passed, but the parity-tool defect invalidates `b5ac17e` as the continuing campaign SHA. Its artifacts remain immutable; production collection did not start.
+- The first pilot's parity-tool defect invalidated `b5ac17e`; its 138 archived objects remain immutable and do not enter the `f25a488` lineage.
 - Any failed gate must retain evidence, terminate the runner, and leave live v1 untouched.
