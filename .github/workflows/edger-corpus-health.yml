@@ -18,17 +18,24 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      EDGER_CORPUS_STORE: ${{ vars.EDGER_CORPUS_STORE || 'artifacts/edger-training/corpus' }}
+      EDGER_CORPUS_STORE: ${{ vars.EDGER_CORPUS_STORE }}
 
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version-file: .node-version
           cache: npm
 
       - run: npm ci
+
+      - name: Require durable S3 corpus storage
+        run: |
+          case "$EDGER_CORPUS_STORE" in
+            s3://*) ;;
+            *) echo "EDGER_CORPUS_STORE must be a configured s3:// URI" >&2; exit 1 ;;
+          esac
 
       - name: Deterministic production canary
         run: npm run edger:canary -- --seed 20260718 --canary-ticks 80

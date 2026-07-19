@@ -21,6 +21,8 @@
     "edger:train:bc": "node scripts/run-edger-python.mjs bc",
     "edger:train:offline": "node scripts/run-edger-python.mjs offline",
     "edger:train:league": "node scripts/edger-league.mjs",
+    "edger:evaluate:scaling": "node scripts/edger-scaling-evaluate.mjs",
+    "edger:benchmark:throughput": "node scripts/edger-evaluation-throughput.mjs",
     "edger:scaling:report": "node scripts/run-edger-python.mjs scaling-report",
     "edger:export:v2": "node scripts/run-edger-python.mjs export",
     "edger:generate:v2": "node scripts/edger-v2-generate.mjs",

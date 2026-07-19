@@ -76,12 +76,28 @@ def sha256_file(path: str | Path) -> str:
 def git_commit() -> str:
     try:
         return subprocess.check_output(
-            ["git", "rev-parse", "--short=12", "HEAD"],
+            ["git", "rev-parse", "HEAD"],
             text=True,
             stderr=subprocess.DEVNULL,
         ).strip()
     except (OSError, subprocess.CalledProcessError):
         return "unknown"
+
+
+def require_clean_git() -> str:
+    commit = git_commit()
+    if commit == "unknown":
+        raise RuntimeError("authoritative Edger training requires Git provenance")
+    status = subprocess.check_output(
+        ["git", "status", "--porcelain", "--untracked-files=normal"],
+        text=True,
+    ).strip()
+    if status:
+        raise RuntimeError(
+            "authoritative Edger training requires a clean Git worktree; "
+            "commit or remove changes first"
+        )
+    return commit
 
 
 def seed_everything(seed: int) -> None:
@@ -554,6 +570,7 @@ def winner_finetune_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def run_bc(args: argparse.Namespace) -> None:
+    require_clean_git()
     seed_everything(args.seed)
     rows, metadata = load_parquet_rows(args.dataset)
     train_rows = [row for row in rows if row["split"] == "train"]
@@ -636,6 +653,7 @@ def actor_parameters(model: EdgerV2Policy) -> list[nn.Parameter]:
 
 
 def run_offline(args: argparse.Namespace) -> None:
+    require_clean_git()
     seed_everything(args.seed)
     device = torch.device(args.device)
     parent, model = load_checkpoint(args.checkpoint, device)
@@ -655,6 +673,8 @@ def run_offline(args: argparse.Namespace) -> None:
     accepted_state = copy.deepcopy(model.state_dict())
     accepted_epochs = 0
     validation_kl = 0.0
+    rejected_validation_kl: float | None = None
+    rollback_applied = False
 
     for epoch in range(args.epochs):
         model.train()
@@ -690,7 +710,17 @@ def run_offline(args: argparse.Namespace) -> None:
             device,
         )
         if validation_kl > KL_LIMIT:
+            rejected_validation_kl = validation_kl
+            rollback_applied = True
             model.load_state_dict(accepted_state)
+            validation_kl = evaluate_kl(
+                reference,
+                model,
+                validation_rows,
+                vocab,
+                args.batch_size,
+                device,
+            )
             break
         accepted_state = copy.deepcopy(model.state_dict())
         accepted_epochs = epoch + 1
@@ -700,6 +730,8 @@ def run_offline(args: argparse.Namespace) -> None:
         "validation_samples": len(validation_rows),
         "accepted_epochs": accepted_epochs,
         "validation_kl_from_bc": validation_kl,
+        "rollback_applied": rollback_applied,
+        "rejected_validation_kl": rejected_validation_kl,
         "kl_limit": KL_LIMIT,
         "advantage_temperature": ADVANTAGE_TEMPERATURE,
         "advantage_weight_clip": [ADVANTAGE_WEIGHT_MIN, ADVANTAGE_WEIGHT_MAX],
@@ -798,6 +830,7 @@ def attach_vtrace_targets(
 
 
 def run_vtrace(args: argparse.Namespace) -> None:
+    require_clean_git()
     seed_everything(args.seed)
     device = torch.device(args.device)
     parent, model = load_checkpoint(args.checkpoint, device)
@@ -955,6 +988,7 @@ def export_model_payload(
 
 
 def run_export(args: argparse.Namespace) -> None:
+    require_clean_git()
     device = torch.device("cpu")
     checkpoint, model = load_checkpoint(args.checkpoint, device)
     model.eval()
@@ -1118,16 +1152,110 @@ def run_league_guard(args: argparse.Namespace) -> None:
 def run_scaling_report(args: argparse.Namespace) -> None:
     checkpoints = {}
     league_reports = {}
-    for label, checkpoint_path, league_path in [
-        ("1pct", args.one_checkpoint, args.one_league),
-        ("10pct", args.ten_checkpoint, args.ten_league),
-        ("100pct", args.full_checkpoint, args.full_league),
+    manifests = {}
+    models = {}
+
+    def load_manifest(label: str, manifest_path: str) -> dict[str, Any]:
+        manifest = json.loads(Path(manifest_path).read_text())
+        if manifest.get("schema_version") != "edger_dataset_manifest_v1":
+            raise ValueError(f"{label} manifest schema is incompatible")
+        expected_hash = manifest.get("manifest_hash")
+        content = copy.deepcopy(manifest)
+        content.pop("manifest_hash", None)
+        actual_hash = sha256_bytes(canonical_json(content).encode())
+        if expected_hash != actual_hash:
+            raise ValueError(f"{label} manifest_hash mismatch")
+        shards = manifest.get("shards")
+        if not isinstance(shards, list):
+            raise ValueError(f"{label} manifest shards must be a list")
+        return manifest
+
+    for label, checkpoint_path, league_path, manifest_path, model_path in [
+        (
+            "1pct",
+            args.one_checkpoint,
+            args.one_league,
+            args.one_manifest,
+            args.one_model,
+        ),
+        (
+            "10pct",
+            args.ten_checkpoint,
+            args.ten_league,
+            args.ten_manifest,
+            args.ten_model,
+        ),
+        (
+            "100pct",
+            args.full_checkpoint,
+            args.full_league,
+            args.full_manifest,
+            args.full_model,
+        ),
     ]:
         checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
         if checkpoint.get("schema_version") != CHECKPOINT_SCHEMA:
             raise ValueError(f"{label} checkpoint schema is incompatible")
+        manifest = load_manifest(label, manifest_path)
+        if checkpoint.get("manifest_hash") != manifest["manifest_hash"]:
+            raise ValueError(f"{label} manifest/checkpoint binding mismatch")
+        model_bytes = Path(model_path).read_bytes()
+        model = json.loads(model_bytes)
+        if model.get("schema_version") != MODEL_SCHEMA:
+            raise ValueError(f"{label} candidate model schema is incompatible")
+        if model.get("training", {}).get("checkpoint_id") != checkpoint["checkpoint_id"]:
+            raise ValueError(f"{label} model/checkpoint binding mismatch")
+        league_report = json.loads(Path(league_path).read_text())
+        if league_report.get("schema_version") != "edger_frozen_league_report_v1":
+            raise ValueError(f"{label} frozen league report schema is incompatible")
+        if league_report.get("candidate_checkpoint_id") != checkpoint["checkpoint_id"]:
+            raise ValueError(f"{label} frozen league candidate checkpoint binding mismatch")
+        if league_report.get("candidate_model_id") != model.get("model_id"):
+            raise ValueError(f"{label} frozen league candidate model binding mismatch")
+        if league_report.get("candidate_model_checksum") != sha256_bytes(model_bytes):
+            raise ValueError(f"{label} frozen league candidate model checksum mismatch")
+        if (
+            league_report.get("candidate_checkpoint_checksum")
+            != sha256_file(checkpoint_path)
+        ):
+            raise ValueError(f"{label} frozen league candidate checkpoint checksum mismatch")
+        if league_report.get("illegal_actions") != 0:
+            raise ValueError(f"{label} frozen league report contains illegal actions")
+        if not league_report.get("replay_checks", {}).get("all_passed"):
+            raise ValueError(f"{label} frozen league replay verification failed")
         checkpoints[label] = checkpoint
-        league_reports[label] = json.loads(Path(league_path).read_text())
+        manifests[label] = manifest
+        models[label] = model
+        league_reports[label] = league_report
+
+    def ids_for_split(manifest: dict[str, Any], split: str) -> list[str]:
+        return [
+            shard["episode_id"]
+            for shard in manifest["shards"]
+            if shard.get("split") == split
+        ]
+
+    training_ids = {
+        label: set(ids_for_split(manifests[label], "train"))
+        for label in ["1pct", "10pct", "100pct"]
+    }
+    if not training_ids["1pct"].issubset(training_ids["10pct"]):
+        raise ValueError("1pct training episodes are not a subset of 10pct")
+    if not training_ids["10pct"].issubset(training_ids["100pct"]):
+        raise ValueError("10pct training episodes are not a subset of 100pct")
+    for split in ["validation", "test"]:
+        expected = canonical_json(ids_for_split(manifests["100pct"], split))
+        for label in ["1pct", "10pct"]:
+            if canonical_json(ids_for_split(manifests[label], split)) != expected:
+                raise ValueError(
+                    f"{split} episode IDs must be byte-for-byte identical at every scale"
+                )
+    suite_checksums = {
+        league_reports[label].get("suite_spec_checksum")
+        for label in ["1pct", "10pct", "100pct"]
+    }
+    if None in suite_checksums or len(suite_checksums) != 1:
+        raise ValueError("frozen league suite specifications must be identical")
     ten_loss = checkpoints["10pct"]["metrics"]["validation"]["joint_action_loss"]
     full_loss = checkpoints["100pct"]["metrics"]["validation"]["joint_action_loss"]
     ten_league_score = league_reports["10pct"].get("frozen_league_score")
@@ -1147,6 +1275,18 @@ def run_scaling_report(args: argparse.Namespace) -> None:
             label: {
                 "checkpoint_id": checkpoints[label]["checkpoint_id"],
                 "manifest_hash": checkpoints[label]["manifest_hash"],
+                "manifest_path": str(Path(getattr(args, {
+                    "1pct": "one_manifest",
+                    "10pct": "ten_manifest",
+                    "100pct": "full_manifest",
+                }[label])).resolve()),
+                "candidate_model_id": models[label]["model_id"],
+                "candidate_model_checksum": league_reports[label][
+                    "candidate_model_checksum"
+                ],
+                "candidate_checkpoint_checksum": league_reports[label][
+                    "candidate_checkpoint_checksum"
+                ],
                 "validation_joint_action_loss": checkpoints[label]["metrics"][
                     "validation"
                 ]["joint_action_loss"],
@@ -1156,6 +1296,9 @@ def run_scaling_report(args: argparse.Namespace) -> None:
             }
             for label in ["1pct", "10pct", "100pct"]
         },
+        "suite_spec_checksum": next(iter(suite_checksums)),
+        "nested_training_sets": True,
+        "identical_validation_and_test_sets": True,
     }
     output = Path(args.out)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -1224,6 +1367,12 @@ def build_parser() -> argparse.ArgumentParser:
     scaling.add_argument("--one-checkpoint", required=True)
     scaling.add_argument("--ten-checkpoint", required=True)
     scaling.add_argument("--full-checkpoint", required=True)
+    scaling.add_argument("--one-manifest", required=True)
+    scaling.add_argument("--ten-manifest", required=True)
+    scaling.add_argument("--full-manifest", required=True)
+    scaling.add_argument("--one-model", required=True)
+    scaling.add_argument("--ten-model", required=True)
+    scaling.add_argument("--full-model", required=True)
     scaling.add_argument("--one-league", required=True)
     scaling.add_argument("--ten-league", required=True)
     scaling.add_argument("--full-league", required=True)

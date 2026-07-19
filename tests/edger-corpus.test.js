@@ -16,6 +16,11 @@ import {
   verifyTrainingEpisodeReplay,
 } from "../scripts/edger-corpus-core.mjs";
 import {
+  buildCollectionSpecs,
+  collectionSpecChecksum,
+} from "../scripts/edger-collection-core.mjs";
+import { deterministicTrainingScale } from "../scripts/edger-dataset-core.mjs";
+import {
   cloneProductionInitialCardState,
   createProductionEngine,
 } from "../src/sim/productionMatch.js";
@@ -112,4 +117,69 @@ test("decision derivation uses sparse delays and excludes unknown human probabil
   assert.ok(blue.every((sample) => sample.vtrace_eligible === false));
   assert.ok(red.every((sample) => sample.vtrace_eligible === true));
   assert.ok(sequence.samples.every((sample) => Number.isFinite(sample.discounted_return)));
+});
+
+test("collector specs are stable paired seeds with balanced sides and opponents", () => {
+  const options = {
+    matches: 64,
+    seed: 20260718,
+    pairOffset: 0,
+    opponents: ["edger_heuristic", "random", "aggressive", "defender"],
+  };
+  const first = buildCollectionSpecs(options);
+  const second = buildCollectionSpecs(options);
+
+  assert.equal(first.length, 64);
+  assert.equal(collectionSpecChecksum(first), collectionSpecChecksum(second));
+  assert.deepEqual(
+    first.map((spec) => spec.global_match_index),
+    Array.from({ length: 64 }, (_, index) => index),
+  );
+  for (let pairIndex = 0; pairIndex < 32; pairIndex += 1) {
+    const pair = first.filter((spec) => spec.pair_index === pairIndex);
+    assert.equal(pair.length, 2);
+    assert.equal(pair[0].seed, pair[1].seed);
+    assert.deepEqual(pair.map((spec) => spec.edger_actor), ["blue", "red"]);
+  }
+  assert.deepEqual(
+    first.reduce((counts, spec) => {
+      counts[spec.opponent] = (counts[spec.opponent] ?? 0) + 1;
+      return counts;
+    }, {}),
+    {
+      aggressive: 16,
+      defender: 16,
+      edger_heuristic: 16,
+      random: 16,
+    },
+  );
+});
+
+test("scaling reduces only nested training episodes and preserves held-out IDs", () => {
+  const shards = Array.from({ length: 1000 }, (_, index) => {
+    const episodeId = index.toString(16).padStart(64, "0");
+    return {
+      episode_id: episodeId,
+      split: splitForEpisodeId(episodeId),
+      uri: `/tmp/${episodeId}`,
+      source: "simulator",
+      checksum: episodeId,
+    };
+  });
+  const one = deterministicTrainingScale(shards, 0.01);
+  const ten = deterministicTrainingScale(shards, 0.1);
+  const full = deterministicTrainingScale(shards, 1);
+  const ids = (selected, split) => selected
+    .filter((shard) => shard.split === split)
+    .map((shard) => shard.episode_id);
+  const oneTrain = new Set(ids(one, "train"));
+  const tenTrain = new Set(ids(ten, "train"));
+  const fullTrain = new Set(ids(full, "train"));
+
+  assert.ok([...oneTrain].every((episodeId) => tenTrain.has(episodeId)));
+  assert.ok([...tenTrain].every((episodeId) => fullTrain.has(episodeId)));
+  for (const split of ["validation", "test"]) {
+    assert.equal(JSON.stringify(ids(one, split)), JSON.stringify(ids(full, split)));
+    assert.equal(JSON.stringify(ids(ten, split)), JSON.stringify(ids(full, split)));
+  }
 });

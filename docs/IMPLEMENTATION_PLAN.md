@@ -31,13 +31,13 @@ The simulator remains the source of truth. Training episodes and workers use the
 
 ## Current roadmap
 
-1. Build the first compatible simulator corpus and run fixed 1%/10%/100% BC experiments.
-2. Improve rollout throughput enough for 10,000-match safety and full paired evaluation in a practical campaign window.
-3. Run the first conservative offline-improvement phase and retain its rejected or accepted evidence.
-4. Start 16–32 worker snapshot-league V-trace only after scaling passes.
-5. Run the full v2 evaluator and review the generated promotion PR; do not weaken failed gates.
-6. Fix or standardize local Playwright browser smoke.
-7. Preserve Edger-only UI and portrait battlefield readability.
+1. Run the 64-game resumable S3 pilot and retain its collection/cost report.
+2. Complete the ten-shard 10,000-match S3 collection only if the pilot projects at most eight hours on 16 workers.
+3. Train and frozen-evaluate the fixed 1%/10%/100% BC experiment without changing thresholds.
+4. Run one conservative offline-improvement phase and retain its accepted or rolled-back evidence.
+5. Run the 32-game league smoke and 1,000-game V-trace campaign from the shadow parent.
+6. Enforce the 11,300-game/180-minute exact-JavaScript throughput gate.
+7. Generate the live-v1 reference, run the full v2 evaluator, and review the generated promotion PR.
 
 ## Quality gates
 
@@ -53,12 +53,16 @@ V2-specific implemented checks:
 - immutable episode replay hash/event reproduction
 - compatibility rejection and quarantine
 - deduplication and stable whole-game splits
+- paired worker-count-independent collection specs and verified resumable receipts
+- full held-out sets shared by every scaling manifest
+- checksum-bound frozen scaling suite and scaling report
 - side-canonical observation/action masks
 - 50,000 parameter and 1 MB actor caps
 - PyTorch/JS golden-logit and argmax parity
 - player V-trace exclusion
 - scaling gate before league launch
 - immutable checkpoint lineage
+- clean full-Git-SHA provenance for collection and training
 
 The complete v2 promotion thresholds are implemented by the dedicated evaluator and remain blocking until a real full campaign passes them.
 

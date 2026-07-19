@@ -6,7 +6,9 @@ import {
   enumerateLegalCardActions,
   rollDecisionDelayTicks,
   selectBotAction,
+  selectEdgerAction,
 } from "../src/ai/botRuntime.js";
+import { validateEdgerPolicyModel } from "../src/ai/mlPolicy.js";
 import {
   buildEdgerV2LegalMasks,
   buildEdgerV2Observation,
@@ -34,10 +36,13 @@ const modelCache = new Map();
 
 function loadModel(modelPath) {
   if (!modelCache.has(modelPath)) {
-    modelCache.set(
-      modelPath,
-      validateEdgerV2PolicyModel(JSON.parse(fs.readFileSync(modelPath, "utf8"))),
-    );
+    const model = JSON.parse(fs.readFileSync(modelPath, "utf8"));
+    if (model.schema_version === "edger_policy_model_v2") {
+      validateEdgerV2PolicyModel(model);
+    } else {
+      validateEdgerPolicyModel(model);
+    }
+    modelCache.set(modelPath, model);
   }
   return modelCache.get(modelPath);
 }
@@ -170,14 +175,24 @@ function maybeOpponentDecision({
   if (opponent.kind === "model") {
     const model = loadModel(opponent.model_path);
     const legalActions = enumerateLegalCardActions({ engine, actor });
-    const decision = selectEdgerV2PolicyDecision({
-      model,
-      engine,
-      actor,
-      legalActions,
-    });
+    const decision = model.schema_version === "edger_policy_model_v2"
+      ? selectEdgerV2PolicyDecision({
+          model,
+          engine,
+          actor,
+          legalActions,
+        })
+      : {
+          action: selectEdgerAction({
+            model,
+            engine,
+            actor,
+            legalActions,
+          }),
+          delayTicks: 1,
+        };
     controller.nextDecisionTick = tick + decision.delayTicks;
-    return decision.action.type === "PLAY_CARD"
+    return decision.action?.type === "PLAY_CARD"
       ? {
           tick,
           type: "PLAY_CARD",

@@ -44,6 +44,20 @@ Raw objects are gzip-compressed and content-addressed:
 
 `<store>` may be a local directory or `s3://bucket/prefix`. S3 access uses the standard AWS CLI credential chain. Writes are idempotent by episode hash. Invalid or incompatible payloads go to the quarantine prefix.
 
+Simulator collection precomputes immutable paired specifications before worker
+threads start. A pair uses the same seed from blue and red; opponents rotate
+equally through `edger_heuristic`, `random`, `aggressive`, and `defender`.
+`--pair-offset` gives shards stable global pair indices. Results are always
+sorted by global match index.
+
+Every completed specification writes `edger_collection_receipt_v1` under a
+SHA-256 specification key. A receipt is skipped only after the stored episode
+checksum and full replay have been verified. Interrupted runs keep completed
+episodes, resume without duplicates, and allow the 64-game pilot to remain part
+of the 10,000-game corpus. `edger_collection_report_v1` records clean full-SHA
+provenance, the spec checksum, timings, episode IDs, replay status, coverage,
+deduplication/resumption, and failures.
+
 ### `edger_decision_sequence_v1`
 
 Decision derivation replays the exact JavaScript simulator and records:
@@ -117,7 +131,21 @@ Every checkpoint is immutable and contains parent checkpoint ID, optimizer state
 
 ## 5. Scaling and snapshot league
 
-`npm run edger:dataset -- --scales-dir ...` produces immutable selected manifests plus Parquet/Zstd caches for fixed 1%, 10%, and 100% subsets of the same compatible corpus. `edger_data_scaling_report_v1` passes only when:
+`npm run edger:dataset -- --scales-dir ...` produces immutable selected
+manifests plus Parquet/Zstd caches for fixed 1%, 10%, and 100% subsets. Only
+training episodes are reduced: 1% train is a subset of 10% train, which is a
+subset of 100% train. Every scale contains the complete, byte-identical
+validation and test episode ID lists.
+
+`npm run edger:evaluate:scaling` emits
+`edger_frozen_league_report_v1`. Every candidate plays 40 games each against
+live v1, the frozen heuristic, random, aggressive, and defender. Every seed is
+played from both sides; the reported score is the equally weighted mean of the
+five matchups. Reports bind the candidate model and checkpoint checksums, frozen
+suite checksum, illegal-action count, and replay checks.
+
+`edger_data_scaling_report_v1` validates all three manifests, checkpoints,
+models, and frozen reports before it passes only when:
 
 - 100% held-out joint action loss improves over 10%
 - 100% frozen-league score does not regress from 10%
@@ -146,6 +174,12 @@ Every selected seed is played from both sides. Only simulator decisions with kno
 
 `.github/workflows/edger-corpus-health.yml` replaces daily training. It performs a deterministic canary, compatible-manifest rebuild, deduplication/health reporting, and trigger calculation.
 
+`.github/workflows/edger-corpus-collect.yml` is the manual production collector.
+It requires an externally supplied `s3://` `EDGER_CORPUS_STORE`, performs an S3
+read/write preflight, and launches ten parallel 1,000-game shards at pair
+offsets `0,500,…,4500`, with four workers per hosted runner. CI never falls back
+to an ephemeral local corpus.
+
 A cumulative campaign becomes due when:
 
 - compatible games grow by at least 20%, or
@@ -166,8 +200,10 @@ npm run edger:corpus:health -- --manifest <manifest.json> --report <health.json>
 npm run edger:dataset -- --manifest <manifest.json> --out <cache.parquet>
 npm run edger:train:bc -- --dataset <cache.parquet> --out <bc.pt>
 npm run edger:train:offline -- --dataset <cache.parquet> --checkpoint <bc.pt> --out <offline.pt>
+npm run edger:evaluate:scaling -- --candidate <candidate.json> --checkpoint <bc.pt> --out <frozen-report.json>
 npm run edger:scaling:report -- <three-checkpoint-and-league arguments>
 npm run edger:train:league -- <campaign arguments>
+npm run edger:benchmark:throughput -- --candidate <candidate.json> --workers 16 --enforce
 npm run edger:export:v2 -- --checkpoint <candidate.pt> --out <candidate.json>
 npm run edger:generate:v2 -- --model <candidate.json> --out <candidate.js>
 npm run edger:evaluate:v2 -- <candidate/champion/anchor/reference/external-report arguments>
