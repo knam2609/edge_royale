@@ -82,6 +82,13 @@ Manifests are immutable lists of object URIs and compressed checksums for one co
 
 The split is stable across machines and worker counts. Disposable PyTorch caches use Parquet with Zstd compression. The default selected mix contains all simulator episodes and no more than 10% opted-in player episodes. Per-sample weights balance source, opponent stratum, and outcome.
 
+Production cache building never materializes the corpus at once. Pass one
+counts balancing strata; pass two replays one episode at a time and streams
+decision rows into deterministic 256-row Parquet groups. Training and
+evaluation deterministically shuffle row groups and rows within each group,
+then consume bounded batches. Temporary V-trace targets are computed and
+written episode-by-episode.
+
 ## 3. Compact v2 policy
 
 Schema: `edger_policy_model_v2`
@@ -147,10 +154,11 @@ suite checksum, illegal-action count, and replay checks.
 `edger_data_scaling_report_v1` validates all three manifests, checkpoints,
 models, and frozen reports before it passes only when:
 
+- 100% held-out joint action loss is strictly below `0.10`
 - 100% held-out joint action loss improves over 10%
 - 100% frozen-league score does not regress from 10%
 
-League training refuses to start without both facts.
+League training refuses to start without all three facts.
 
 Production campaigns use 16–32 Node worker threads and pre-assign paired match specs, making rollout seeds and sides independent of worker count. The exact JavaScript simulator writes full verified episodes before the PyTorch learner runs.
 
@@ -170,6 +178,11 @@ Opponent allocation:
 
 Every selected seed is played from both sides. Only simulator decisions with known behavior log-probabilities enter V-trace. Importance and trace coefficients are clipped at 1.
 
+League collection accepts `--base-manifest` and `--rollout-store`. The learner
+manifest is the immutable 10,000-game base plus only the current command's
+rollout. The 32-game smoke and 1,000-game production rollout use different
+stores; smoke data is discarded from production lineage.
+
 ## 6. Scheduling
 
 `.github/workflows/edger-corpus-health.yml` replaces daily training. It performs a deterministic canary, compatible-manifest rebuild, deduplication/health reporting, and trigger calculation.
@@ -180,6 +193,13 @@ read/write preflight, and launches ten parallel 1,000-game shards at pair
 offsets `0,500,…,4500`, with four workers per hosted runner. CI never falls back
 to an ephemeral local corpus.
 
+The aggregation job requires global indices `0…9999`, 5,000 paired seeds,
+5,000 games from each Edger side, 2,500 games per frozen opponent, one Git
+commit/specification cohort, unique episode IDs, zero failures, and complete
+replay verification. `edger:corpus:validate --workers 16 --report ...`
+independently checks every compressed checksum, schema, episode ID,
+action/event stream, result, final hash, and replay.
+
 A cumulative campaign becomes due when:
 
 - compatible games grow by at least 20%, or
@@ -187,12 +207,25 @@ A cumulative campaign becomes due when:
 
 subject to a 14-day cooldown. A 30-day backstop triggers when any new data exists. State can live beside an S3 corpus.
 
-`.github/workflows/edger-campaign.yml` runs post-scaling campaigns and retains failed outputs. A successful candidate runs the full evaluator, prepares the checksum-bound promoted artifact, and opens a reviewable pull request. A failed or incomplete report never changes the live artifact.
+`.github/workflows/edger-campaign.yml` uses GitHub OIDC to launch and monitor an
+SSM-only on-demand `c7g.4xlarge`; heavy training/evaluation does not run on a
+repository self-hosted runner. The `edge-royale-edger-campaign` CloudFormation
+stack creates the retained bucket and runner controls in `ap-southeast-2`.
+
+The instance has 16 vCPU, 32 GiB RAM, encrypted 200 GiB gp3, no inbound ports
+or key pair, instance-initiated termination, and a 24-hour safety shutdown.
+Every completed remote stage is immutable and Git-SHA-bound in S3. Resume
+downloads only matching completed stages. Peak resident memory must stay below
+28 GiB and disk use below 160 GiB. Failed stages upload logs/reports and leave
+live v1 unchanged. Test and browser reports carry the campaign SHA and the
+evaluator rejects other commits. A separate GitHub-hosted job revalidates exact
+promotion inputs and opens, but never merges, a promotion PR.
 
 ## 7. Commands
 
 ```bash
 npm run edger:corpus:collect
+npm run edger:collection:aggregate -- --report <shard.json> ... --out <aggregate.json>
 npm run edger:corpus:import -- --file <manual-replay.json>
 npm run edger:corpus:validate
 npm run edger:corpus:manifest -- --out <manifest.json>
@@ -207,8 +240,12 @@ npm run edger:benchmark:throughput -- --candidate <candidate.json> --workers 16 
 npm run edger:reference:v2 -- --champion <live-v1.json> --anchors <paths> --out <reference.json>
 npm run edger:export:v2 -- --checkpoint <candidate.pt> --out <candidate.json>
 npm run edger:generate:v2 -- --model <candidate.json> --out <candidate.js>
+npm run edger:parity:v2 -- --model <candidate.json> --out <parity.json>
 npm run edger:evaluate:v2 -- <candidate/champion/anchor/reference/external-report arguments>
 npm run edger:promote:v2 -- --model <candidate.json> --report <full-report.json>
+npm run edger:campaign:remote -- launch
+npm run edger:campaign:remote -- status
+npm run edger:campaign:remote -- terminate
 ```
 
 ## 8. Promotion gate

@@ -713,6 +713,21 @@ function statisticsForEpisodes(episodes) {
   return statistics;
 }
 
+function addEpisodeStatistics(statistics, episode) {
+  statistics.episodes += 1;
+  statistics.decisions += episode.decision_stream.length;
+  statistics.sources[episode.source.kind] =
+    (statistics.sources[episode.source.kind] ?? 0) + 1;
+  const winner = episode.result.winner ?? "draw";
+  statistics.results[winner] = (statistics.results[winner] ?? 0) + 1;
+  const matchup = [
+    episode.policies.blue.policy_id,
+    episode.policies.red.policy_id,
+  ].sort().join("_vs_");
+  statistics.opponents[matchup] = (statistics.opponents[matchup] ?? 0) + 1;
+  statistics.splits[splitForEpisodeId(episode.episode_id)] += 1;
+}
+
 export function buildDatasetManifest({
   store = DEFAULT_CORPUS_STORE,
   episodeUris = null,
@@ -720,7 +735,7 @@ export function buildDatasetManifest({
   const uris = episodeUris ?? listLocalEpisodeUris(store);
   const seen = new Set();
   const shards = [];
-  const episodes = [];
+  const statistics = statisticsForEpisodes([]);
   for (const uri of [...uris].sort()) {
     const compressed = readObject(uri);
     const episode = validateTrainingEpisode(
@@ -730,7 +745,7 @@ export function buildDatasetManifest({
       continue;
     }
     seen.add(episode.episode_id);
-    episodes.push(episode);
+    addEpisodeStatistics(statistics, episode);
     shards.push({
       uri,
       checksum: sha256Hex(compressed),
@@ -749,10 +764,61 @@ export function buildDatasetManifest({
       test: "90-99",
     },
     shards,
-    statistics: statisticsForEpisodes(episodes),
+    statistics,
   };
   manifest.manifest_hash = sha256Hex(canonicalCompactJson(manifest));
   return manifest;
+}
+
+function mergeCounts(left = {}, right = {}) {
+  const merged = { ...left };
+  for (const [key, value] of Object.entries(right)) {
+    merged[key] = (merged[key] ?? 0) + value;
+  }
+  return merged;
+}
+
+export function mergeDatasetManifests(manifests) {
+  if (!Array.isArray(manifests) || manifests.length === 0) {
+    throw new Error("at least one dataset manifest is required");
+  }
+  const validated = manifests.map(validateDatasetManifest);
+  const seen = new Set();
+  const shards = [];
+  const statistics = statisticsForEpisodes([]);
+  for (const manifest of validated) {
+    for (const shard of manifest.shards) {
+      if (seen.has(shard.episode_id)) {
+        throw new Error(`duplicate episode ${shard.episode_id} across manifests`);
+      }
+      seen.add(shard.episode_id);
+      shards.push(shard);
+    }
+    statistics.episodes += manifest.statistics.episodes;
+    statistics.decisions += manifest.statistics.decisions;
+    statistics.sources = mergeCounts(statistics.sources, manifest.statistics.sources);
+    statistics.results = mergeCounts(statistics.results, manifest.statistics.results);
+    statistics.opponents = mergeCounts(
+      statistics.opponents,
+      manifest.statistics.opponents,
+    );
+    statistics.splits = mergeCounts(statistics.splits, manifest.statistics.splits);
+  }
+  shards.sort((left, right) => left.episode_id.localeCompare(right.episode_id));
+  const merged = {
+    schema_version: EDGER_DATASET_MANIFEST_SCHEMA_VERSION,
+    compatibility_cohort: EDGER_COMPATIBILITY_COHORT,
+    split_policy: "sha256_episode_id_mod_100_v1",
+    split_ranges: {
+      train: "0-79",
+      validation: "80-89",
+      test: "90-99",
+    },
+    shards,
+    statistics,
+  };
+  merged.manifest_hash = sha256Hex(canonicalCompactJson(merged));
+  return validateDatasetManifest(merged);
 }
 
 export function validateDatasetManifest(manifest) {

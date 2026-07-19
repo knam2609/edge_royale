@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
+import { once } from "node:events";
 
 import {
   buildDatasetManifest,
@@ -14,7 +14,7 @@ import {
   writeDatasetManifest,
 } from "./edger-corpus-core.mjs";
 import { deterministicTrainingScale } from "./edger-dataset-core.mjs";
-import { spawnNativePython } from "./python-runtime.mjs";
+import { spawnNativePythonAsync } from "./python-runtime.mjs";
 
 function parseArgs(argv) {
   const parsed = {
@@ -70,63 +70,72 @@ function selectDefaultMix(shards, maxPlayerFraction) {
   );
 }
 
-function addBalancingWeights(rows) {
-  const counts = new Map();
-  for (const row of rows) {
-    const outcome = row.is_winner ? "win" : row.result_winner ? "loss" : "draw";
-    const key = `${row.source_kind}|${row.opponent_stratum}|${outcome}`;
-    row.balance_stratum = key;
-    counts.set(key, (counts.get(key) ?? 0) + 1);
-  }
-  const meanCount = rows.length / Math.max(1, counts.size);
-  for (const row of rows) {
-    row.sample_weight = meanCount / counts.get(row.balance_stratum);
-  }
+function balancingStratum(row) {
+  const outcome = row.is_winner ? "win" : row.result_winner ? "loss" : "draw";
+  return `${row.source_kind}|${row.opponent_stratum}|${outcome}`;
 }
 
-function rowsForShards(shards) {
-  const rows = [];
+function scanBalancingStrata(shards) {
+  const counts = new Map();
+  let samples = 0;
+  const splits = {};
   for (const shard of shards) {
     const episode = loadTrainingEpisode(shard.uri);
     const sequence = deriveDecisionSequence(episode);
     for (const sample of sequence.samples) {
-      rows.push({
+      const row = {
         ...sample,
         split: shard.split,
         result_winner: episode.result.winner,
         compatibility_cohort: sequence.compatibility_cohort,
         reward_version: sequence.reward_version,
         per_tick_gamma: sequence.per_tick_gamma,
-      });
+      };
+      const stratum = balancingStratum(row);
+      counts.set(stratum, (counts.get(stratum) ?? 0) + 1);
+      samples += 1;
+      splits[shard.split] = (splits[shard.split] ?? 0) + 1;
     }
   }
-  addBalancingWeights(rows);
-  return rows;
+  return { counts, samples, splits };
 }
 
-function writeNdjson(filePath, rows) {
-  const fd = fs.openSync(filePath, "w");
-  try {
-    for (const row of rows) {
-      fs.writeSync(fd, `${JSON.stringify(row)}\n`);
+async function writeDecisionRows(stream, shards, balance) {
+  const meanCount = balance.samples / Math.max(1, balance.counts.size);
+  for (const shard of shards) {
+    const episode = loadTrainingEpisode(shard.uri);
+    const sequence = deriveDecisionSequence(episode);
+    for (const sample of sequence.samples) {
+      const row = {
+        ...sample,
+        split: shard.split,
+        result_winner: episode.result.winner,
+        compatibility_cohort: sequence.compatibility_cohort,
+        reward_version: sequence.reward_version,
+        per_tick_gamma: sequence.per_tick_gamma,
+      };
+      row.balance_stratum = balancingStratum(row);
+      row.sample_weight = meanCount / balance.counts.get(row.balance_stratum);
+      if (!stream.write(`${JSON.stringify(row)}\n`)) {
+        await once(stream, "drain");
+      }
     }
-  } finally {
-    fs.closeSync(fd);
   }
+  stream.end();
 }
 
-function buildCache({ python, manifest, shards, out, scale }) {
-  const rows = rowsForShards(shards);
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "edger-dataset-"));
-  const ndjson = path.join(tempDir, "samples.ndjson");
-  writeNdjson(ndjson, rows);
+async function buildCache({ python, manifest, shards, out, scale }) {
+  const balance = scanBalancingStrata(shards);
+  if (balance.samples === 0) {
+    throw new Error("cannot prepare an empty decision cache");
+  }
   fs.mkdirSync(path.dirname(path.resolve(out)), { recursive: true });
-  const result = spawnNativePython(
+  const child = spawnNativePythonAsync(
     [
       "scripts/edger-v2-training.py",
       "prepare",
       "--input",
-      ndjson,
+      "-",
       "--out",
       out,
       "--manifest-hash",
@@ -134,21 +143,36 @@ function buildCache({ python, manifest, shards, out, scale }) {
       "--scale",
       String(scale),
     ],
-    { stdio: "inherit", python },
+    { stdio: ["pipe", "inherit", "inherit"], python },
   );
-  fs.rmSync(tempDir, { recursive: true, force: true });
-  if (result.status !== 0) {
-    throw new Error(`PyArrow cache preparation failed with exit ${result.status}`);
+  const exit = new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (code, signal) => {
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(
+          `PyArrow cache preparation failed with exit ${code ?? "null"} signal ${signal ?? "none"}`,
+        ));
+      }
+    });
+  });
+  try {
+    await writeDecisionRows(child.stdin, shards, balance);
+    await exit;
+  } catch (error) {
+    child.stdin.destroy();
+    child.kill("SIGTERM");
+    throw error;
   }
   return {
     scale,
     output: path.resolve(out),
     episodes: shards.length,
-    samples: rows.length,
-    splits: rows.reduce((counts, row) => {
-      counts[row.split] = (counts[row.split] ?? 0) + 1;
-      return counts;
-    }, {}),
+    samples: balance.samples,
+    splits: balance.splits,
+    parquet_row_group_size: 256,
+    build_passes: 2,
   };
 }
 
@@ -168,7 +192,7 @@ if (args.scalesDir) {
       `edger_manifest_${label}.json`,
     );
     writeDatasetManifest(manifestPath, scaleManifest);
-    results.push(buildCache({
+    results.push(await buildCache({
       python: args.python,
       manifest: scaleManifest,
       shards: scaleManifest.shards,
@@ -179,7 +203,7 @@ if (args.scalesDir) {
     results.at(-1).manifest_hash = scaleManifest.manifest_hash;
   }
 } else {
-  results.push(buildCache({
+  results.push(await buildCache({
     python: args.python,
     manifest,
     shards: mixedShards,

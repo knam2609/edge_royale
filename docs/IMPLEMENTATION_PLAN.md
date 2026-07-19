@@ -22,7 +22,7 @@ Online PvP, player-facing bot levels, unlocks, mirror/self-play gameplay, model 
 - `src/ai`: live v1 policy, shadow v2 policy, frozen heuristic, and hidden baselines
 - `src/ai/v2`: spatial observation, autoregressive masks, compact JS inference
 - `src/replay`: replay compatibility
-- `scripts/edger-corpus*`: immutable corpus, replay validation, manifests, caches, and health
+- `scripts/edger-corpus*`: immutable corpus, parallel replay validation, manifests, caches, and health
 - `scripts/edger-v2-training.py`: PyTorch BC, critic, offline improvement, V-trace, scaling report, and actor export
 - `scripts/edger-league*`: exact-JavaScript snapshot actors and deterministic worker scheduling
 - `artifacts/edger-training/promoted`: reviewed live artifacts only
@@ -31,13 +31,14 @@ The simulator remains the source of truth. Training episodes and workers use the
 
 ## Current roadmap
 
-1. Run the 64-game resumable S3 pilot and retain its collection/cost report.
-2. Complete the ten-shard 10,000-match S3 collection only if the pilot projects at most eight hours on 16 workers.
-3. Train and frozen-evaluate the fixed 1%/10%/100% BC experiment without changing thresholds.
-4. Run one conservative offline-improvement phase and retain its accepted or rolled-back evidence.
-5. Run the 32-game league smoke and 1,000-game V-trace campaign from the shadow parent.
-6. Enforce the 11,300-game/180-minute exact-JavaScript throughput gate.
-7. Generate the live-v1 reference, run the full v2 evaluator, and review the generated promotion PR.
+1. Merge the production-readiness branch and use that one main-branch SHA for every campaign artifact.
+2. Run the 64-game resumable S3 pilot and retain its collection/cost report.
+3. Complete and strictly aggregate the ten-shard 10,000-match S3 collection only if the pilot projects at most eight hours on 16 workers.
+4. Launch the SSM-only `c7g.4xlarge` and train/frozen-evaluate the fixed 1%/10%/100% BC experiment without changing thresholds.
+5. Run one conservative offline-improvement phase and retain its accepted or rolled-back evidence.
+6. Run the isolated 32-game league smoke and 1,000-game V-trace campaign over the frozen base plus production rollout.
+7. Enforce the 11,300-game/180-minute exact-JavaScript throughput gate.
+8. Generate the live-v1 reference, run commit-bound tests/browser/full evaluation, and review the generated promotion PR.
 
 ## Quality gates
 
@@ -63,6 +64,10 @@ V2-specific implemented checks:
 - scaling gate before league launch
 - immutable checkpoint lineage
 - clean full-Git-SHA provenance for collection and training
+- bounded-memory two-pass dataset generation and 256-row Parquet groups
+- deterministic row-group/batch training and episode-grouped V-trace targets
+- strict ten-shard aggregation and parallel full-corpus verification
+- Git-SHA-bound external QA reports and immutable remote stage status
 
 The complete v2 promotion thresholds are implemented by the dedicated evaluator and remain blocking until a real full campaign passes them.
 

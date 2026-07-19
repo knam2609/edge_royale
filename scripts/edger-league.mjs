@@ -13,6 +13,8 @@ import {
   DEFAULT_CORPUS_STORE,
   buildDatasetManifest,
   canonicalJson,
+  mergeDatasetManifests,
+  readDatasetManifest,
   writeDatasetManifest,
 } from "./edger-corpus-core.mjs";
 import { spawnNativePython } from "./python-runtime.mjs";
@@ -27,7 +29,8 @@ function parseArgs(argv) {
     liveChampionReference: null,
     historicalAnchors: [],
     league: null,
-    store: process.env.EDGER_CORPUS_STORE ?? DEFAULT_CORPUS_STORE,
+    rolloutStore: process.env.EDGER_CORPUS_STORE ?? DEFAULT_CORPUS_STORE,
+    baseManifest: null,
     manifestOut: "artifacts/edger-training/manifests/edger_league_manifest.json",
     reportOut: null,
     matches: 32,
@@ -57,8 +60,13 @@ function parseArgs(argv) {
       parsed.historicalAnchors = argv[++index].split(",").filter(Boolean);
     } else if (arg === "--league" && argv[index + 1]) {
       parsed.league = argv[++index];
-    } else if (arg === "--store" && argv[index + 1]) {
-      parsed.store = argv[++index];
+    } else if (
+      (arg === "--store" || arg === "--rollout-store") &&
+      argv[index + 1]
+    ) {
+      parsed.rolloutStore = argv[++index];
+    } else if (arg === "--base-manifest" && argv[index + 1]) {
+      parsed.baseManifest = argv[++index];
     } else if (arg === "--manifest-out" && argv[index + 1]) {
       parsed.manifestOut = argv[++index];
     } else if (arg === "--report-out" && argv[index + 1]) {
@@ -103,6 +111,7 @@ function validateScalingReport(filePath) {
   const required = [
     "passed",
     "full_improves_held_out_joint_action_loss",
+    "full_held_out_joint_action_loss_below_10pct",
     "full_non_regressing_frozen_league_score",
   ];
   const failures = required.filter((key) => report[key] !== true);
@@ -275,7 +284,7 @@ async function collectLeagueEpisodes({ args, mainModel, league, specs }) {
     mainCheckpointId: mainModel.training?.checkpoint_id ?? null,
     mainLeagueRating: mainModel.training?.league_rating ?? null,
     temperature: args.temperature,
-    store: args.store,
+    store: args.rolloutStore,
   };
   const results = (
     await Promise.all(
@@ -356,7 +365,15 @@ try {
     league,
     specs,
   });
-  const manifest = buildDatasetManifest({ store: args.store });
+  const rolloutManifest = buildDatasetManifest({
+    episodeUris: results.map((result) => result.uri),
+  });
+  const baseManifest = args.baseManifest
+    ? readDatasetManifest(args.baseManifest)
+    : null;
+  const manifest = baseManifest
+    ? mergeDatasetManifests([baseManifest, rolloutManifest])
+    : rolloutManifest;
   writeDatasetManifest(args.manifestOut, manifest);
   const training = runVtraceIfRequested(args);
   const report = {
@@ -385,6 +402,18 @@ try {
       return counts;
     }, {}),
     results,
+    base_manifest: baseManifest
+      ? {
+          path: path.resolve(args.baseManifest),
+          manifest_hash: baseManifest.manifest_hash,
+          episodes: baseManifest.statistics.episodes,
+        }
+      : null,
+    rollout: {
+      store: args.rolloutStore,
+      manifest_hash: rolloutManifest.manifest_hash,
+      episodes: rolloutManifest.statistics.episodes,
+    },
     manifest: path.resolve(args.manifestOut),
     manifest_hash: manifest.manifest_hash,
     training,

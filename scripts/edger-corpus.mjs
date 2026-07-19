@@ -154,6 +154,49 @@ function runCollectionWorker(workerData) {
   });
 }
 
+function runValidationWorker(entries) {
+  return new Promise((resolve) => {
+    const results = [];
+    const failures = [];
+    const worker = new Worker(
+      new URL("./edger-corpus-validate-worker.mjs", import.meta.url),
+      { workerData: { entries } },
+    );
+    let settled = false;
+    const finish = (unexpectedFailure = null) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (unexpectedFailure) {
+        failures.push(unexpectedFailure);
+      }
+      resolve({ results, failures });
+    };
+    worker.on("message", (message) => {
+      if (message.type === "result") {
+        results.push(message.result);
+      } else if (message.type === "failure") {
+        failures.push(message.failure);
+      } else if (message.type === "done") {
+        finish();
+      }
+    });
+    worker.once("error", (error) => finish({
+      worker_failure: true,
+      error: error.stack || error.message,
+    }));
+    worker.once("exit", (code) => {
+      if (code !== 0) {
+        finish({
+          worker_failure: true,
+          error: `validation worker exited with code ${code}`,
+        });
+      }
+    });
+  });
+}
+
 function summarizeCoverage(results) {
   const coverage = {
     opponents: {},
@@ -375,22 +418,71 @@ function manifestCommand(args) {
   }).trimEnd());
 }
 
-function validateCommand(args) {
+async function validateCommand(args) {
   const manifest = args.manifest ? readDatasetManifest(args.manifest) : null;
-  const uris = manifest?.shards.map((shard) => shard.uri) ?? listLocalEpisodeUris(args.store);
-  const results = [];
-  for (const uri of uris) {
-    const episode = loadTrainingEpisode(uri);
-    results.push({ uri, ...verifyTrainingEpisodeReplay(episode) });
-  }
   if (manifest) {
     validateDatasetManifest(manifest);
   }
-  console.log(canonicalJson({
+  const entries = (
+    manifest?.shards.map((shard) => ({
+      uri: shard.uri,
+      checksum: shard.checksum,
+      episode_id: shard.episode_id,
+    })) ??
+    listLocalEpisodeUris(args.store).map((uri) => ({
+      uri,
+      checksum: null,
+      episode_id: path.basename(uri).split(".")[0] || null,
+    }))
+  ).map((entry, index) => ({ index, ...entry }));
+  const startedAt = new Date();
+  const workerCount = Math.min(args.workers, Math.max(1, entries.length));
+  const partitions = Array.from({ length: workerCount }, () => []);
+  entries.forEach((entry, index) => {
+    partitions[index % partitions.length].push(entry);
+  });
+  const workerReports = entries.length === 0
+    ? []
+    : await Promise.all(partitions.map(runValidationWorker));
+  const results = workerReports
+    .flatMap((workerReport) => workerReport.results)
+    .sort((left, right) => left.index - right.index);
+  const failures = workerReports.flatMap((workerReport) => workerReport.failures);
+  const report = {
+    schema_version: "edger_corpus_validation_report_v1",
     command: "validate",
+    status: failures.length === 0 && results.length === entries.length
+      ? "passed"
+      : "failed",
+    checked_at: new Date().toISOString(),
+    elapsed_seconds: (Date.now() - startedAt.getTime()) / 1000,
+    workers: {
+      requested: args.workers,
+      used: entries.length === 0 ? 0 : workerCount,
+    },
+    manifest_hash: manifest?.manifest_hash ?? null,
     episodes: results.length,
+    expected_episodes: entries.length,
+    checks: {
+      schemas: results.filter((result) => result.schema_verified).length,
+      compressed_checksums: results.filter(
+        (result) => result.checksum_verified === true,
+      ).length,
+      episode_ids: results.filter(
+        (result) => result.episode_id_verified === true,
+      ).length,
+      replay: results.filter((result) => result.replay_verified).length,
+      all_passed: failures.length === 0 && results.length === entries.length,
+    },
     results,
-  }).trimEnd());
+    failures,
+  };
+  fs.mkdirSync(path.dirname(path.resolve(args.report)), { recursive: true });
+  fs.writeFileSync(args.report, canonicalJson(report));
+  console.log(canonicalJson(report).trimEnd());
+  if (report.status !== "passed") {
+    process.exitCode = 1;
+  }
 }
 
 function runCanaryOnce({ seed, ticks }) {
@@ -551,7 +643,7 @@ function help() {
   console.log(`Usage:
   node scripts/edger-corpus.mjs collect [--store DIR|s3://...] [--matches EVEN] [--seed N] [--pair-offset N] [--workers 1-32] [--opponents ids] [--report FILE]
   node scripts/edger-corpus.mjs import --file replay.json [--store DIR|s3://...]
-  node scripts/edger-corpus.mjs validate [--store DIR|s3://...] [--manifest FILE]
+  node scripts/edger-corpus.mjs validate [--store DIR|s3://...] [--manifest FILE] [--workers 1-32] [--report FILE]
   node scripts/edger-corpus.mjs manifest [--store DIR|s3://...] [--out FILE]
   node scripts/edger-corpus.mjs health [--manifest FILE] [--state FILE] [--report FILE]
   node scripts/edger-corpus.mjs campaign-complete --manifest FILE [--state FILE]
@@ -565,7 +657,7 @@ try {
   } else if (args.command === "import") {
     importCommand(args);
   } else if (args.command === "validate") {
-    validateCommand(args);
+    await validateCommand(args);
   } else if (args.command === "manifest") {
     manifestCommand(args);
   } else if (args.command === "health") {

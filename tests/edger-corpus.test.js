@@ -3,12 +3,14 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 
 import {
   buildDatasetManifest,
   createTrainingEpisode,
   deriveDecisionSequence,
   loadTrainingEpisode,
+  mergeDatasetManifests,
   splitForEpisodeId,
   storeTrainingEpisode,
   validateDatasetManifest,
@@ -89,6 +91,38 @@ test("content-addressed corpus deduplicates and keeps stable whole-game splits",
   assert.equal(manifest.shards.length, 1);
   assert.equal(manifest.shards[0].split, splitForEpisodeId(episode.episode_id));
   assert.equal(loadTrainingEpisode(first.uri).episode_id, episode.episode_id);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("parallel corpus validation checks manifest checksums, IDs, and full replays", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "edger-corpus-validate-"));
+  const stored = [
+    makeCompletePassiveEpisode({ seed: 7210 }),
+    makeCompletePassiveEpisode({ seed: 7211 }),
+  ].map((episode) => storeTrainingEpisode({ episode, store: root }));
+  const manifest = buildDatasetManifest({
+    episodeUris: stored.map((entry) => entry.uri),
+  });
+  const manifestPath = path.join(root, "manifest.json");
+  const reportPath = path.join(root, "validation.json");
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+  const result = spawnSync(process.execPath, [
+    "scripts/edger-corpus.mjs",
+    "validate",
+    "--manifest",
+    manifestPath,
+    "--workers",
+    "2",
+    "--report",
+    reportPath,
+  ], { encoding: "utf8" });
+
+  assert.equal(result.status, 0, result.stderr);
+  const report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
+  assert.equal(report.status, "passed");
+  assert.equal(report.checks.compressed_checksums, 2);
+  assert.equal(report.checks.episode_ids, 2);
+  assert.equal(report.checks.replay, 2);
   fs.rmSync(root, { recursive: true, force: true });
 });
 
@@ -182,4 +216,27 @@ test("scaling reduces only nested training episodes and preserves held-out IDs",
     assert.equal(JSON.stringify(ids(one, split)), JSON.stringify(ids(full, split)));
     assert.equal(JSON.stringify(ids(ten, split)), JSON.stringify(ids(full, split)));
   }
+});
+
+test("base and rollout manifests merge without rematerializing base episodes", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "edger-manifest-merge-"));
+  const first = storeTrainingEpisode({
+    episode: makeCompletePassiveEpisode({ seed: 7220 }),
+    store: root,
+  });
+  const second = storeTrainingEpisode({
+    episode: makeCompletePassiveEpisode({ seed: 7221 }),
+    store: root,
+  });
+  const base = buildDatasetManifest({ episodeUris: [first.uri] });
+  const rollout = buildDatasetManifest({ episodeUris: [second.uri] });
+  const merged = mergeDatasetManifests([base, rollout]);
+
+  assert.equal(merged.statistics.episodes, 2);
+  assert.equal(merged.shards.length, 2);
+  assert.deepEqual(
+    merged.shards.map((shard) => shard.episode_id),
+    [first.episode_id, second.episode_id].sort(),
+  );
+  fs.rmSync(root, { recursive: true, force: true });
 });

@@ -13,9 +13,10 @@ import platform
 import random
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterator
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -55,6 +56,7 @@ KL_LIMIT = 0.05
 ADVANTAGE_TEMPERATURE = 0.25
 ADVANTAGE_WEIGHT_MIN = 0.1
 ADVANTAGE_WEIGHT_MAX = 20.0
+PARQUET_ROW_GROUP_SIZE = 256
 
 
 def canonical_json(value: Any) -> str:
@@ -293,18 +295,57 @@ def collate_batch(rows: list[dict[str, Tensor]]) -> Batch:
     )
 
 
-def load_parquet_rows(path: str | Path) -> tuple[list[dict[str, Any]], dict[str, str]]:
-    table = pq.read_table(path)
-    metadata = {
+def parquet_metadata(path: str | Path) -> dict[str, str]:
+    schema = pq.ParquetFile(path).schema_arrow
+    return {
         key.decode("utf8"): value.decode("utf8")
-        for key, value in (table.schema.metadata or {}).items()
+        for key, value in (schema.metadata or {}).items()
     }
-    return table.to_pylist(), metadata
 
 
-def make_stratum_vocab(rows: Iterable[dict[str, Any]]) -> dict[str, int]:
-    values = sorted({str(row.get("opponent_stratum", "unknown")) for row in rows})
-    return {value: index for index, value in enumerate(values or ["unknown"])}
+def iter_parquet_rows(
+    path: str | Path,
+    *,
+    split: str | None = None,
+    shuffle: bool = False,
+    seed: int = 1,
+    predicate: Callable[[dict[str, Any]], bool] | None = None,
+) -> Iterator[dict[str, Any]]:
+    parquet = pq.ParquetFile(path)
+    row_groups = list(range(parquet.num_row_groups))
+    if shuffle:
+        random.Random(seed).shuffle(row_groups)
+    for row_group in row_groups:
+        # Materialization is deliberately bounded to one deterministic 256-row group.
+        rows = parquet.read_row_group(row_group).to_pylist()
+        if shuffle:
+            random.Random(seed ^ ((row_group + 1) * 0x9E3779B1)).shuffle(rows)
+        for row in rows:
+            if split is not None and row.get("split") != split:
+                continue
+            if predicate is not None and not predicate(row):
+                continue
+            yield row
+
+
+def count_parquet_rows(
+    path: str | Path,
+    *,
+    split: str | None = None,
+    predicate: Callable[[dict[str, Any]], bool] | None = None,
+) -> int:
+    return sum(
+        1
+        for _ in iter_parquet_rows(path, split=split, predicate=predicate)
+    )
+
+
+def make_parquet_stratum_vocab(path: str | Path) -> dict[str, int]:
+    values = {
+        str(row.get("opponent_stratum", "unknown"))
+        for row in iter_parquet_rows(path)
+    }
+    return {value: index for index, value in enumerate(sorted(values or {"unknown"}))}
 
 
 def loader_for(
@@ -324,6 +365,34 @@ def loader_for(
         num_workers=0,
         collate_fn=collate_batch,
     )
+
+
+def batches_for_parquet(
+    path: str | Path,
+    vocab: dict[str, int],
+    batch_size: int,
+    *,
+    split: str | None,
+    shuffle: bool,
+    seed: int,
+    predicate: Callable[[dict[str, Any]], bool] | None = None,
+) -> Iterator[Batch]:
+    pending: list[dict[str, Any]] = []
+    for row in iter_parquet_rows(
+        path,
+        split=split,
+        shuffle=shuffle,
+        seed=seed,
+        predicate=predicate,
+    ):
+        pending.append(row)
+        if len(pending) == batch_size:
+            dataset = DecisionDataset(pending, vocab)
+            yield collate_batch([dataset[index] for index in range(len(dataset))])
+            pending = []
+    if pending:
+        dataset = DecisionDataset(pending, vocab)
+        yield collate_batch([dataset[index] for index in range(len(dataset))])
 
 
 def mask_logits(logits: Tensor, mask: Tensor) -> Tensor:
@@ -366,26 +435,32 @@ def forward_batch(model: EdgerV2Policy, batch: Batch) -> dict[str, Tensor]:
     )
 
 
-def evaluate_loss(
+def evaluate_loss_parquet(
     model: EdgerV2Policy,
-    rows: list[dict[str, Any]],
+    path: str | Path,
+    split: str,
     vocab: dict[str, int],
     batch_size: int,
     device: torch.device,
-) -> dict[str, float]:
-    if not rows:
-        return {
-            "joint_action_loss": None,
-            "card_loss": None,
-            "placement_loss": None,
-            "delay_loss": None,
-            "value_loss": None,
-        }
+) -> dict[str, float | None]:
     model.eval()
-    totals = {"joint": 0.0, "card": 0.0, "placement": 0.0, "delay": 0.0, "value": 0.0}
+    totals = {
+        "joint": 0.0,
+        "card": 0.0,
+        "placement": 0.0,
+        "delay": 0.0,
+        "value": 0.0,
+    }
     count = 0
     with torch.no_grad():
-        for batch in loader_for(rows, vocab, batch_size, False, 1):
+        for batch in batches_for_parquet(
+            path,
+            vocab,
+            batch_size,
+            split=split,
+            shuffle=False,
+            seed=1,
+        ):
             batch = batch.to(device)
             logits = forward_batch(model, batch)
             joint, parts = actor_losses(logits, batch)
@@ -398,6 +473,14 @@ def evaluate_loss(
             totals["delay"] += parts["delay"].sum().item()
             totals["value"] += value_loss.sum().item()
             count += batch_count
+    if count == 0:
+        return {
+            "joint_action_loss": None,
+            "card_loss": None,
+            "placement_loss": None,
+            "delay_loss": None,
+            "value_loss": None,
+        }
     return {
         "joint_action_loss": totals["joint"] / count,
         "card_loss": totals["card"] / count,
@@ -446,22 +529,28 @@ def actor_entropy(logits: dict[str, Tensor], batch: Batch) -> Tensor:
     return entropy
 
 
-def evaluate_kl(
+def evaluate_kl_parquet(
     reference: EdgerV2Policy,
     candidate: EdgerV2Policy,
-    rows: list[dict[str, Any]],
+    path: str | Path,
+    split: str,
     vocab: dict[str, int],
     batch_size: int,
     device: torch.device,
 ) -> float:
-    if not rows:
-        return 0.0
     reference.eval()
     candidate.eval()
     total = 0.0
     count = 0
     with torch.no_grad():
-        for batch in loader_for(rows, vocab, batch_size, False, 1):
+        for batch in batches_for_parquet(
+            path,
+            vocab,
+            batch_size,
+            split=split,
+            shuffle=False,
+            seed=1,
+        ):
             batch = batch.to(device)
             reference_logits = forward_batch(reference, batch)
             candidate_logits = forward_batch(candidate, batch)
@@ -551,45 +640,47 @@ def load_checkpoint(path: str | Path, device: torch.device) -> tuple[dict[str, A
     return payload, model
 
 
-def winner_finetune_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def winner_finetune_predicate(
+    path: str | Path,
+) -> tuple[Callable[[dict[str, Any]], bool] | None, int]:
     ratings = sorted({
         float(row["policy_league_rating"])
-        for row in rows
+        for row in iter_parquet_rows(path, split="train")
         if row.get("policy_league_rating") is not None
     })
     if not ratings:
-        return []
+        return None, 0
     threshold = ratings[max(0, math.ceil(len(ratings) * 0.75) - 1)]
-    return [
-        row
-        for row in rows
-        if row.get("is_winner")
-        and row.get("policy_league_rating") is not None
-        and float(row["policy_league_rating"]) >= threshold
-    ]
+
+    def selected(row: dict[str, Any]) -> bool:
+        rating = row.get("policy_league_rating")
+        return bool(row.get("is_winner")) and rating is not None and float(rating) >= threshold
+
+    return selected, count_parquet_rows(path, split="train", predicate=selected)
 
 
 def run_bc(args: argparse.Namespace) -> None:
     require_clean_git()
     seed_everything(args.seed)
-    rows, metadata = load_parquet_rows(args.dataset)
-    train_rows = [row for row in rows if row["split"] == "train"]
-    validation_rows = [row for row in rows if row["split"] == "validation"]
-    if not train_rows:
+    metadata = parquet_metadata(args.dataset)
+    train_samples = count_parquet_rows(args.dataset, split="train")
+    validation_samples = count_parquet_rows(args.dataset, split="validation")
+    if not train_samples:
         raise ValueError("BC dataset has no training rows")
-    vocab = make_stratum_vocab(rows)
+    vocab = make_parquet_stratum_vocab(args.dataset)
     device = torch.device(args.device)
     model = EdgerV2Policy(max(1, len(vocab))).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
 
     for epoch in range(args.epochs):
         model.train()
-        for batch in loader_for(
-            train_rows,
+        for batch in batches_for_parquet(
+            args.dataset,
             vocab,
             args.batch_size,
-            True,
-            args.seed + epoch,
+            split="train",
+            shuffle=True,
+            seed=args.seed + epoch,
         ):
             batch = batch.to(device)
             optimizer.zero_grad(set_to_none=True)
@@ -605,11 +696,19 @@ def run_bc(args: argparse.Namespace) -> None:
             nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
 
-    finetune = winner_finetune_rows(train_rows)
-    if finetune:
+    finetune_predicate, finetune_samples = winner_finetune_predicate(args.dataset)
+    if finetune_predicate is not None:
         finetune_optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate * 0.1)
         model.train()
-        for batch in loader_for(finetune, vocab, args.batch_size, True, args.seed ^ 0x51A7):
+        for batch in batches_for_parquet(
+            args.dataset,
+            vocab,
+            args.batch_size,
+            split="train",
+            shuffle=True,
+            seed=args.seed ^ 0x51A7,
+            predicate=finetune_predicate,
+        ):
             batch = batch.to(device)
             finetune_optimizer.zero_grad(set_to_none=True)
             logits = forward_batch(model, batch)
@@ -621,12 +720,16 @@ def run_bc(args: argparse.Namespace) -> None:
         optimizer = finetune_optimizer
 
     metrics = {
-        "train_samples": len(train_rows),
-        "validation_samples": len(validation_rows),
-        "winner_top_quartile_finetune_samples": len(finetune),
-        "validation": evaluate_loss(
-            model, validation_rows, vocab, args.batch_size, device
+        "train_samples": train_samples,
+        "validation_samples": validation_samples,
+        "winner_top_quartile_finetune_samples": finetune_samples,
+        "validation": evaluate_loss_parquet(
+            model, args.dataset, "validation", vocab, args.batch_size, device
         ),
+        "streaming": {
+            "parquet_row_group_size": PARQUET_ROW_GROUP_SIZE,
+            "deterministic_row_group_shuffle": True,
+        },
     }
     payload = checkpoint_payload(
         model=model,
@@ -665,9 +768,9 @@ def run_offline(args: argparse.Namespace) -> None:
     for parameter in model.value_head.parameters():
         parameter.requires_grad_(False)
 
-    rows, metadata = load_parquet_rows(args.dataset)
-    train_rows = [row for row in rows if row["split"] == "train"]
-    validation_rows = [row for row in rows if row["split"] == "validation"]
+    metadata = parquet_metadata(args.dataset)
+    train_samples = count_parquet_rows(args.dataset, split="train")
+    validation_samples = count_parquet_rows(args.dataset, split="validation")
     vocab = parent["opponent_stratum_vocabulary"]
     optimizer = torch.optim.Adam(actor_parameters(model), lr=args.learning_rate)
     accepted_state = copy.deepcopy(model.state_dict())
@@ -678,12 +781,13 @@ def run_offline(args: argparse.Namespace) -> None:
 
     for epoch in range(args.epochs):
         model.train()
-        for batch in loader_for(
-            train_rows,
+        for batch in batches_for_parquet(
+            args.dataset,
             vocab,
             args.batch_size,
-            True,
-            args.seed + epoch,
+            split="train",
+            shuffle=True,
+            seed=args.seed + epoch,
         ):
             batch = batch.to(device)
             optimizer.zero_grad(set_to_none=True)
@@ -701,10 +805,11 @@ def run_offline(args: argparse.Namespace) -> None:
             nn.utils.clip_grad_norm_(actor_parameters(model), 1.0)
             optimizer.step()
 
-        validation_kl = evaluate_kl(
+        validation_kl = evaluate_kl_parquet(
             reference,
             model,
-            validation_rows,
+            args.dataset,
+            "validation",
             vocab,
             args.batch_size,
             device,
@@ -713,10 +818,11 @@ def run_offline(args: argparse.Namespace) -> None:
             rejected_validation_kl = validation_kl
             rollback_applied = True
             model.load_state_dict(accepted_state)
-            validation_kl = evaluate_kl(
+            validation_kl = evaluate_kl_parquet(
                 reference,
                 model,
-                validation_rows,
+                args.dataset,
+                "validation",
                 vocab,
                 args.batch_size,
                 device,
@@ -726,8 +832,8 @@ def run_offline(args: argparse.Namespace) -> None:
         accepted_epochs = epoch + 1
 
     metrics = {
-        "train_samples": len(train_rows),
-        "validation_samples": len(validation_rows),
+        "train_samples": train_samples,
+        "validation_samples": validation_samples,
         "accepted_epochs": accepted_epochs,
         "validation_kl_from_bc": validation_kl,
         "rollback_applied": rollback_applied,
@@ -735,9 +841,13 @@ def run_offline(args: argparse.Namespace) -> None:
         "kl_limit": KL_LIMIT,
         "advantage_temperature": ADVANTAGE_TEMPERATURE,
         "advantage_weight_clip": [ADVANTAGE_WEIGHT_MIN, ADVANTAGE_WEIGHT_MAX],
-        "validation": evaluate_loss(
-            model, validation_rows, vocab, args.batch_size, device
+        "validation": evaluate_loss_parquet(
+            model, args.dataset, "validation", vocab, args.batch_size, device
         ),
+        "streaming": {
+            "parquet_row_group_size": PARQUET_ROW_GROUP_SIZE,
+            "deterministic_row_group_shuffle": True,
+        },
     }
     payload = checkpoint_payload(
         model=model,
@@ -829,15 +939,101 @@ def attach_vtrace_targets(
     return eligible
 
 
+def iter_vtrace_episodes(path: str | Path) -> Iterator[list[dict[str, Any]]]:
+    current_episode_id: str | None = None
+    current_rows: list[dict[str, Any]] = []
+    completed: set[str] = set()
+    for row in iter_parquet_rows(path, split="train"):
+        episode_id = str(row["episode_id"])
+        if current_episode_id is None:
+            current_episode_id = episode_id
+        if episode_id != current_episode_id:
+            if current_rows:
+                yield current_rows
+            completed.add(current_episode_id)
+            if episode_id in completed:
+                raise ValueError(
+                    "V-trace source must keep each episode in one contiguous sequence"
+                )
+            current_episode_id = episode_id
+            current_rows = []
+        if row.get("vtrace_eligible") and row.get("behavior_log_probability") is not None:
+            current_rows.append(row)
+    if current_rows:
+        yield current_rows
+
+
+def write_vtrace_target_parquet(
+    *,
+    model: EdgerV2Policy,
+    source: str | Path,
+    out: str | Path,
+    vocab: dict[str, int],
+    batch_size: int,
+    device: torch.device,
+) -> int:
+    output = Path(out)
+    partial = output.with_suffix(output.suffix + ".partial")
+    partial.unlink(missing_ok=True)
+    writer: pq.ParquetWriter | None = None
+    arrow_schema: pa.Schema | None = None
+    written = 0
+    source_metadata = {
+        key.encode(): value.encode()
+        for key, value in parquet_metadata(source).items()
+    }
+    source_metadata[b"vtrace_targets"] = b"episode_grouped_v1"
+
+    def write_rows(rows: list[dict[str, Any]]) -> None:
+        nonlocal writer, arrow_schema, written
+        for start in range(0, len(rows), PARQUET_ROW_GROUP_SIZE):
+            group = rows[start:start + PARQUET_ROW_GROUP_SIZE]
+            if arrow_schema is None:
+                table = pa.Table.from_pylist(group)
+                arrow_schema = table.schema.with_metadata(source_metadata)
+                writer = pq.ParquetWriter(
+                    partial,
+                    arrow_schema,
+                    compression="zstd",
+                    compression_level=9,
+                    use_dictionary=True,
+                )
+            table = pa.Table.from_pylist(group, schema=arrow_schema)
+            assert writer is not None
+            writer.write_table(table, row_group_size=PARQUET_ROW_GROUP_SIZE)
+            written += len(group)
+
+    try:
+        for episode_rows in iter_vtrace_episodes(source):
+            targets = attach_vtrace_targets(
+                model,
+                episode_rows,
+                vocab,
+                batch_size,
+                device,
+            )
+            write_rows(targets)
+        if writer is None:
+            raise ValueError("league cache has no V-trace-eligible simulator samples")
+        writer.close()
+        writer = None
+        partial.replace(output)
+    except BaseException:
+        if writer is not None:
+            writer.close()
+        partial.unlink(missing_ok=True)
+        raise
+    return written
+
+
 def run_vtrace(args: argparse.Namespace) -> None:
     require_clean_git()
     seed_everything(args.seed)
     device = torch.device(args.device)
     parent, model = load_checkpoint(args.checkpoint, device)
-    rows, metadata = load_parquet_rows(args.dataset)
+    metadata = parquet_metadata(args.dataset)
     vocab = parent["opponent_stratum_vocabulary"]
-    train_source = [row for row in rows if row["split"] == "train"]
-    validation_rows = [row for row in rows if row["split"] == "validation"]
+    validation_samples = count_parquet_rows(args.dataset, split="validation")
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
     optimizer_restored = False
     if parent.get("phase") == "impala_vtrace_snapshot_league":
@@ -847,47 +1043,50 @@ def run_vtrace(args: argparse.Namespace) -> None:
         optimizer_restored = True
     trained_samples = 0
 
-    for epoch in range(args.epochs):
-        targets = attach_vtrace_targets(
-            model,
-            train_source,
-            vocab,
-            args.batch_size,
-            device,
-        )
-        trained_samples = len(targets)
-        model.train()
-        for batch in loader_for(
-            targets,
-            vocab,
-            args.batch_size,
-            True,
-            args.seed + epoch,
-        ):
-            batch = batch.to(device)
-            optimizer.zero_grad(set_to_none=True)
-            logits = forward_batch(model, batch)
-            log_probability = selected_joint_log_probability(logits, batch)
-            entropy = actor_entropy(logits, batch)
-            value = model.value(logits["fused"], batch.stratum)
-            policy_loss = -(
-                log_probability
-                * batch.vtrace_advantage.detach()
-                * batch.sample_weight
-            ).mean()
-            value_loss = F.mse_loss(value, batch.vtrace_target)
-            loss = (
-                policy_loss
-                + args.value_loss_weight * value_loss
-                - args.entropy_bonus * entropy.mean()
+    with tempfile.TemporaryDirectory(prefix="edger-vtrace-targets-") as target_dir:
+        for epoch in range(args.epochs):
+            target_path = Path(target_dir) / f"epoch-{epoch}.parquet"
+            trained_samples = write_vtrace_target_parquet(
+                model=model,
+                source=args.dataset,
+                out=target_path,
+                vocab=vocab,
+                batch_size=args.batch_size,
+                device=device,
             )
-            loss.backward()
-            nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            optimizer.step()
+            model.train()
+            for batch in batches_for_parquet(
+                target_path,
+                vocab,
+                args.batch_size,
+                split="train",
+                shuffle=True,
+                seed=args.seed + epoch,
+            ):
+                batch = batch.to(device)
+                optimizer.zero_grad(set_to_none=True)
+                logits = forward_batch(model, batch)
+                log_probability = selected_joint_log_probability(logits, batch)
+                entropy = actor_entropy(logits, batch)
+                value = model.value(logits["fused"], batch.stratum)
+                policy_loss = -(
+                    log_probability
+                    * batch.vtrace_advantage.detach()
+                    * batch.sample_weight
+                ).mean()
+                value_loss = F.mse_loss(value, batch.vtrace_target)
+                loss = (
+                    policy_loss
+                    + args.value_loss_weight * value_loss
+                    - args.entropy_bonus * entropy.mean()
+                )
+                loss.backward()
+                nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                optimizer.step()
 
     metrics = {
         "train_samples": trained_samples,
-        "validation_samples": len(validation_rows),
+        "validation_samples": validation_samples,
         "vtrace": {
             "rho_clip": 1.0,
             "trace_c_clip": 1.0,
@@ -895,9 +1094,11 @@ def run_vtrace(args: argparse.Namespace) -> None:
             "parent_optimizer_restored": optimizer_restored,
             "epochs": args.epochs,
             "entropy_bonus": args.entropy_bonus,
+            "episode_grouped_target_parquet": True,
+            "target_row_group_size": PARQUET_ROW_GROUP_SIZE,
         },
-        "validation": evaluate_loss(
-            model, validation_rows, vocab, args.batch_size, device
+        "validation": evaluate_loss_parquet(
+            model, args.dataset, "validation", vocab, args.batch_size, device
         ),
     }
     payload = checkpoint_payload(
@@ -1080,40 +1281,75 @@ def run_parity(args: argparse.Namespace) -> None:
 
 
 def run_prepare(args: argparse.Namespace) -> None:
-    rows = []
-    with open(args.input, "r", encoding="utf8") as handle:
-        for line in handle:
-            if line.strip():
-                rows.append(json.loads(line))
-    if not rows:
-        raise ValueError("cannot prepare an empty decision cache")
-    table = pa.Table.from_pylist(rows)
-    metadata = dict(table.schema.metadata or {})
-    metadata.update(
-        {
-            b"schema_version": b"edger_decision_parquet_v1",
-            b"manifest_hash": args.manifest_hash.encode(),
-            b"scale": str(args.scale).encode(),
-            b"compression": b"zstd",
-        }
-    )
-    table = table.replace_schema_metadata(metadata)
     output = Path(args.out)
     output.parent.mkdir(parents=True, exist_ok=True)
-    pq.write_table(
-        table,
-        output,
-        compression="zstd",
-        compression_level=9,
-        use_dictionary=True,
-    )
+    partial = output.with_suffix(output.suffix + ".partial")
+    partial.unlink(missing_ok=True)
+    handle = sys.stdin if args.input == "-" else open(args.input, "r", encoding="utf8")
+    writer: pq.ParquetWriter | None = None
+    arrow_schema: pa.Schema | None = None
+    pending: list[dict[str, Any]] = []
+    rows_written = 0
+
+    def flush() -> None:
+        nonlocal writer, arrow_schema, rows_written
+        if not pending:
+            return
+        if arrow_schema is None:
+            table = pa.Table.from_pylist(pending)
+            metadata = dict(table.schema.metadata or {})
+            metadata.update(
+                {
+                    b"schema_version": b"edger_decision_parquet_v1",
+                    b"manifest_hash": args.manifest_hash.encode(),
+                    b"scale": str(args.scale).encode(),
+                    b"compression": b"zstd",
+                    b"row_group_size": str(PARQUET_ROW_GROUP_SIZE).encode(),
+                }
+            )
+            arrow_schema = table.schema.with_metadata(metadata)
+            writer = pq.ParquetWriter(
+                partial,
+                arrow_schema,
+                compression="zstd",
+                compression_level=9,
+                use_dictionary=True,
+            )
+        table = pa.Table.from_pylist(pending, schema=arrow_schema)
+        assert writer is not None
+        writer.write_table(table, row_group_size=PARQUET_ROW_GROUP_SIZE)
+        rows_written += len(pending)
+        pending.clear()
+
+    try:
+        for line in handle:
+            if not line.strip():
+                continue
+            pending.append(json.loads(line))
+            if len(pending) == PARQUET_ROW_GROUP_SIZE:
+                flush()
+        flush()
+        if writer is None:
+            raise ValueError("cannot prepare an empty decision cache")
+        writer.close()
+        writer = None
+        partial.replace(output)
+    except BaseException:
+        if writer is not None:
+            writer.close()
+        partial.unlink(missing_ok=True)
+        raise
+    finally:
+        if handle is not sys.stdin:
+            handle.close()
     print(
         json.dumps(
             {
                 "cache": str(output.resolve()),
-                "rows": len(rows),
+                "rows": rows_written,
                 "bytes": output.stat().st_size,
                 "compression": "zstd",
+                "row_group_size": PARQUET_ROW_GROUP_SIZE,
             },
             indent=2,
         )
@@ -1128,6 +1364,7 @@ def run_league_guard(args: argparse.Namespace) -> None:
         )
     required = {
         "full_improves_held_out_joint_action_loss",
+        "full_held_out_joint_action_loss_below_10pct",
         "full_non_regressing_frozen_league_score",
     }
     missing = sorted(key for key in required if not report.get(key))
@@ -1265,11 +1502,13 @@ def run_scaling_report(args: argparse.Namespace) -> None:
             "scaling evidence requires validation joint_action_loss and frozen_league_score"
         )
     loss_passed = float(full_loss) < float(ten_loss)
+    absolute_loss_passed = float(full_loss) < 0.10
     league_passed = float(full_league_score) >= float(ten_league_score)
     report = {
         "schema_version": "edger_data_scaling_report_v1",
-        "passed": loss_passed and league_passed,
+        "passed": loss_passed and absolute_loss_passed and league_passed,
         "full_improves_held_out_joint_action_loss": loss_passed,
+        "full_held_out_joint_action_loss_below_10pct": absolute_loss_passed,
         "full_non_regressing_frozen_league_score": league_passed,
         "scales": {
             label: {

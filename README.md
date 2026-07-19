@@ -69,9 +69,11 @@ npm run edger:corpus:collect -- \
 # Validate and import a manually opted-in replay.
 npm run edger:corpus:import -- --file /path/to/edge-royale-replay.json
 
-# Validate all replay hashes/events and build an immutable manifest.
-npm run edger:corpus:validate
 npm run edger:corpus:manifest -- --out /private/tmp/edger_manifest.json
+npm run edger:corpus:validate -- \
+  --manifest /private/tmp/edger_manifest.json \
+  --workers 16 \
+  --report /private/tmp/edger_validation.json
 
 # Build disposable Parquet/Zstd caches, including fixed scaling subsets.
 npm run edger:dataset -- \
@@ -99,6 +101,15 @@ one verified compatibility/seed/side/opponent receipt per match, and resumes
 safely from those receipts. Match specifications and report results are stable
 across worker counts. `.github/workflows/edger-corpus-collect.yml` runs the
 production 10,000-match collection as ten resumable 1,000-game S3 shards.
+Its aggregator rejects gaps, overlaps, duplicate episodes, mixed commits or
+specifications, wrong side/opponent counts, failures, and incomplete replay
+verification before freezing the manifest.
+
+Cache construction is bounded-memory: it counts balancing strata in a first
+pass, streams decision rows in a second pass, and writes deterministic 256-row
+Parquet groups. BC, offline improvement, and V-trace iterate deterministically
+shuffled row groups and batches. V-trace targets are written episode-by-episode
+to a temporary Parquet cache.
 
 Scaling caches reduce only training episodes. Validation and test episode lists
 are identical in the 1%, 10%, and 100% manifests. Export each BC checkpoint,
@@ -127,11 +138,37 @@ npm run edger:train:league -- \
   --live-champion-model artifacts/edger-training/promoted/edger_policy_current.json \
   --live-champion-reference /path/to/live-v1-reference.json \
   --historical-anchors /path/to/anchor-1.json,/path/to/anchor-2.json \
+  --base-manifest /path/to/frozen-10000-game-manifest.json \
+  --rollout-store s3://bucket/campaigns/current/league-production/rollout \
   --dataset-out /private/tmp/league.parquet \
   --out-checkpoint /private/tmp/league_candidate.pt
 ```
 
+The base manifest plus only that command's rollout forms the learner dataset.
+Use a different rollout prefix for the 32-game smoke so smoke episodes cannot
+enter production lineage.
+
 See `docs/EDGER_TRAINING.md` for schemas, object layout, learning rules, league allocation, and campaign triggers.
+
+## First production campaign infrastructure
+
+`infra/edger-campaign.yaml` provisions the retained encrypted/versioned private
+bucket, a `main`-only GitHub OIDC role, an SSM instance profile, and an
+egress-only campaign VPC in `ap-southeast-2`. It uses no AWS access keys,
+inbound ports, or SSH key.
+
+```bash
+npm run edger:campaign:remote -- launch
+npm run edger:campaign:remote -- status
+npm run edger:campaign:remote -- terminate
+```
+
+Launch creates an on-demand `c7g.4xlarge` Amazon Linux 2023 arm64 instance with
+encrypted 200 GiB gp3 storage, instance-initiated termination, and a 24-hour
+safety shutdown. Completed stage records are immutable and bound to one Git
+SHA. Failed stages preserve evidence and never change live v1. GitHub opens an
+unmerged promotion PR only after downloading and checksum-validating the exact
+passing candidate and report.
 
 ## Validation
 

@@ -327,17 +327,39 @@ function fail(reason, details = {}) {
   return { passed: false, reason, ...details };
 }
 
-function externalGate(filePath, label) {
+export function validateExternalCampaignReport(
+  report,
+  { label, expectedGitCommit },
+) {
+  if (!report?.passed) {
+    return fail(`${label} report failed`);
+  }
+  if (
+    typeof expectedGitCommit !== "string" ||
+    expectedGitCommit.length < 7 ||
+    report.git_commit !== expectedGitCommit
+  ) {
+    return fail(`${label} report Git commit does not match the campaign`, {
+      expected_git_commit: expectedGitCommit ?? null,
+      report_git_commit: report?.git_commit ?? null,
+    });
+  }
+  return pass({ git_commit: report.git_commit });
+}
+
+function externalGate(filePath, label, expectedGitCommit) {
   if (!filePath) {
     return fail(`${label} report was not supplied`);
   }
   const report = JSON.parse(fs.readFileSync(filePath, "utf8"));
-  return report.passed
-    ? pass({ report: path.resolve(filePath) })
-    : fail(`${label} report failed`, { report: path.resolve(filePath) });
+  const gate = validateExternalCampaignReport(report, {
+    label,
+    expectedGitCommit,
+  });
+  return { ...gate, report: path.resolve(filePath) };
 }
 
-function checkCandidateParity(modelPath, model) {
+export function checkCandidateParity(modelPath, model) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "edger-v2-eval-parity-"));
   try {
     const engine = createProductionEngine({ seed: 20260718 });
@@ -469,6 +491,7 @@ export async function evaluateEdgerV2Candidate({
   const candidate = validateEdgerV2PolicyModel(
     JSON.parse(fs.readFileSync(candidateModelPath, "utf8")),
   );
+  const campaignGitCommit = candidate.training?.git_commit ?? null;
   const candidateBytes = fs.statSync(candidateModelPath).size;
   const champion = descriptorForModel(championModelPath);
   const anchors = anchorModelPaths.map(descriptorForModel);
@@ -624,8 +647,16 @@ export async function evaluateEdgerV2Candidate({
           ...timing,
           reference_hardware: referenceHardware,
         }),
-    full_test_suite: externalGate(testReportPath, "full test suite"),
-    browser_smoke: externalGate(browserReportPath, "browser smoke"),
+    full_test_suite: externalGate(
+      testReportPath,
+      "full test suite",
+      campaignGitCommit,
+    ),
+    browser_smoke: externalGate(
+      browserReportPath,
+      "browser smoke",
+      campaignGitCommit,
+    ),
   };
   const failures = Object.entries(gates)
     .filter(([, gate]) => !gate.passed)
@@ -634,6 +665,7 @@ export async function evaluateEdgerV2Candidate({
     schema_version: EDGER_V2_EVALUATION_REPORT_SCHEMA,
     evaluated_at: new Date().toISOString(),
     candidate_model_id: candidate.model_id,
+    campaign_git_commit: campaignGitCommit,
     candidate_model: path.resolve(candidateModelPath),
     candidate_artifact_checksum: sha256File(candidateModelPath),
     champion_model_id: champion.policy_id,

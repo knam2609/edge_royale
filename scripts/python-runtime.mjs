@@ -1,4 +1,4 @@
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 
 function isTranslatedMacProcess() {
   if (process.platform !== "darwin") {
@@ -29,6 +29,16 @@ export function spawnNativePython(args, options = {}) {
   const { python, ...spawnOptions } = options;
   const launch = getNativePythonCommand(python);
   return spawnSync(
+    launch.command,
+    [...launch.prefixArgs, ...args],
+    spawnOptions,
+  );
+}
+
+export function spawnNativePythonAsync(args, options = {}) {
+  const { python, ...spawnOptions } = options;
+  const launch = getNativePythonCommand(python);
+  return spawn(
     launch.command,
     [...launch.prefixArgs, ...args],
     spawnOptions,
