@@ -237,7 +237,11 @@ function runWorker(workerData) {
   });
 }
 
-async function executeSpecs({ candidateModelPath, specs, workers }) {
+export async function executeEdgerV2EvaluationSpecs({
+  candidateModelPath,
+  specs,
+  workers,
+}) {
   const partitions = Array.from(
     { length: Math.min(workers, specs.length) },
     () => [],
@@ -478,7 +482,7 @@ export async function evaluateEdgerV2Candidate({
     anchors,
     weakBaselines,
   });
-  const results = await executeSpecs({
+  const results = await executeEdgerV2EvaluationSpecs({
     candidateModelPath,
     specs,
     workers,

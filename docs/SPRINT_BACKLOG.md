@@ -13,7 +13,7 @@
 - `AI-PERF-001` Increase production rollout/evaluation throughput.
   - Done when 10,000 safety games and full promotion evaluation complete in a practical campaign window.
 - `QA-BROWSER-001` Standardize browser smoke.
-  - Done when Playwright imports and Chromium launch reliably locally and in CI.
+  - Done when the Node 20 supervisor/worker smoke, replay-download schema check, Chromium launch, and CI run all pass.
 - `DOC-001` Keep cumulative training and Edger-only product docs aligned.
   - Done continuously; no daily-PPO or player-facing training claims may return.
 
@@ -30,6 +30,11 @@
 - PyTorch behavior cloning, critic, top-quartile winner pass, offline advantage weighting, KL rollback, and float32 export.
 - Golden PyTorch/generated-JS parity tests.
 - Fixed scaling-cache/report interfaces and hard league gate.
+- Nested training-only scaling manifests with complete identical held-out sets.
+- Frozen five-opponent scaling evaluator and checksum-bound scaling evidence.
+- Parallel paired corpus workers, verified content-addressed receipts, failed reports, and exact resumption.
+- Manual ten-shard S3 production collection with mandatory read/write preflight.
+- Browser smoke supervisor/worker split and identity-free replay-download assertions.
 - Deterministic paired-seed worker scheduling, snapshot/PFSP allocation, exact-JS rollout episodes, and V-trace learner.
 - Daily corpus-health/canary workflow and separate cumulative campaign workflow.
 - Full v2 evaluator with two champion blocks, paired bootstrap, anchor regression, weak baselines, frozen league, 10,000 repeated safety games, replay, parity, tactical, timing, test, and browser gates.

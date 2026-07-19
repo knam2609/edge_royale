@@ -10,11 +10,10 @@ import {
   deriveDecisionSequence,
   loadTrainingEpisode,
   readDatasetManifest,
-  sha256Hex,
-  splitForEpisodeId,
   validateDatasetManifest,
   writeDatasetManifest,
 } from "./edger-corpus-core.mjs";
+import { deterministicTrainingScale } from "./edger-dataset-core.mjs";
 import { spawnNativePython } from "./python-runtime.mjs";
 
 function parseArgs(argv) {
@@ -69,29 +68,6 @@ function selectDefaultMix(shards, maxPlayerFraction) {
   return [...simulator, ...player.slice(0, maximumPlayers)].sort(
     (left, right) => left.episode_id.localeCompare(right.episode_id),
   );
-}
-
-function deterministicScale(shards, fraction) {
-  if (fraction >= 1) {
-    return [...shards];
-  }
-  const bySplit = new Map();
-  for (const shard of shards) {
-    const split = splitForEpisodeId(shard.episode_id);
-    const list = bySplit.get(split) ?? [];
-    list.push(shard);
-    bySplit.set(split, list);
-  }
-  const selected = [];
-  for (const list of bySplit.values()) {
-    const ordered = [...list].sort((left, right) => {
-      const leftHash = sha256Hex(`${left.episode_id}|scale`);
-      const rightHash = sha256Hex(`${right.episode_id}|scale`);
-      return leftHash.localeCompare(rightHash);
-    });
-    selected.push(...ordered.slice(0, Math.max(1, Math.ceil(ordered.length * fraction))));
-  }
-  return selected.sort((left, right) => left.episode_id.localeCompare(right.episode_id));
 }
 
 function addBalancingWeights(rows) {
@@ -183,7 +159,7 @@ const results = [];
 
 if (args.scalesDir) {
   for (const [label, fraction] of [["1pct", 0.01], ["10pct", 0.1], ["100pct", 1]]) {
-    const shards = deterministicScale(mixedShards, fraction);
+    const shards = deterministicTrainingScale(mixedShards, fraction);
     const scaleManifest = buildDatasetManifest({
       episodeUris: shards.map((shard) => shard.uri),
     });

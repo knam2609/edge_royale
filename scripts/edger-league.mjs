@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import { Worker } from "node:worker_threads";
 
 import { HEURISTIC_BOT_ID } from "../src/ai/botRuntime.js";
+import { validateEdgerPolicyModel } from "../src/ai/mlPolicy.js";
 import { validateEdgerV2PolicyModel } from "../src/ai/v2/policy.js";
 import { createRng } from "../src/sim/random.js";
 import {
@@ -22,6 +23,9 @@ function parseArgs(argv) {
   const parsed = {
     scalingReport: null,
     model: null,
+    liveChampionModel: "artifacts/edger-training/promoted/edger_policy_current.json",
+    liveChampionReference: null,
+    historicalAnchors: [],
     league: null,
     store: process.env.EDGER_CORPUS_STORE ?? DEFAULT_CORPUS_STORE,
     manifestOut: "artifacts/edger-training/manifests/edger_league_manifest.json",
@@ -40,8 +44,17 @@ function parseArgs(argv) {
     const arg = argv[index];
     if (arg === "--scaling-report" && argv[index + 1]) {
       parsed.scalingReport = argv[++index];
-    } else if (arg === "--model" && argv[index + 1]) {
+    } else if (
+      (arg === "--model" || arg === "--shadow-parent-model") &&
+      argv[index + 1]
+    ) {
       parsed.model = argv[++index];
+    } else if (arg === "--live-champion-model" && argv[index + 1]) {
+      parsed.liveChampionModel = argv[++index];
+    } else if (arg === "--live-champion-reference" && argv[index + 1]) {
+      parsed.liveChampionReference = argv[++index];
+    } else if (arg === "--historical-anchors" && argv[index + 1]) {
+      parsed.historicalAnchors = argv[++index].split(",").filter(Boolean);
     } else if (arg === "--league" && argv[index + 1]) {
       parsed.league = argv[++index];
     } else if (arg === "--store" && argv[index + 1]) {
@@ -60,7 +73,10 @@ function parseArgs(argv) {
       parsed.temperature = Number.parseFloat(argv[++index]);
     } else if (arg === "--dataset-out" && argv[index + 1]) {
       parsed.datasetOut = argv[++index];
-    } else if (arg === "--checkpoint" && argv[index + 1]) {
+    } else if (
+      (arg === "--checkpoint" || arg === "--shadow-parent-checkpoint") &&
+      argv[index + 1]
+    ) {
       parsed.checkpoint = argv[++index];
     } else if (arg === "--out-checkpoint" && argv[index + 1]) {
       parsed.outCheckpoint = argv[++index];
@@ -103,9 +119,12 @@ function normalizeSnapshot(snapshot, fallbackPolicyId) {
     throw new Error(`league snapshot ${fallbackPolicyId} requires model_path`);
   }
   const modelPath = path.resolve(snapshot.model_path);
-  const model = validateEdgerV2PolicyModel(
-    JSON.parse(fs.readFileSync(modelPath, "utf8")),
-  );
+  const model = JSON.parse(fs.readFileSync(modelPath, "utf8"));
+  if (model.schema_version === "edger_policy_model_v2") {
+    validateEdgerV2PolicyModel(model);
+  } else {
+    validateEdgerPolicyModel(model);
+  }
   return {
     kind: "model",
     policy_id: snapshot.policy_id ?? model.model_id ?? fallbackPolicyId,
@@ -119,15 +138,15 @@ function normalizeSnapshot(snapshot, fallbackPolicyId) {
 }
 
 function loadLeague(args, mainModel) {
+  const configuredHistorical = args.historicalAnchors.map((modelPath, index) =>
+    normalizeSnapshot({ model_path: modelPath }, `historical_anchor_${index}`));
   if (!args.league) {
     return {
       schema_version: LEAGUE_SCHEMA_VERSION,
       champion: normalizeSnapshot({
-        model_path: args.model,
-        policy_id: mainModel.model_id,
-        checkpoint_id: mainModel.training?.checkpoint_id,
-      }, "current_champion"),
-      historical: [],
+        model_path: args.liveChampionModel,
+      }, "live_champion"),
+      historical: configuredHistorical,
       contenders: [],
     };
   }
@@ -144,8 +163,11 @@ function loadLeague(args, mainModel) {
   return {
     schema_version: LEAGUE_SCHEMA_VERSION,
     champion: normalizeSnapshot(raw.champion, "current_champion"),
-    historical: (raw.historical ?? []).map((snapshot, index) =>
-      normalizeSnapshot(snapshot, `historical_${index}`)),
+    historical: [
+      ...(raw.historical ?? []).map((snapshot, index) =>
+        normalizeSnapshot(snapshot, `historical_${index}`)),
+      ...configuredHistorical,
+    ],
     contenders: (raw.contenders ?? []).map((snapshot, index) =>
       normalizeSnapshot(snapshot, `contender_${index}`)),
   };
@@ -318,6 +340,9 @@ const mainModel = validateEdgerV2PolicyModel(
   JSON.parse(fs.readFileSync(args.model, "utf8")),
 );
 const league = loadLeague(args, mainModel);
+if (league.historical.length > 7) {
+  throw new Error("snapshot league supports at most seven historical promoted snapshots");
+}
 const specs = makeMatchSpecs({
   matches: args.matches,
   seed: args.seed,
@@ -342,6 +367,19 @@ try {
     matches: results.length,
     paired_seeds: results.length / 2,
     main_model_id: mainModel.model_id,
+    shadow_learner_parent: {
+      model: path.resolve(args.model),
+      model_id: mainModel.model_id,
+      checkpoint: args.checkpoint ? path.resolve(args.checkpoint) : null,
+    },
+    live_champion: {
+      model: path.resolve(args.liveChampionModel),
+      policy_id: league.champion.policy_id,
+      reference_report: args.liveChampionReference
+        ? path.resolve(args.liveChampionReference)
+        : null,
+    },
+    historical_anchor_ids: league.historical.map((snapshot) => snapshot.policy_id),
     allocation: specs.reduce((counts, spec) => {
       counts[spec.allocation_bucket] = (counts[spec.allocation_bucket] ?? 0) + 1;
       return counts;

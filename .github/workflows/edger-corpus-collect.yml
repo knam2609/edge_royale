@@ -1,0 +1,66 @@
+name: Edger Production Corpus Collection
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: edger-production-corpus-collection
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    name: Collect shard at pair offset ${{ matrix.pair_offset }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 720
+    strategy:
+      fail-fast: false
+      max-parallel: 10
+      matrix:
+        pair_offset: [0, 500, 1000, 1500, 2000, 2500, 3000, 3500, 4000, 4500]
+    env:
+      EDGER_CORPUS_STORE: ${{ vars.EDGER_CORPUS_STORE }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - run: npm ci
+
+      - name: Require durable S3 corpus storage
+        run: |
+          case "$EDGER_CORPUS_STORE" in
+            s3://*) ;;
+            *) echo "EDGER_CORPUS_STORE must be a configured s3:// URI" >&2; exit 1 ;;
+          esac
+
+      - name: Verify S3 read/write access
+        run: |
+          probe="$EDGER_CORPUS_STORE/preflight/${GITHUB_RUN_ID}-${{ matrix.pair_offset }}.txt"
+          printf '%s\n' "$GITHUB_SHA" | aws s3 cp - "$probe" --only-show-errors
+          test "$(aws s3 cp "$probe" - --only-show-errors)" = "$GITHUB_SHA"
+          aws s3 rm "$probe" --only-show-errors
+
+      - name: Collect resumable production shard
+        run: |
+          npm run edger:corpus:collect -- \
+            --store "$EDGER_CORPUS_STORE" \
+            --seed 20260718 \
+            --pair-offset "${{ matrix.pair_offset }}" \
+            --matches 1000 \
+            --workers 4 \
+            --opponents edger_heuristic,random,aggressive,defender \
+            --report "artifacts/edger-training/reports/collection-${{ matrix.pair_offset }}.json"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: edger-corpus-collection-${{ matrix.pair_offset }}-${{ github.run_id }}
+          path: artifacts/edger-training/reports
+          retention-days: 90

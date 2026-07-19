@@ -1,21 +1,15 @@
 #!/usr/bin/env node
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { Worker } from "node:worker_threads";
 
 import {
-  EDGER_BOT_ID,
-  HEURISTIC_BOT_ID,
-  enumerateLegalCardActions,
   normalizeBotId,
-  rollDecisionDelayTicks,
-  selectBotAction,
 } from "../src/ai/botRuntime.js";
-import { EDGER_POLICY_MODEL } from "../src/ai/generated/edgerPolicyCurrent.js";
-import { createRng } from "../src/sim/random.js";
 import {
-  cloneProductionInitialCardState,
   createProductionEngine,
 } from "../src/sim/productionMatch.js";
 import {
@@ -35,6 +29,13 @@ import {
   verifyTrainingEpisodeReplay,
   writeDatasetManifest,
 } from "./edger-corpus-core.mjs";
+import {
+  DEFAULT_COLLECTION_OPPONENTS,
+  buildCollectionSpecs,
+  collectionSpecChecksum,
+  getCleanGitProvenance,
+  runDeterministicCollectionCanary,
+} from "./edger-collection-core.mjs";
 
 const MANUAL_EXPORT_SCHEMA_VERSION = "edger_manual_replay_export_v1";
 const CAMPAIGN_COOLDOWN_DAYS = 14;
@@ -48,8 +49,10 @@ function parseArgs(argv) {
     out: null,
     state: null,
     seed: 20260718,
-    matches: 1,
-    opponents: [HEURISTIC_BOT_ID],
+    matches: 8,
+    opponents: [...DEFAULT_COLLECTION_OPPONENTS],
+    workers: Math.min(16, os.availableParallelism()),
+    pairOffset: 0,
     files: [],
     report: null,
     canaryTicks: 80,
@@ -68,6 +71,10 @@ function parseArgs(argv) {
       parsed.seed = Number.parseInt(argv[++index], 10);
     } else if (arg === "--matches" && argv[index + 1]) {
       parsed.matches = Number.parseInt(argv[++index], 10);
+    } else if (arg === "--workers" && argv[index + 1]) {
+      parsed.workers = Number.parseInt(argv[++index], 10);
+    } else if (arg === "--pair-offset" && argv[index + 1]) {
+      parsed.pairOffset = Number.parseInt(argv[++index], 10);
     } else if (arg === "--opponents" && argv[index + 1]) {
       parsed.opponents = argv[++index].split(",").map((value) => normalizeBotId(value.trim()));
     } else if (arg === "--file" && argv[index + 1]) {
@@ -83,135 +90,182 @@ function parseArgs(argv) {
   if (!Number.isInteger(parsed.seed)) {
     throw new Error("--seed must be an integer");
   }
-  if (!Number.isInteger(parsed.matches) || parsed.matches < 1) {
-    throw new Error("--matches must be a positive integer");
+  if (!Number.isInteger(parsed.matches) || parsed.matches < 2 || parsed.matches % 2 !== 0) {
+    throw new Error("--matches must be a positive even integer");
   }
+  if (!Number.isInteger(parsed.workers) || parsed.workers < 1 || parsed.workers > 32) {
+    throw new Error("--workers must be between 1 and 32");
+  }
+  if (!Number.isInteger(parsed.pairOffset) || parsed.pairOffset < 0) {
+    throw new Error("--pair-offset must be a non-negative integer");
+  }
+  parsed.report ??= path.join(
+    "artifacts",
+    "edger-training",
+    "reports",
+    `edger_collection_${parsed.seed}_${parsed.pairOffset}_${parsed.matches}.json`,
+  );
   parsed.state ??= parsed.store.startsWith("s3://")
     ? `${parsed.store.replace(/\/+$/, "")}/state/campaign-state.json`
     : path.join(parsed.store, "state", "campaign-state.json");
   return parsed;
 }
 
-function controllerFor(seed) {
-  return {
-    rng: createRng(seed),
-    nextDecisionTick: 1,
-  };
-}
-
-function policyDescriptor(botId) {
-  const normalized = normalizeBotId(botId);
-  return {
-    policy_id: normalized,
-    checkpoint_id: normalized === EDGER_BOT_ID ? EDGER_POLICY_MODEL.model_id : null,
-    behavior_probabilities:
-      normalized === EDGER_BOT_ID || normalized === HEURISTIC_BOT_ID ? "known" : "unknown",
-    league_rating: null,
-  };
-}
-
-function maybeBotAction({ engine, actor, botId, controller }) {
-  const tick = engine.state.tick + 1;
-  if (tick < controller.nextDecisionTick) {
-    return null;
-  }
-  const normalized = normalizeBotId(botId);
-  const legalActions = enumerateLegalCardActions({ engine, actor });
-  const decisionDelay = rollDecisionDelayTicks({
-    botId: normalized,
-    rng: controller.rng,
+function runCollectionWorker(workerData) {
+  return new Promise((resolve) => {
+    const results = [];
+    const failures = [];
+    const worker = new Worker(
+      new URL("./edger-corpus-worker.mjs", import.meta.url),
+      { workerData },
+    );
+    let settled = false;
+    const finish = (unexpectedFailure = null) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (unexpectedFailure) {
+        failures.push(unexpectedFailure);
+      }
+      resolve({ results, failures });
+    };
+    worker.on("message", (message) => {
+      if (message.type === "result") {
+        results.push(message.result);
+      } else if (message.type === "failure") {
+        failures.push(message.failure);
+      } else if (message.type === "done") {
+        finish();
+      }
+    });
+    worker.once("error", (error) => finish({
+      worker_failure: true,
+      error: error.stack || error.message,
+    }));
+    worker.once("exit", (code) => {
+      if (code !== 0) {
+        finish({
+          worker_failure: true,
+          error: `collection worker exited with code ${code}`,
+        });
+      }
+    });
   });
-  controller.nextDecisionTick = tick + decisionDelay;
-  const selected = selectBotAction({
-    botId: normalized,
-    engine,
-    actor,
-    legalActions,
-    rng: controller.rng,
-    edgerModel: EDGER_POLICY_MODEL,
-  });
-  if (selected?.type !== "PLAY_CARD") {
-    return null;
-  }
-  return {
-    tick,
-    type: "PLAY_CARD",
-    actor,
-    cardId: selected.cardId,
-    x: selected.x,
-    y: selected.y,
+}
+
+function summarizeCoverage(results) {
+  const coverage = {
+    opponents: {},
+    edger_sides: { blue: 0, red: 0 },
+    outcomes: { win: 0, loss: 0, draw: 0 },
   };
+  for (const result of results) {
+    coverage.opponents[result.opponent] = (coverage.opponents[result.opponent] ?? 0) + 1;
+    coverage.edger_sides[result.edger_actor] += 1;
+    coverage.outcomes[result.outcome] += 1;
+  }
+  return coverage;
 }
 
-function runProductionBotMatch({ seed, blueBot, redBot, maxTicks = 6040 }) {
-  const engine = createProductionEngine({ seed });
-  const initialCardState = cloneProductionInitialCardState(engine);
-  const blue = controllerFor(seed ^ 0x9e3779b9);
-  const red = controllerFor(seed ^ 0x85ebca6b);
-
-  while (engine.state.tick < maxTicks && !engine.getMatchResult()) {
-    const actions = [];
-    const blueAction = maybeBotAction({
-      engine,
-      actor: "blue",
-      botId: blueBot,
-      controller: blue,
-    });
-    const redAction = maybeBotAction({
-      engine,
-      actor: "red",
-      botId: redBot,
-      controller: red,
-    });
-    if (blueAction) {
-      actions.push(blueAction);
-    }
-    if (redAction) {
-      actions.push(redAction);
-    }
-    engine.step(actions);
-    if (engine.shouldStartOvertime()) {
-      engine.setOvertime(true);
-    }
+async function collectCommand(args) {
+  const provenance = getCleanGitProvenance();
+  const specs = buildCollectionSpecs({
+    matches: args.matches,
+    seed: args.seed,
+    pairOffset: args.pairOffset,
+    opponents: args.opponents,
+  });
+  const startedAt = new Date();
+  const workerCount = Math.min(args.workers, specs.length);
+  const partitions = Array.from({ length: workerCount }, () => []);
+  specs.forEach((spec, index) => partitions[index % partitions.length].push(spec));
+  const workerReports = await Promise.all(
+    partitions.map((partition) => runCollectionWorker({
+      specs: partition,
+      store: args.store,
+      provenance,
+    })),
+  );
+  const results = workerReports
+    .flatMap((workerReport) => workerReport.results)
+    .sort((left, right) => left.global_match_index - right.global_match_index);
+  const failures = workerReports.flatMap((workerReport) => workerReport.failures);
+  const finishedAt = new Date();
+  const elapsedSeconds = (finishedAt.getTime() - startedAt.getTime()) / 1000;
+  const episodeIds = results.map((result) => result.episode_id);
+  const newlyCompleted = results.filter((result) => !result.resumed).length;
+  const projected16WorkerHours = newlyCompleted === results.length && results.length > 0
+    ? (
+        elapsedSeconds *
+        (10_000 / results.length) *
+        (workerCount / 16) /
+        3600
+      )
+    : null;
+  const report = {
+    schema_version: "edger_collection_report_v1",
+    status: failures.length === 0 && results.length === specs.length ? "passed" : "failed",
+    spec_checksum: collectionSpecChecksum(specs),
+    git_provenance: provenance,
+    command: {
+      seed: args.seed,
+      pair_offset: args.pairOffset,
+      matches: args.matches,
+      opponents: args.opponents,
+      store: args.store,
+    },
+    workers: {
+      requested: args.workers,
+      used: workerCount,
+    },
+    timings: {
+      started_at: startedAt.toISOString(),
+      finished_at: finishedAt.toISOString(),
+      elapsed_seconds: elapsedSeconds,
+      match_elapsed_ms: results.map((result) => ({
+        global_match_index: result.global_match_index,
+        elapsed_ms: result.elapsed_ms,
+      })),
+    },
+    episode_ids: episodeIds,
+    replay_verification: {
+      checked: results.length,
+      passed: results.filter((result) => result.replay_verified).length,
+      all_passed: results.every((result) => result.replay_verified),
+    },
+    coverage: summarizeCoverage(results),
+    deduplication: {
+      unique_episode_ids: new Set(episodeIds).size,
+      duplicate_episode_ids: episodeIds.length - new Set(episodeIds).size,
+      resumed_receipts: results.filter((result) => result.resumed).length,
+      newly_completed: newlyCompleted,
+    },
+    production_projection: {
+      target_matches: 10_000,
+      target_workers: 16,
+      projected_hours: projected16WorkerHours,
+      within_eight_hours:
+        projected16WorkerHours === null ? null : projected16WorkerHours <= 8,
+      valid_from_fresh_collection: projected16WorkerHours !== null,
+    },
+    results,
+    failures,
+  };
+  fs.mkdirSync(path.dirname(path.resolve(args.report)), { recursive: true });
+  fs.writeFileSync(args.report, canonicalJson(report));
+  console.log(canonicalJson({
+    command: "collect",
+    report: path.resolve(args.report),
+    status: report.status,
+    matches: results.length,
+    resumed_receipts: report.deduplication.resumed_receipts,
+    failures: failures.length,
+    spec_checksum: report.spec_checksum,
+  }).trimEnd());
+  if (report.status !== "passed") {
+    process.exitCode = 1;
   }
-  if (!engine.getMatchResult()) {
-    throw new Error(`production match did not finish by tick ${maxTicks}`);
-  }
-  return { engine, initialCardState };
-}
-
-function collectCommand(args) {
-  const stored = [];
-  for (let matchIndex = 0; matchIndex < args.matches; matchIndex += 1) {
-    const opponent = args.opponents[matchIndex % args.opponents.length] ?? HEURISTIC_BOT_ID;
-    const swapSides = matchIndex % 2 === 1;
-    const blueBot = swapSides ? opponent : EDGER_BOT_ID;
-    const redBot = swapSides ? EDGER_BOT_ID : opponent;
-    const seed = args.seed + matchIndex;
-    const { engine, initialCardState } = runProductionBotMatch({
-      seed,
-      blueBot,
-      redBot,
-    });
-    const episode = createTrainingEpisode({
-      seed,
-      initialCardState,
-      actions: engine.state.replay.actions,
-      events: engine.state.replay.events,
-      result: engine.getMatchResult(),
-      finalStateHash: engine.getStateHash(),
-      policies: {
-        blue: policyDescriptor(blueBot),
-        red: policyDescriptor(redBot),
-      },
-      source: {
-        kind: "simulator",
-        collector: "scripts/edger-corpus.mjs",
-      },
-    });
-    stored.push(storeTrainingEpisode({ episode, store: args.store }));
-  }
-  console.log(canonicalJson({ command: "collect", stored }).trimEnd());
 }
 
 function importManualExport(payload, filePath) {
@@ -340,32 +394,7 @@ function validateCommand(args) {
 }
 
 function runCanaryOnce({ seed, ticks }) {
-  const engine = createProductionEngine({ seed });
-  const blue = controllerFor(seed ^ 0x9e3779b9);
-  const red = controllerFor(seed ^ 0x85ebca6b);
-  const actions = [];
-  while (engine.state.tick < ticks && !engine.getMatchResult()) {
-    const blueAction = maybeBotAction({
-      engine,
-      actor: "blue",
-      botId: HEURISTIC_BOT_ID,
-      controller: blue,
-    });
-    const redAction = maybeBotAction({
-      engine,
-      actor: "red",
-      botId: EDGER_BOT_ID,
-      controller: red,
-    });
-    const tickActions = [blueAction, redAction].filter(Boolean);
-    actions.push(...tickActions);
-    engine.step(tickActions);
-  }
-  return {
-    actions,
-    final_state_hash: engine.getStateHash(),
-    replay_checksum: sha256Hex(engine.exportReplay()),
-  };
+  return runDeterministicCollectionCanary({ seed, ticks });
 }
 
 function canaryCommand(args) {
@@ -520,7 +549,7 @@ function campaignCompleteCommand(args) {
 
 function help() {
   console.log(`Usage:
-  node scripts/edger-corpus.mjs collect [--store DIR|s3://...] [--matches N] [--seed N] [--opponents ids]
+  node scripts/edger-corpus.mjs collect [--store DIR|s3://...] [--matches EVEN] [--seed N] [--pair-offset N] [--workers 1-32] [--opponents ids] [--report FILE]
   node scripts/edger-corpus.mjs import --file replay.json [--store DIR|s3://...]
   node scripts/edger-corpus.mjs validate [--store DIR|s3://...] [--manifest FILE]
   node scripts/edger-corpus.mjs manifest [--store DIR|s3://...] [--out FILE]
@@ -532,7 +561,7 @@ function help() {
 const args = parseArgs(process.argv.slice(2));
 try {
   if (args.command === "collect") {
-    collectCommand(args);
+    await collectCommand(args);
   } else if (args.command === "import") {
     importCommand(args);
   } else if (args.command === "validate") {

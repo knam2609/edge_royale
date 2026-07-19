@@ -30,11 +30,14 @@ The frozen handcrafted oracle remains `edger_heuristic` (alias `heuristic`) for 
 ## Run the game
 
 ```bash
-npm install
+npm ci
 npm run dev
 ```
 
 Open `http://127.0.0.1:5173`.
+
+The repository pins native Node 20 through `.node-version`. Browser validation
+also requires `npx playwright install chromium`.
 
 Controls:
 
@@ -53,8 +56,15 @@ Browser automation hooks:
 Raw runs and caches remain ignored. Immutable promoted artifacts remain tracked.
 
 ```bash
-# Collect full production simulator matches into a local or s3:// corpus.
-npm run edger:corpus:collect -- --matches 2 --seed 20260718 --opponents edger_heuristic
+# Collect paired full production matches. Production uses an externally configured S3 URI.
+npm run edger:corpus:collect -- \
+  --store "$EDGER_CORPUS_STORE" \
+  --matches 64 \
+  --workers 8 \
+  --pair-offset 0 \
+  --seed 20260718 \
+  --opponents edger_heuristic,random,aggressive,defender \
+  --report /path/to/collection-report.json
 
 # Validate and import a manually opted-in replay.
 npm run edger:corpus:import -- --file /path/to/edge-royale-replay.json
@@ -84,13 +94,39 @@ npm run edger:generate:v2 -- \
   --out /private/tmp/edgerPolicyV2Candidate.js
 ```
 
+Collection requires a clean Git worktree, records the full commit SHA, writes
+one verified compatibility/seed/side/opponent receipt per match, and resumes
+safely from those receipts. Match specifications and report results are stable
+across worker counts. `.github/workflows/edger-corpus-collect.yml` runs the
+production 10,000-match collection as ten resumable 1,000-game S3 shards.
+
+Scaling caches reduce only training episodes. Validation and test episode lists
+are identical in the 1%, 10%, and 100% manifests. Export each BC checkpoint,
+then run the same 200-game frozen suite:
+
+```bash
+npm run edger:evaluate:scaling -- \
+  --candidate /path/to/edger-policy-1pct.json \
+  --checkpoint /path/to/edger-bc-1pct.pt \
+  --workers 16 \
+  --out /path/to/frozen-league-1pct.json
+```
+
+Repeat for 10% and 100%, then build the bound scaling report with all three
+manifests, checkpoints, candidate models, and frozen-league reports. It rejects
+non-nested training sets, changed held-out sets, or any manifest, checkpoint,
+model, or suite checksum mismatch.
+
 Snapshot-league IMPALA/V-trace is guarded by a passing fixed 1%/10%/100% scaling report:
 
 ```bash
 npm run edger:train:league -- \
   --scaling-report /path/to/scaling_report.json \
-  --model /path/to/accepted_v2_champion.json \
-  --checkpoint /path/to/accepted_v2_champion.pt \
+  --shadow-parent-model /path/to/accepted_offline_shadow.json \
+  --shadow-parent-checkpoint /path/to/accepted_offline_shadow.pt \
+  --live-champion-model artifacts/edger-training/promoted/edger_policy_current.json \
+  --live-champion-reference /path/to/live-v1-reference.json \
+  --historical-anchors /path/to/anchor-1.json,/path/to/anchor-2.json \
   --dataset-out /private/tmp/league.parquet \
   --out-checkpoint /private/tmp/league_candidate.pt
 ```
@@ -104,6 +140,13 @@ npm test
 npm run bot:bench -- --opponents edger_heuristic,random,aggressive,defender --rounds 30 --seed 20260630 --max-ticks 6040 --min-win-rate 0.6
 npm run smoke:browser
 npm run edger:canary -- --seed 20260718 --canary-ticks 80
+npm run edger:benchmark:throughput -- \
+  --candidate /path/to/candidate.json \
+  --matches 32 \
+  --workers 16 \
+  --target-matches 11300 \
+  --max-minutes 180 \
+  --enforce
 ```
 
 V2 has a separate full evaluator and checksum-bound promotion command:
