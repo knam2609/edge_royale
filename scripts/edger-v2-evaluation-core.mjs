@@ -416,15 +416,43 @@ export function checkCandidateParity(modelPath, model) {
         );
       }
     }
+    const maskedArgmax = (values, mask) => {
+      let bestIndex = 0;
+      let bestValue = -Infinity;
+      for (let index = 0; index < values.length; index += 1) {
+        if (mask[index] && values[index] > bestValue) {
+          bestIndex = index;
+          bestValue = values[index];
+        }
+      }
+      return bestIndex;
+    };
+    const jsArgmax = {
+      card: maskedArgmax(js.card, masks.card),
+      placement: maskedArgmax(js.placement, masks.placement),
+      delay: maskedArgmax(js.delay, masks.delay),
+    };
+    const pytorchArgmax = {
+      card: pytorch.card_argmax,
+      placement: pytorch.placement_argmax,
+      delay: pytorch.delay_argmax,
+    };
     const argmaxAgreement =
-      pytorch.card_argmax === js.selected.card_index &&
-      pytorch.placement_argmax === js.selected.placement_index &&
-      pytorch.delay_argmax === js.selected.delay_index;
+      pytorchArgmax.card === jsArgmax.card &&
+      pytorchArgmax.placement === jsArgmax.placement &&
+      pytorchArgmax.delay === jsArgmax.delay;
     return maximumDifference <= 1e-5 && argmaxAgreement
-      ? pass({ maximum_logit_difference: maximumDifference, argmax_agreement: true })
+      ? pass({
+          maximum_logit_difference: maximumDifference,
+          argmax_agreement: true,
+          js_argmax: jsArgmax,
+          pytorch_argmax: pytorchArgmax,
+        })
       : fail("PyTorch/generated-JS parity exceeded tolerance", {
           maximum_logit_difference: maximumDifference,
           argmax_agreement: argmaxAgreement,
+          js_argmax: jsArgmax,
+          pytorch_argmax: pytorchArgmax,
         });
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
