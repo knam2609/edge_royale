@@ -1,52 +1,45 @@
 # Sprint Backlog
 
-## Current Priorities
+## Current priorities
 
-- `AI-ML-001` Harden deterministic ML runtime performance.
-  - Done when full legal-action scoring stays inside the chosen per-tick budget and the benchmark suite is not materially slower than the frozen heuristic path.
-- `AI-ML-002` Implement masked PPO/self-play trainer.
-  - Done when daily-trained candidates consistently improve scenario and benchmark quality beyond the bootstrap seed.
-- `AI-ML-003` Build tactical scenario league and promotion reports.
-  - Done when scenario fixtures are broad enough to catch regressions in defense, spell value, tower finishing, elixir punishment, and pocket pressure.
-- `AI-ML-004` Enforce promotion gates.
-  - Done when `npm run edger:promote -- --require-gates` and the daily workflow remain stable under passing and failing candidates.
-- `AI-ML-005` Keep daily Edger training automation healthy.
-  - Done when the GitHub Actions schedule produces retained artifacts daily and opens promotion PRs only after all gates and browser smoke pass.
-- `AI-EDGER-001` Add tactical regression scenarios for Edger defense.
-  - Done when Edger correctly answers Giants, swarm pressure, and ranged support using legal actions.
-- `AI-EDGER-002` Add tower-finishing and spell-value regression scenarios.
-  - Done when Edger reliably chooses lethal or high-value Fireball/Arrows targets.
-- `AI-EDGER-003` Tune elixir-advantage pressure.
-  - Done when benchmark output and targeted tests show Edger punishes low opponent elixir without reckless overcommit.
-- `AI-EDGER-004` Expand internal baselines or scripted scenarios.
-  - Done when new baselines improve signal without becoming player-facing levels.
-- `PERF-001` Measure and optimize every-tick Edger scoring.
-  - Done when full-match benchmarks and browser smoke stay comfortably within local runtime expectations for ML Edger.
-- `UI-001` Polish Edger-only setup overlay.
-  - Done when the first screen starts the playable game with no old level/training language.
-- `QA-001` Keep browser smoke deterministic and fast.
-  - Done when `npm run smoke:browser` verifies UI, runtime, and profile persistence without flaky timing.
-- `DOC-001` Keep docs aligned with Edger-only scope.
-  - Done when README, AGENTS, and subsystem docs do not reference removed ladder/self-training systems except as explicitly removed scope.
+- `AI-DATA-001` Build the first compatible full-match corpus.
+  - Done when simulator collection has useful opponent/outcome coverage and replay validation is clean.
+- `AI-SCALE-001` Run fixed 1%/10%/100% behavior-cloning experiments.
+  - Done when 100% improves held-out joint action loss and does not regress frozen-league score relative to 10%.
+- `AI-OFFLINE-001` Run conservative advantage-weighted improvement.
+  - Done when one low-rate pass remains under `0.05` validation KL and produces a retained evaluation report.
+- `AI-LEAGUE-001` Run the first 16–32 worker V-trace campaign.
+  - Blocked on `AI-SCALE-001`; done when paired-seed exact-JS episodes and a lineage-preserving candidate checkpoint complete.
+- `AI-PERF-001` Increase production rollout/evaluation throughput.
+  - Done when 10,000 safety games and full promotion evaluation complete in a practical campaign window.
+- `QA-BROWSER-001` Standardize browser smoke.
+  - Done when Playwright imports and Chromium launch reliably locally and in CI.
+- `DOC-001` Keep cumulative training and Edger-only product docs aligned.
+  - Done continuously; no daily-PPO or player-facing training claims may return.
 
-## Completed Baseline
+## Completed foundation
 
-- Deterministic simulation engine.
-- Fixed 8-card deck and card cycle.
-- Royale-style placement, bridge, and pocket behavior.
-- Replay serialization for debugging/determinism.
-- Browser UI with portrait battlefield, card hand, elixir, tower HP, and match banners.
-- Single Edger opponent with internal benchmark baselines.
-- Frozen `edger_heuristic` baseline with `heuristic` alias.
-- Deterministic ML runtime path for `edger` with promoted JSON plus generated JS module.
-- Developer-only masked PPO candidate trainer and full-gate evaluation/promote scripts.
-- GitHub Actions daily Edger training workflow with artifact upload and promotion PR handoff.
-- Simple local Edger match profile.
+- Deterministic game engine, fixed deck, six-tower Royale arena, pockets, replay serialization, and browser UI.
+- One live v1 Edger and frozen internal baselines.
+- Shared production-match factory used by browser and training.
+- Manual identity-free post-match replay export and validated developer import.
+- `edger_training_episode_v1`, compressed content-addressed local/S3 storage, quarantine, deduplication, and replay verification.
+- `edger_decision_sequence_v1`, sparse delays, potential rewards, and V-trace eligibility.
+- `edger_dataset_manifest_v1`, stable game splits, 90/10 default mix, and Parquet/Zstd caches.
+- Compact 36,402-parameter v2 actor with full-oracle spatial observation and autoregressive masks.
+- PyTorch behavior cloning, critic, top-quartile winner pass, offline advantage weighting, KL rollback, and float32 export.
+- Golden PyTorch/generated-JS parity tests.
+- Fixed scaling-cache/report interfaces and hard league gate.
+- Deterministic paired-seed worker scheduling, snapshot/PFSP allocation, exact-JS rollout episodes, and V-trace learner.
+- Daily corpus-health/canary workflow and separate cumulative campaign workflow.
+- Full v2 evaluator with two champion blocks, paired bootstrap, anchor regression, weak baselines, frozen league, 10,000 repeated safety games, replay, parity, tactical, timing, test, and browser gates.
+- Checksum-bound v2 promotion refusal and successful-campaign pull-request automation.
 
-## Non-Goals
+## Non-goals
 
 - Online PvP.
-- Player-facing bot levels.
+- Player-facing bot levels or model controls.
 - Unlock progression.
-- Player-facing self-play/player mirroring.
-- Browser training UI or model selectors.
+- Player-facing mirror/self-play.
+- Automatic telemetry or replay upload.
+- Expanded decks, MCTS/MuZero, CQL, UPGO, Decision Transformer, or recurrent runtime policy.

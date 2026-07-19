@@ -115,7 +115,7 @@ If you cannot run a needed validation step, say exactly what was not run and why
 
 ## Current Hot Spots
 
-- Edger's first ML runtime model is a bootstrap policy seed; tactical quality and full PPO/self-play training still need focused work.
+- Edger's live v1 runtime is still a bootstrap policy seed; the cumulative v2 pipeline and evaluator exist, but the first real scaling campaign and full promotion run remain focused work.
 - Browser validation is useful but not yet fully standardized beyond `npm run smoke:browser`.
 
 ## `progress.md` Contract

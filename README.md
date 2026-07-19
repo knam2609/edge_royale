@@ -4,41 +4,30 @@
 
 The shipped game is human vs **Edger** only:
 
-- one arena
+- one six-tower Royale arena with pocket placement
 - one fixed 8-card deck: Giant, Knight, Archers, Mini P.E.K.K.A, Musketeer, Goblins, Arrows, Fireball
 - deterministic simulation
 - one deterministic offline-trained policy bot, Edger
 - simple local match stats against Edger
-- core replay serialization for determinism/debugging
+- replay hooks for deterministic debugging and opted-in training export
 
-There are no player-facing bot levels, unlock gates, self-play mirror bot, or browser training UI.
+There are no player-facing bot levels, unlock gates, model selectors, self-play mirror mode, or browser training controls.
 
-## Game Shape
+## Runtime model
 
-Edger is a deterministic ML policy loaded from a generated JavaScript module at browser startup. It may use exact opponent elixir, hand, and deck queue, acts every tick, scores legal actions with a stateless feed-forward model, uses no runtime sampling or RNG, and breaks ties with stable action ordering.
+The live browser opponent still imports the promoted `edger_policy_model_v1` artifact synchronously from `src/ai/generated/edgerPolicyCurrent.js`. The compact `edger_policy_model_v2` actor exists beside it in shadow mode and cannot become live until every v2 scaling, safety, quality, replay, timing, test, and browser gate passes.
 
-The previous handcrafted oracle is frozen as the internal baseline `edger_heuristic`, also available through the alias `heuristic`.
+V2 uses:
 
-Internal benchmark baselines exist only for CLI/tests:
+- a relative-side `32×18×24` board and 96 full-oracle global features
+- masked autoregressive card, row-major placement, and 1–200 tick delay heads
+- deterministic argmax and stable ties in production
+- no handcrafted heuristic prior
+- 36,402 exported actor parameters, below the 50,000 parameter and 1 MB limits
 
-- `edger_heuristic`
-- `random`
-- `aggressive`
-- `defender`
+The frozen handcrafted oracle remains `edger_heuristic` (alias `heuristic`) for corpus teaching, league opposition, and evaluation only.
 
-These are not product levels and are not exposed in the browser UI.
-
-The sim currently uses a level 11 tournament-standard stat baseline with simplified mechanics where the engine intentionally diverges from full Clash Royale parity.
-
-## Docs
-
-- Game rules: `docs/GAME_RULES.md`
-- Card balance: `docs/CARD_SPECS.md`
-- Edger/baseline AI spec: `docs/BOT_LEVELS.md`
-- Implementation roadmap: `docs/IMPLEMENTATION_PLAN.md`
-- Sprint/task backlog: `docs/SPRINT_BACKLOG.md`
-
-## Run Prototype
+## Run the game
 
 ```bash
 npm install
@@ -49,56 +38,98 @@ Open `http://127.0.0.1:5173`.
 
 Controls:
 
-- Click a card slot, or press `1-4`, to select a hand card
-- Click arena to play the selected card
-- Drag a card from hand to arena to play on release
-- `Space` pause/resume
-- `R` reset
-- `F` fullscreen toggle
+- Click a card slot, or press `1-4`, to select a hand card.
+- Click or drag onto the arena to play.
+- `Space` pauses, `R` resets, and `F` toggles fullscreen.
+- After a match, **Export replay** downloads an identity-free file. Nothing is uploaded automatically.
 
 Browser automation hooks:
 
 - `window.render_game_to_text()`
 - `window.advanceTime(ms)`
 
-## Validation
+## Cumulative Edger training
 
-Run the Node suite:
+Raw runs and caches remain ignored. Immutable promoted artifacts remain tracked.
+
+```bash
+# Collect full production simulator matches into a local or s3:// corpus.
+npm run edger:corpus:collect -- --matches 2 --seed 20260718 --opponents edger_heuristic
+
+# Validate and import a manually opted-in replay.
+npm run edger:corpus:import -- --file /path/to/edge-royale-replay.json
+
+# Validate all replay hashes/events and build an immutable manifest.
+npm run edger:corpus:validate
+npm run edger:corpus:manifest -- --out /private/tmp/edger_manifest.json
+
+# Build disposable Parquet/Zstd caches, including fixed scaling subsets.
+npm run edger:dataset -- \
+  --manifest /private/tmp/edger_manifest.json \
+  --scales-dir /private/tmp/edger_scales
+
+# Structured behavior cloning, conservative offline improvement, and export.
+npm run edger:train:bc -- \
+  --dataset /private/tmp/edger_scales/edger_decisions_100pct.parquet \
+  --out /private/tmp/edger_bc.pt
+npm run edger:train:offline -- \
+  --dataset /private/tmp/edger_scales/edger_decisions_100pct.parquet \
+  --checkpoint /private/tmp/edger_bc.pt \
+  --out /private/tmp/edger_offline.pt
+npm run edger:export:v2 -- \
+  --checkpoint /private/tmp/edger_offline.pt \
+  --out /private/tmp/edger_policy_v2_candidate.json
+npm run edger:generate:v2 -- \
+  --model /private/tmp/edger_policy_v2_candidate.json \
+  --out /private/tmp/edgerPolicyV2Candidate.js
+```
+
+Snapshot-league IMPALA/V-trace is guarded by a passing fixed 1%/10%/100% scaling report:
+
+```bash
+npm run edger:train:league -- \
+  --scaling-report /path/to/scaling_report.json \
+  --model /path/to/accepted_v2_champion.json \
+  --checkpoint /path/to/accepted_v2_champion.pt \
+  --dataset-out /private/tmp/league.parquet \
+  --out-checkpoint /private/tmp/league_candidate.pt
+```
+
+See `docs/EDGER_TRAINING.md` for schemas, object layout, learning rules, league allocation, and campaign triggers.
+
+## Validation
 
 ```bash
 npm test
-```
-
-Run the Edger benchmark gate:
-
-```bash
 npm run bot:bench -- --opponents edger_heuristic,random,aggressive,defender --rounds 30 --seed 20260630 --max-ticks 6040 --min-win-rate 0.6
-```
-
-Evaluate a promoted policy model:
-
-```bash
-npm run edger:evaluate -- --model artifacts/edger-training/promoted/edger_policy_current.json
-```
-
-Train and evaluate a candidate policy:
-
-```bash
-npm run edger:train -- --mode ppo --seed 20260704 --profile smoke --out-dir /private/tmp/edger-train-smoke
-npm run edger:evaluate -- --model /private/tmp/edger-train-smoke/edger_policy_candidate.json --json-out /private/tmp/edger-train-smoke/evaluation_report.json
-npm run edger:promote -- --model /private/tmp/edger-train-smoke/edger_policy_candidate.json --report /private/tmp/edger-train-smoke/evaluation_report.json --require-gates
-```
-
-Run the daily training orchestration locally:
-
-```bash
-npm run edger:daily -- --seed 20260704 --profile daily
-```
-
-Run the browser smoke:
-
-```bash
 npm run smoke:browser
+npm run edger:canary -- --seed 20260718 --canary-ticks 80
 ```
 
-The browser smoke starts the static dev server on an ephemeral localhost port, verifies the Edger-only UI, advances a match, checks profile stat persistence, and shuts the server down.
+V2 has a separate full evaluator and checksum-bound promotion command:
+
+```bash
+npm run edger:evaluate:v2 -- \
+  --candidate /path/to/candidate.json \
+  --champion /path/to/champion.json \
+  --anchors /path/to/anchor-1.json,/path/to/anchor-2.json \
+  --reference /path/to/champion-reference.json \
+  --test-report /path/to/test-report.json \
+  --browser-report /path/to/browser-report.json \
+  --profile full \
+  --out /path/to/evaluation-report.json
+npm run edger:promote:v2 -- \
+  --model /path/to/candidate.json \
+  --report /path/to/evaluation-report.json
+```
+
+The promotion command refuses smoke profiles, artifact checksum mismatches, missing external reports, or any failed gate. Campaign automation opens a pull request after it succeeds.
+
+## Docs
+
+- Game rules: `docs/GAME_RULES.md`
+- Card balance: `docs/CARD_SPECS.md`
+- Edger runtime and baselines: `docs/BOT_LEVELS.md`
+- Cumulative training: `docs/EDGER_TRAINING.md`
+- Implementation roadmap: `docs/IMPLEMENTATION_PLAN.md`
+- Sprint backlog: `docs/SPRINT_BACKLOG.md`

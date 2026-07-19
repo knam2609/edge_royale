@@ -443,7 +443,14 @@ function percentile(values, fraction) {
   return sorted[index];
 }
 
-export function evaluateTiming(model, { samples = 25, budgetMs = PROMOTION_GATE_CONFIG.timingP95BudgetMs } = {}) {
+export function evaluateTiming(
+  model,
+  {
+    samples = 25,
+    budgetMs = PROMOTION_GATE_CONFIG.timingP95BudgetMs,
+    warmupSamples = 10,
+  } = {},
+) {
   const fixtures = SCENARIO_FIXTURES.map((fixture) => {
     const engine = fixture.makeEngine();
     return {
@@ -452,6 +459,16 @@ export function evaluateTiming(model, { samples = 25, budgetMs = PROMOTION_GATE_
     };
   });
   const durations = [];
+
+  for (let i = 0; i < warmupSamples; i += 1) {
+    const fixture = fixtures[i % fixtures.length];
+    selectEdgerAction({
+      model,
+      engine: fixture.engine,
+      actor: "red",
+      legalActions: fixture.legalActions,
+    });
+  }
 
   for (let i = 0; i < samples; i += 1) {
     const fixture = fixtures[i % fixtures.length];
@@ -469,6 +486,7 @@ export function evaluateTiming(model, { samples = 25, budgetMs = PROMOTION_GATE_
   return {
     passed: p95 <= budgetMs,
     samples,
+    warmup_samples: warmupSamples,
     budget_ms: budgetMs,
     p95_ms: Number(p95.toFixed(4)),
     max_ms: Number(Math.max(...durations).toFixed(4)),

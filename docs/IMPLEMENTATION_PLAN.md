@@ -1,75 +1,74 @@
 # Edge Royale Implementation Plan
 
-## 1) Product Scope
+## Product scope
 
-### Goal
+Build a lightweight single-player game where the human fights one deterministic offline-trained bot named Edger.
 
-Build a lightweight, single-player Clash Royale-inspired game where the player fights one deterministic oracle bot named Edger.
+MVP remains:
 
-### MVP
+- human vs Edger only
+- one six-tower arena
+- one fixed eight-card deck
+- deterministic headless simulation and replay serialization
+- local win/loss/draw stats
+- synchronous generated-JavaScript inference
 
-- Human vs Edger only. No online PvP.
-- One arena.
-- One fixed 8-card deck: Giant, Knight, Archers, Mini P.E.K.K.A, Musketeer, Goblins, Arrows, Fireball.
-- Deterministic simulation with replay serialization for debugging.
-- Simple local profile stats: matches, wins, losses, draws.
-- Deterministic offline-trained Edger policy with a frozen heuristic comparison baseline.
-- Internal benchmark baselines for Edger evaluation only.
+Online PvP, player-facing bot levels, unlocks, mirror/self-play gameplay, model selectors, browser training, and expanded decks remain out of scope.
 
-### Out of Scope
+## Technical strategy
 
-- Player-facing bot levels.
-- Unlock progression.
-- Player-facing self-play or player mirroring.
-- Browser training UI, unlocks, model selectors, or player-facing model manifests.
+- `src/sim`: deterministic engine and shared production-match factory
+- `src/client`: renderer/input layer and manual identity-free replay export
+- `src/ai`: live v1 policy, shadow v2 policy, frozen heuristic, and hidden baselines
+- `src/ai/v2`: spatial observation, autoregressive masks, compact JS inference
+- `src/replay`: replay compatibility
+- `scripts/edger-corpus*`: immutable corpus, replay validation, manifests, caches, and health
+- `scripts/edger-v2-training.py`: PyTorch BC, critic, offline improvement, V-trace, scaling report, and actor export
+- `scripts/edger-league*`: exact-JavaScript snapshot actors and deterministic worker scheduling
+- `artifacts/edger-training/promoted`: reviewed live artifacts only
 
-## 2) Technical Strategy
+The simulator remains the source of truth. Training episodes and workers use the same production factory as browser play.
 
-- `src/sim`: deterministic headless simulation engine.
-- `src/client`: browser renderer/input layer over engine state.
-- `src/ai`: Edger ML runtime policy, frozen heuristic baseline, hidden baselines, profile helpers, benchmarks.
-- `artifacts/edger-training/promoted`: promoted policy JSON and reports.
-- `src/replay`: replay serialization and compatibility helpers.
-- `tests`: simulation, replay, profile, Edger, benchmark, and UI-layout coverage.
+## Current roadmap
 
-Core principles:
+1. Build the first compatible simulator corpus and run fixed 1%/10%/100% BC experiments.
+2. Improve rollout throughput enough for 10,000-match safety and full paired evaluation in a practical campaign window.
+3. Run the first conservative offline-improvement phase and retain its rejected or accepted evidence.
+4. Start 16–32 worker snapshot-league V-trace only after scaling passes.
+5. Run the full v2 evaluator and review the generated promotion PR; do not weaken failed gates.
+6. Fix or standardize local Playwright browser smoke.
+7. Preserve Edger-only UI and portrait battlefield readability.
 
-- Engine-first: game rules and combat run in headless mode before UI.
-- Same seed + same input stream must produce identical output.
-- UI must not implement rules independently.
-- Edger must be legal-action-only even with hidden information.
-- Browser gameplay imports a generated JS model module; no async model fetch runs during matches.
+## Quality gates
 
-## 3) Current Roadmap
-
-1. Harden the daily PPO/self-play training loop with faster rollouts and better candidate quality.
-2. Expand tactical scenario league coverage for defense, spell value, tower finishing, elixir advantage, and pocket pressure.
-3. Promote only models that beat `edger_heuristic` and hidden baselines under the documented gate.
-4. Keep GitHub Actions daily training green and artifact-producing on the once-daily UTC schedule.
-5. Polish match readability, HUD clarity, and portrait usability without exposing training or model selection.
-6. Preserve replay compatibility for simulation debugging.
-
-## 4) Quality Gates
-
-Automated checks:
+Current repository checks:
 
 - `npm test`
-- `npm run edger:evaluate -- --model artifacts/edger-training/promoted/edger_policy_current.json`
 - `npm run bot:bench -- --opponents edger_heuristic,random,aggressive,defender --rounds 30 --seed 20260630 --max-ticks 6040 --min-win-rate 0.6`
 - `npm run smoke:browser`
+- `npm run edger:canary -- --seed 20260718 --canary-ticks 80`
 
-Release gates:
+V2-specific implemented checks:
 
-- Determinism suite green.
-- Edger clears the benchmark floor against `edger_heuristic` and every hidden internal baseline before a model is considered promotable.
-- Browser smoke verifies Edger-only UI and simple profile persistence.
-- No critical crash in simulated matches.
+- immutable episode replay hash/event reproduction
+- compatibility rejection and quarantine
+- deduplication and stable whole-game splits
+- side-canonical observation/action masks
+- 50,000 parameter and 1 MB actor caps
+- PyTorch/JS golden-logit and argmax parity
+- player V-trace exclusion
+- scaling gate before league launch
+- immutable checkpoint lineage
 
-## 5) Risks and Mitigations
+The complete v2 promotion thresholds are implemented by the dedicated evaluator and remain blocking until a real full campaign passes them.
 
-- Risk: Edger every-tick full-action ML scoring becomes expensive.
-  - Mitigation: compile sparse generated weights, keep feature extraction cheap for irrelevant spell cells, and add timing gates before promotion.
-- Risk: Edger overfits to weak internal baselines or the frozen heuristic prior.
-  - Mitigation: add scenario-specific tactical tests, self-play snapshots, and stronger internal benchmark scenarios over time.
-- Risk: old ladder/self-play assumptions reappear.
-  - Mitigation: keep README, AGENTS, tests, and UI aligned around Edger-only scope.
+## Risks
+
+- Full production matches are much more expensive than the removed short trainer.
+  - Keep actor/learner separation, preassigned seeds, 16–32 workers, and cumulative data.
+- An offline update can exploit corpus bias.
+  - Freeze BC/critic, cap advantage weights, enforce validation KL, and retain rejected checkpoints.
+- Human data can dominate or leak identity.
+  - Reject identity fields, require manual export/import, cap player episodes at 10%, and exclude unknown behavior probabilities from V-trace.
+- A shadow model could accidentally become live.
+  - Keep separate generated modules and refuse v2 promotion until the dedicated evaluator passes every gate.

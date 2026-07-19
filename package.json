@@ -8,16 +8,29 @@
     "test": "node --test",
     "smoke:browser": "node scripts/browser-smoke.mjs",
     "bot:bench": "node scripts/bot-benchmark.mjs",
-    "edger:train": "node scripts/edger-train.mjs",
     "edger:evaluate": "node scripts/edger-evaluate.mjs",
     "edger:promote": "node scripts/edger-promote.mjs",
-    "edger:daily": "node scripts/edger-daily.mjs"
+    "edger:corpus:collect": "node scripts/edger-corpus.mjs collect",
+    "edger:corpus:import": "node scripts/edger-corpus.mjs import",
+    "edger:corpus:validate": "node scripts/edger-corpus.mjs validate",
+    "edger:corpus:manifest": "node scripts/edger-corpus.mjs manifest",
+    "edger:corpus:health": "node scripts/edger-corpus.mjs health",
+    "edger:campaign:complete": "node scripts/edger-corpus.mjs campaign-complete",
+    "edger:canary": "node scripts/edger-corpus.mjs canary",
+    "edger:dataset": "node scripts/edger-dataset.mjs",
+    "edger:train:bc": "node scripts/run-edger-python.mjs bc",
+    "edger:train:offline": "node scripts/run-edger-python.mjs offline",
+    "edger:train:league": "node scripts/edger-league.mjs",
+    "edger:scaling:report": "node scripts/run-edger-python.mjs scaling-report",
+    "edger:export:v2": "node scripts/run-edger-python.mjs export",
+    "edger:generate:v2": "node scripts/edger-v2-generate.mjs",
+    "edger:evaluate:v2": "node scripts/edger-v2-evaluate.mjs",
+    "edger:promote:v2": "node scripts/edger-v2-promote.mjs"
   },
   "engines": {
     "node": ">=20"
   },
   "devDependencies": {
-    "@tensorflow/tfjs": "^4.22.0",
     "playwright": "^1.58.2"
   }
 }

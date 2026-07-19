@@ -6,6 +6,10 @@ import { ACTION_SPACE_VERSION, PASS_ACTION, actionSortKey, appendPassAction, isP
 import { EDGER_POLICY_MODEL } from "./generated/edgerPolicyCurrent.js";
 import { selectMlPolicyAction } from "./mlPolicy.js";
 import { getSpellDamageAgainstTarget } from "./spellHeuristics.js";
+import {
+  EDGER_V2_POLICY_MODEL_SCHEMA_VERSION,
+  selectEdgerV2PolicyDecision,
+} from "./v2/policy.js";
 
 export { ACTION_SPACE_VERSION, PASS_ACTION, actionSortKey, appendPassAction, isPassAction };
 
@@ -759,6 +763,14 @@ export function getEdgerPolicyPrior({ action, engine, actor = "red" }) {
 }
 
 export function selectEdgerAction({ legalActions, engine, actor = "red", model = EDGER_POLICY_MODEL }) {
+  if (model?.schema_version === EDGER_V2_POLICY_MODEL_SCHEMA_VERSION) {
+    return selectEdgerV2PolicyDecision({
+      model,
+      engine,
+      actor,
+      legalActions,
+    }).action;
+  }
   const scoreActionPrior = (action) => getEdgerPolicyPrior({ action, engine, actor });
 
   return selectMlPolicyAction({
@@ -827,4 +839,43 @@ export function selectBotAction({
   }
 
   return selectEdgerAction({ legalActions, engine, actor, model: edgerModel });
+}
+
+export function selectBotDecision({
+  botId,
+  tierId,
+  engine,
+  actor = "red",
+  legalActions,
+  rng = Math.random,
+  edgerModel = EDGER_POLICY_MODEL,
+}) {
+  const normalizedBot = normalizeBotId(botId ?? tierId);
+  if (
+    normalizedBot === EDGER_BOT_ID &&
+    edgerModel?.schema_version === EDGER_V2_POLICY_MODEL_SCHEMA_VERSION
+  ) {
+    return selectEdgerV2PolicyDecision({
+      model: edgerModel,
+      engine,
+      actor,
+      legalActions,
+    });
+  }
+
+  const delayTicks = rollDecisionDelayTicks({
+    botId: normalizedBot,
+    rng,
+  });
+  return {
+    action: selectBotAction({
+      botId: normalizedBot,
+      engine,
+      actor,
+      legalActions,
+      rng,
+      edgerModel,
+    }),
+    delayTicks,
+  };
 }
