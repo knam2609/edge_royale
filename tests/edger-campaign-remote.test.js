@@ -34,4 +34,7 @@ test("remote bootstrap installs Playwright Chromium for Amazon Linux 2023", () =
   }
   assert.ok(commands.includes("npx playwright install chromium"));
   assert.ok(!commands.some((command) => command.includes("--with-deps")));
+  assert.ok(commands.includes("python3.11 -m venv /opt/edge_royale_venv"));
+  assert.ok(commands.includes("source /opt/edge_royale_venv/bin/activate"));
+  assert.ok(!commands.some((command) => command.includes("/opt/edge_royale/.venv")));
 });

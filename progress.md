@@ -11,9 +11,11 @@
 - Retry run `29708221490` proved the corrected OIDC launch path, then strict-stopped during runner bootstrap because Playwright's unsupported-OS fallback invoked unavailable `apt-get` on Amazon Linux 2023. The instance and root volume were deleted; no campaign stage ran.
 - Four bootstrap-failure evidence objects are retained under `campaigns/20260718-v2-first/remote/failed-run-29708221490/`.
 - A short-lived AL2023 arm64 smoke runner proved the direct Chromium RPM mapping and passed the real browser smoke. Production bootstrap/control-plane PR `#12` is merged.
+- Run `29708727986` proved the corrected browser bootstrap, then strict-stopped at the clean-worktree pre-stage gate because bootstrap created the Python virtual environment inside the immutable checkout. The runner and root volume self-terminated; no corpus or campaign stage loaded.
+- Four clean-worktree failure evidence objects are retained under `campaigns/20260718-v2-first/remote/failed-run-29708727986/`.
 - CloudFormation stack `edge-royale-edger-campaign` is `UPDATE_COMPLETE` in `ap-southeast-2`; all five GitHub variables are configured.
 - Live browser Edger remains the tracked v1 artifact. No v2 artifact was promoted or wired into gameplay.
-- Scaling and later campaign stages have not run. No production EC2 campaign runner has been launched.
+- Scaling and later campaign stages have not run. No production or smoke EC2 runner remains active.
 
 ## Source of Truth
 
@@ -42,13 +44,15 @@
 
 ## Known Gaps
 
+- The runner virtual environment must move outside the repository checkout, and that correction must merge before retry.
 - The scaling suite, offline phase, league smoke/production rollout, full live-v1 reference, and full evaluator have not run.
 - AWS CLI `s3 ls` returns exit 1 for an empty prefix. The implementation uses `s3api list-objects-v2`; `.keep` remains harmless in the active object prefix.
 
 ## Next Tasks
 
-1. Retry the remote production campaign at campaign SHA `f25a4880e65f0eed6eda8c3ecc33d42d2ad6af33`; obey scaling, KL, league, throughput, and full-evaluation stop gates.
-2. If every gate passes, review the generated promotion PR manually; never auto-merge.
+1. Merge the independently smoke-tested external runner-venv correction.
+2. Retry the remote production campaign at campaign SHA `f25a4880e65f0eed6eda8c3ecc33d42d2ad6af33`; obey scaling, KL, league, throughput, and full-evaluation stop gates.
+3. If every gate passes, review the generated promotion PR manually; never auto-merge.
 
 ## Validation
 
@@ -85,6 +89,11 @@
 - July 20, 2026: `node --test tests/edger-campaign-remote.test.js` -> 1 passed, 0 failed; JavaScript syntax, workflow YAML syntax, and `git diff --check` passed.
 - July 20, 2026: native Node 20 `npm test` after the bootstrap/control-plane correction -> 124 passed, 0 failed; `290641.099 ms`.
 - July 20, 2026: PR `#12` merged at `a924567`; exact campaign and bootstrap-smoke filters found zero non-terminal EC2 instances before retry.
+- July 20, 2026: run `29708727986` passed main-launcher ancestry validation, OIDC launch, AL2023 RPM installation, Python dependency installation, and Playwright download, then failed before manifest loading with `production campaign requires a clean Git worktree`; `.venv/` is not ignored at `f25a488`.
+- July 20, 2026: run `29708727986` instance `i-08979b1c575d5dbe3` reached `terminated`, volume `vol-0b309f1535244e238` was deleted, exact campaign filters returned zero non-terminal instances, and promotion was skipped.
+- July 20, 2026: clean-worktree failure-report SHA-256 `16ab65efeaa3f2eadafc8cb08aa576b6bc5b117ecc0c48f25f613fe01206982c`; the exact remote log source version `TAXhtzPS1z5tLFWbQkVgrQeoXY1HPqOW` is copied beside the raw SSM and EC2 records.
+- July 20, 2026: external-venv AL2023 smoke command `9942046d-4edd-4d30-b7ae-d59af395a4e3` passed on `i-0c2b5ab317655ef3b` after `npm ci`, `/opt/edge_royale_venv` creation, pip upgrade, and Playwright download; the exact clean-worktree command returned empty and Python reported the external prefix. Evidence is retained under `campaigns/20260718-v2-first/preflight/external-venv-20260720/`; the instance terminated.
+- July 20, 2026: focused external-venv bootstrap regression -> 1 passed, 0 failed; JavaScript syntax and `git diff --check` passed.
 
 ## Risks / Notes
 
@@ -96,5 +105,6 @@
 - The collected 10,000-game `f25a488` lineage is retained and resumable. Run `29692403151` was a control-plane credential-duration failure, not an accepted corpus freeze.
 - Run `29708015701` was a control-plane IAM failure before EC2 created any instance or campaign stage. Its evidence is immutable; it does not alter the accepted corpus or campaign SHA.
 - Run `29708221490` was a control-plane bootstrap portability failure after infrastructure creation but before the campaign process. Its evidence is immutable; it does not alter the accepted corpus or campaign SHA.
+- Run `29708727986` was a pre-stage cleanliness failure before corpus loading or scaling. Its evidence is immutable; it does not alter the accepted corpus or campaign SHA.
 - The workflow dispatch commit supplies only launcher/bootstrap control code and must contain `f25a488` in its ancestry; the runner clone and every stage remain bound to `f25a488`.
 - Any failed gate must retain evidence, terminate the runner, and leave live v1 untouched.
