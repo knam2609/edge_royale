@@ -13,6 +13,7 @@
 - A short-lived AL2023 arm64 smoke runner proved the direct Chromium RPM mapping and passed the real browser smoke. Production bootstrap/control-plane PR `#12` is merged.
 - Run `29708727986` proved the corrected browser bootstrap, then strict-stopped at the clean-worktree pre-stage gate because bootstrap created the Python virtual environment inside the immutable checkout. The runner and root volume self-terminated; no corpus or campaign stage loaded.
 - Four clean-worktree failure evidence objects are retained under `campaigns/20260718-v2-first/remote/failed-run-29708727986/`.
+- The post-`#13` retry has not been created: two dispatch attempts returned HTTP 503 during GitHub's active Actions/API partial outage. No EC2 runner was created.
 - CloudFormation stack `edge-royale-edger-campaign` is `UPDATE_COMPLETE` in `ap-southeast-2`; all five GitHub variables are configured.
 - Live browser Edger remains the tracked v1 artifact. No v2 artifact was promoted or wired into gameplay.
 - Scaling and later campaign stages have not run. No production or smoke EC2 runner remains active.
@@ -44,12 +45,13 @@
 
 ## Known Gaps
 
+- GitHub Actions is in a public partial outage; wait for recovery before dispatching the six-hour remote workflow.
 - The scaling suite, offline phase, league smoke/production rollout, full live-v1 reference, and full evaluator have not run.
 - AWS CLI `s3 ls` returns exit 1 for an empty prefix. The implementation uses `s3api list-objects-v2`; `.keep` remains harmless in the active object prefix.
 
 ## Next Tasks
 
-1. Retry the remote production campaign at campaign SHA `f25a4880e65f0eed6eda8c3ecc33d42d2ad6af33`; obey scaling, KL, league, throughput, and full-evaluation stop gates.
+1. After GitHub Actions recovers, retry the remote production campaign at campaign SHA `f25a4880e65f0eed6eda8c3ecc33d42d2ad6af33`; obey scaling, KL, league, throughput, and full-evaluation stop gates.
 2. If every gate passes, review the generated promotion PR manually; never auto-merge.
 
 ## Validation
@@ -93,6 +95,7 @@
 - July 20, 2026: external-venv AL2023 smoke command `9942046d-4edd-4d30-b7ae-d59af395a4e3` passed on `i-0c2b5ab317655ef3b` after `npm ci`, `/opt/edge_royale_venv` creation, pip upgrade, and Playwright download; the exact clean-worktree command returned empty and Python reported the external prefix. Evidence is retained under `campaigns/20260718-v2-first/preflight/external-venv-20260720/`; the instance terminated.
 - July 20, 2026: focused external-venv bootstrap regression -> 1 passed, 0 failed; JavaScript syntax and `git diff --check` passed.
 - July 20, 2026: PR `#13` merged at `a2e2797`; exact production and smoke filters found zero non-terminal EC2 instances before retry.
+- July 20, 2026: two post-`#13` workflow dispatch requests returned HTTP 503 and created no run; GitHub Status reported Actions and API Requests in `partial_outage`, incident status `investigating`. Exact AWS filters remained empty.
 
 ## Risks / Notes
 
@@ -106,4 +109,5 @@
 - Run `29708221490` was a control-plane bootstrap portability failure after infrastructure creation but before the campaign process. Its evidence is immutable; it does not alter the accepted corpus or campaign SHA.
 - Run `29708727986` was a pre-stage cleanliness failure before corpus loading or scaling. Its evidence is immutable; it does not alter the accepted corpus or campaign SHA.
 - The workflow dispatch commit supplies only launcher/bootstrap control code and must contain `f25a488` in its ancestry; the runner clone and every stage remain bound to `f25a488`.
+- Do not bypass the GitHub workflow during its service incident; the monitor and manual promotion-PR handoff are part of the production control path.
 - Any failed gate must retain evidence, terminate the runner, and leave live v1 untouched.
