@@ -44,15 +44,13 @@
 
 ## Known Gaps
 
-- The runner virtual environment must move outside the repository checkout, and that correction must merge before retry.
 - The scaling suite, offline phase, league smoke/production rollout, full live-v1 reference, and full evaluator have not run.
 - AWS CLI `s3 ls` returns exit 1 for an empty prefix. The implementation uses `s3api list-objects-v2`; `.keep` remains harmless in the active object prefix.
 
 ## Next Tasks
 
-1. Merge the independently smoke-tested external runner-venv correction.
-2. Retry the remote production campaign at campaign SHA `f25a4880e65f0eed6eda8c3ecc33d42d2ad6af33`; obey scaling, KL, league, throughput, and full-evaluation stop gates.
-3. If every gate passes, review the generated promotion PR manually; never auto-merge.
+1. Retry the remote production campaign at campaign SHA `f25a4880e65f0eed6eda8c3ecc33d42d2ad6af33`; obey scaling, KL, league, throughput, and full-evaluation stop gates.
+2. If every gate passes, review the generated promotion PR manually; never auto-merge.
 
 ## Validation
 
@@ -94,6 +92,7 @@
 - July 20, 2026: clean-worktree failure-report SHA-256 `16ab65efeaa3f2eadafc8cb08aa576b6bc5b117ecc0c48f25f613fe01206982c`; the exact remote log source version `TAXhtzPS1z5tLFWbQkVgrQeoXY1HPqOW` is copied beside the raw SSM and EC2 records.
 - July 20, 2026: external-venv AL2023 smoke command `9942046d-4edd-4d30-b7ae-d59af395a4e3` passed on `i-0c2b5ab317655ef3b` after `npm ci`, `/opt/edge_royale_venv` creation, pip upgrade, and Playwright download; the exact clean-worktree command returned empty and Python reported the external prefix. Evidence is retained under `campaigns/20260718-v2-first/preflight/external-venv-20260720/`; the instance terminated.
 - July 20, 2026: focused external-venv bootstrap regression -> 1 passed, 0 failed; JavaScript syntax and `git diff --check` passed.
+- July 20, 2026: PR `#13` merged at `a2e2797`; exact production and smoke filters found zero non-terminal EC2 instances before retry.
 
 ## Risks / Notes
 
