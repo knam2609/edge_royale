@@ -232,6 +232,9 @@ separate because EC2 evaluates that untaggable resource independently during
 Amazon Linux 2023 Chromium dependencies are installed explicitly with `dnf`;
 Playwright downloads only its pinned Chromium build and never invokes its
 unsupported-distribution `apt-get` fallback.
+The Python virtual environment lives at `/opt/edge_royale_venv`, outside the
+immutable repository checkout, so bootstrap cannot trip the clean-worktree
+pre-stage gate.
 Every completed remote stage is immutable and Git-SHA-bound in S3. Resume
 downloads only matching completed stages. Peak resident memory must stay below
 28 GiB and disk use below 160 GiB. Failed stages upload logs/reports and leave
