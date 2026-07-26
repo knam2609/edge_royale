@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const DEFAULT_REGION = process.env.AWS_REGION ?? "ap-southeast-2";
 const DEFAULT_STACK = "edge-royale-edger-campaign";
+const REMOTE_CAMPAIGN_TIMEOUT_SECONDS = "86400";
 const DEFAULT_CAMPAIGN_INPUT =
   process.env.EDGER_CAMPAIGN_INPUT_URI ??
   "s3://edge-royale-edger-904869824856-ap-southeast-2/campaigns/20260718-v2-first/campaign-input";
@@ -185,6 +186,13 @@ export function bootstrapCommands(args) {
   ];
 }
 
+export function ssmCommandParameters(args) {
+  return {
+    commands: bootstrapCommands(args),
+    executionTimeout: [REMOTE_CAMPAIGN_TIMEOUT_SECONDS],
+  };
+}
+
 async function launch(args) {
   const existing = findInstances(args);
   if (existing.length > 0) {
@@ -265,9 +273,9 @@ async function launch(args) {
     "--document-name",
     "AWS-RunShellScript",
     "--timeout-seconds",
-    "86400",
+    REMOTE_CAMPAIGN_TIMEOUT_SECONDS,
     "--parameters",
-    JSON.stringify({ commands: bootstrapCommands(args) }),
+    JSON.stringify(ssmCommandParameters(args)),
     "--comment",
     `Edge Royale Edger campaign ${campaignId(args.campaignUri)} at ${args.gitSha}`,
   ], args);
