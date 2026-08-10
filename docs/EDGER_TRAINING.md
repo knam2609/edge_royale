@@ -151,14 +151,17 @@ played from both sides; the reported score is the equally weighted mean of the
 five matchups. Reports bind the candidate model and checkpoint checksums, frozen
 suite checksum, illegal-action count, and replay checks.
 
-`edger_data_scaling_report_v1` validates all three manifests, checkpoints,
+`edger_data_scaling_report_v2` validates all three manifests, checkpoints,
 models, and frozen reports before it passes only when:
 
-- 100% held-out joint action loss is strictly below `0.10`
 - 100% held-out joint action loss improves over 10%
 - 100% frozen-league score does not regress from 10%
 
-League training refuses to start without all three facts.
+Joint action loss is the unnormalized sum of card, conditional-placement, and
+delay cross-entropies. Its absolute magnitude depends on legal-action entropy,
+so the scaling proof uses relative held-out improvement instead of a fixed
+absolute floor. Separate frozen-league and full-promotion gates enforce gameplay
+quality. League training refuses to start without both scaling facts.
 
 Production campaigns use 16–32 Node worker threads and pre-assign paired match specs, making rollout seeds and sides independent of worker count. The exact JavaScript simulator writes full verified episodes before the PyTorch learner runs.
 

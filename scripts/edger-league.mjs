@@ -17,6 +17,7 @@ import {
   readDatasetManifest,
   writeDatasetManifest,
 } from "./edger-corpus-core.mjs";
+import { assertScalingReportPassed } from "./edger-scaling-gate.mjs";
 import { spawnNativePython } from "./python-runtime.mjs";
 
 const LEAGUE_SCHEMA_VERSION = "edger_snapshot_league_v1";
@@ -104,23 +105,6 @@ function parseArgs(argv) {
     throw new Error("--workers must be between 1 and 32 (production campaigns use 16-32)");
   }
   return parsed;
-}
-
-function validateScalingReport(filePath) {
-  const report = JSON.parse(fs.readFileSync(filePath, "utf8"));
-  const required = [
-    "passed",
-    "full_improves_held_out_joint_action_loss",
-    "full_held_out_joint_action_loss_below_10pct",
-    "full_non_regressing_frozen_league_score",
-  ];
-  const failures = required.filter((key) => report[key] !== true);
-  if (failures.length > 0) {
-    throw new Error(
-      `league training is gated by the scaling experiment: ${failures.join(", ")}`,
-    );
-  }
-  return report;
 }
 
 function normalizeSnapshot(snapshot, fallbackPolicyId) {
@@ -344,7 +328,9 @@ function runVtraceIfRequested(args) {
 }
 
 const args = parseArgs(process.argv.slice(2));
-validateScalingReport(args.scalingReport);
+assertScalingReportPassed(
+  JSON.parse(fs.readFileSync(args.scalingReport, "utf8")),
+);
 const mainModel = validateEdgerV2PolicyModel(
   JSON.parse(fs.readFileSync(args.model, "utf8")),
 );
