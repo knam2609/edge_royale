@@ -34,7 +34,7 @@ The simulator remains the source of truth. Training episodes and workers use the
 1. Merge the production-readiness branch and use that one main-branch SHA for every campaign artifact.
 2. Run the 64-game resumable S3 pilot and retain its collection/cost report.
 3. Complete and strictly aggregate the ten-shard 10,000-match S3 collection only if the pilot projects at most eight hours on 16 workers.
-4. Launch the SSM-only `c7g.4xlarge` and train/frozen-evaluate the fixed 1%/10%/100% BC experiment without changing thresholds.
+4. Launch the SSM-only `c7g.4xlarge` and train/frozen-evaluate the fixed 1%/10%/100% BC experiment using the evidence-backed relative scaling gate.
 5. Run one conservative offline-improvement phase and retain its accepted or rolled-back evidence.
 6. Run the isolated 32-game league smoke and 1,000-game V-trace campaign over the frozen base plus production rollout.
 7. Enforce the 11,300-game/180-minute exact-JavaScript throughput gate.

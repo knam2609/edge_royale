@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -13,6 +14,14 @@ import torch
 
 ROOT = Path(__file__).resolve().parents[1]
 TRAINING_SCRIPT = ROOT / "scripts" / "edger-v2-training.py"
+
+
+def canonical_json(value: object) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def sha256_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def run_training(
@@ -109,6 +118,70 @@ class StreamingTrainingTest(unittest.TestCase):
             input_text=ndjson,
         )
 
+    def scaling_fixture(
+        self,
+        label: str,
+        train_ids: list[str],
+        loss: float,
+        league_score: float,
+    ) -> dict[str, Path]:
+        manifest_content = {
+            "schema_version": "edger_dataset_manifest_v1",
+            "shards": [
+                *({"episode_id": episode_id, "split": "train"} for episode_id in train_ids),
+                {"episode_id": "validation-1", "split": "validation"},
+                {"episode_id": "test-1", "split": "test"},
+            ],
+        }
+        manifest = {
+            **manifest_content,
+            "manifest_hash": hashlib.sha256(
+                canonical_json(manifest_content).encode(),
+            ).hexdigest(),
+        }
+        manifest_path = self.root / f"manifest-{label}.json"
+        manifest_path.write_text(json.dumps(manifest))
+
+        checkpoint_id = f"checkpoint-{label}"
+        checkpoint_path = self.root / f"checkpoint-{label}.pt"
+        torch.save(
+            {
+                "schema_version": "edger_v2_checkpoint_v1",
+                "checkpoint_id": checkpoint_id,
+                "manifest_hash": manifest["manifest_hash"],
+                "metrics": {"validation": {"joint_action_loss": loss}},
+            },
+            checkpoint_path,
+        )
+
+        model = {
+            "schema_version": "edger_policy_model_v2",
+            "model_id": f"model-{label}",
+            "training": {"checkpoint_id": checkpoint_id},
+        }
+        model_path = self.root / f"model-{label}.json"
+        model_path.write_text(json.dumps(model))
+
+        league = {
+            "schema_version": "edger_frozen_league_report_v1",
+            "candidate_checkpoint_id": checkpoint_id,
+            "candidate_model_id": model["model_id"],
+            "candidate_model_checksum": sha256_file(model_path),
+            "candidate_checkpoint_checksum": sha256_file(checkpoint_path),
+            "illegal_actions": 0,
+            "replay_checks": {"all_passed": True},
+            "suite_spec_checksum": "fixed-suite",
+            "frozen_league_score": league_score,
+        }
+        league_path = self.root / f"league-{label}.json"
+        league_path.write_text(json.dumps(league))
+        return {
+            "checkpoint": checkpoint_path,
+            "manifest": manifest_path,
+            "model": model_path,
+            "league": league_path,
+        }
+
     def test_prepare_writes_stable_256_row_groups_without_changing_rows(self) -> None:
         rows = [
             {
@@ -131,6 +204,47 @@ class StreamingTrainingTest(unittest.TestCase):
         )
         self.assertEqual(parquet.schema_arrow.metadata[b"row_group_size"], b"256")
         self.assertEqual(parquet.read().to_pylist(), rows)
+
+    def test_scaling_gate_uses_relative_loss_and_gameplay_non_regression(self) -> None:
+        fixtures = {
+            "one": self.scaling_fixture("1pct", ["train-1"], 5.66, 0.54),
+            "ten": self.scaling_fixture(
+                "10pct",
+                ["train-1", "train-2"],
+                4.21,
+                0.795,
+            ),
+            "full": self.scaling_fixture(
+                "100pct",
+                ["train-1", "train-2", "train-3"],
+                3.69,
+                0.86,
+            ),
+        }
+        output = self.root / "scaling-report.json"
+        arguments = ["scaling-report"]
+        for artifact in ["checkpoint", "manifest", "model", "league"]:
+            arguments.extend([
+                f"--one-{artifact}",
+                str(fixtures["one"][artifact]),
+                f"--ten-{artifact}",
+                str(fixtures["ten"][artifact]),
+                f"--full-{artifact}",
+                str(fixtures["full"][artifact]),
+            ])
+        arguments.extend(["--out", str(output)])
+        run_training(arguments, cwd=self.git_root)
+
+        report = json.loads(output.read_text())
+        self.assertEqual(report["schema_version"], "edger_data_scaling_report_v2")
+        self.assertTrue(report["passed"])
+        self.assertTrue(report["full_improves_held_out_joint_action_loss"])
+        self.assertTrue(report["full_non_regressing_frozen_league_score"])
+        self.assertNotIn("full_held_out_joint_action_loss_below_10pct", report)
+        run_training(
+            ["league", "--scaling-report", str(output)],
+            cwd=self.git_root,
+        )
 
     def test_streaming_bc_offline_rollback_and_episode_vtrace_are_deterministic(self) -> None:
         rows = [

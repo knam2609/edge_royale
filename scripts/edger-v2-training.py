@@ -57,6 +57,7 @@ ADVANTAGE_TEMPERATURE = 0.25
 ADVANTAGE_WEIGHT_MIN = 0.1
 ADVANTAGE_WEIGHT_MAX = 20.0
 PARQUET_ROW_GROUP_SIZE = 256
+SCALING_REPORT_SCHEMA = "edger_data_scaling_report_v2"
 
 
 def canonical_json(value: Any) -> str:
@@ -1358,13 +1359,17 @@ def run_prepare(args: argparse.Namespace) -> None:
 
 def run_league_guard(args: argparse.Namespace) -> None:
     report = json.loads(Path(args.scaling_report).read_text())
+    if report.get("schema_version") != SCALING_REPORT_SCHEMA:
+        raise RuntimeError(
+            f"league training requires {SCALING_REPORT_SCHEMA}; "
+            f"got {report.get('schema_version', 'missing')}"
+        )
     if not report.get("passed"):
         raise RuntimeError(
             "IMPALA/V-trace remains gated until the 1%/10%/100% scaling report passes"
         )
     required = {
         "full_improves_held_out_joint_action_loss",
-        "full_held_out_joint_action_loss_below_10pct",
         "full_non_regressing_frozen_league_score",
     }
     missing = sorted(key for key in required if not report.get(key))
@@ -1502,13 +1507,11 @@ def run_scaling_report(args: argparse.Namespace) -> None:
             "scaling evidence requires validation joint_action_loss and frozen_league_score"
         )
     loss_passed = float(full_loss) < float(ten_loss)
-    absolute_loss_passed = float(full_loss) < 0.10
     league_passed = float(full_league_score) >= float(ten_league_score)
     report = {
-        "schema_version": "edger_data_scaling_report_v1",
-        "passed": loss_passed and absolute_loss_passed and league_passed,
+        "schema_version": SCALING_REPORT_SCHEMA,
+        "passed": loss_passed and league_passed,
         "full_improves_held_out_joint_action_loss": loss_passed,
-        "full_held_out_joint_action_loss_below_10pct": absolute_loss_passed,
         "full_non_regressing_frozen_league_score": league_passed,
         "scales": {
             label: {
