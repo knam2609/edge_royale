@@ -1291,6 +1291,8 @@ def run_prepare(args: argparse.Namespace) -> None:
     arrow_schema: pa.Schema | None = None
     pending: list[dict[str, Any]] = []
     rows_written = 0
+    split_rows: dict[str, int] = {}
+    logical_content = hashlib.sha256()
 
     def flush() -> None:
         nonlocal writer, arrow_schema, rows_written
@@ -1326,7 +1328,11 @@ def run_prepare(args: argparse.Namespace) -> None:
         for line in handle:
             if not line.strip():
                 continue
-            pending.append(json.loads(line))
+            row = json.loads(line)
+            logical_content.update((canonical_json(row) + "\n").encode())
+            split = str(row.get("split", "missing"))
+            split_rows[split] = split_rows.get(split, 0) + 1
+            pending.append(row)
             if len(pending) == PARQUET_ROW_GROUP_SIZE:
                 flush()
         flush()
@@ -1343,18 +1349,138 @@ def run_prepare(args: argparse.Namespace) -> None:
     finally:
         if handle is not sys.stdin:
             handle.close()
-    print(
-        json.dumps(
-            {
-                "cache": str(output.resolve()),
-                "rows": rows_written,
-                "bytes": output.stat().st_size,
-                "compression": "zstd",
-                "row_group_size": PARQUET_ROW_GROUP_SIZE,
-            },
-            indent=2,
+    assert arrow_schema is not None
+    persisted_schema = pq.ParquetFile(output).schema_arrow.remove_metadata()
+    schema_descriptor = [
+        {
+            "name": field.name,
+            "type": str(field.type),
+            "nullable": field.nullable,
+        }
+        for field in persisted_schema
+    ]
+    report = {
+        "schema_version": "edger_cache_build_report_v1",
+        "cache": str(output.resolve()),
+        "rows": rows_written,
+        "split_rows": split_rows,
+        "bytes": output.stat().st_size,
+        "manifest_hash": args.manifest_hash,
+        "scale": args.scale,
+        "parquet_schema_version": "edger_decision_parquet_v1",
+        "parquet_schema_sha256": sha256_bytes(
+            canonical_json(schema_descriptor).encode()
+        ),
+        "logical_content_sha256": logical_content.hexdigest(),
+        "compression": "zstd",
+        "row_group_size": PARQUET_ROW_GROUP_SIZE,
+    }
+    report_output = Path(args.report or f"{args.out}.build.json")
+    report_output.parent.mkdir(parents=True, exist_ok=True)
+    report_output.write_text(json.dumps(report, sort_keys=True, indent=2) + "\n")
+    print(json.dumps(report, indent=2))
+
+
+def run_validate_cache(args: argparse.Namespace) -> None:
+    dataset = Path(args.dataset)
+    build_report = json.loads(Path(args.build_report).read_text())
+    if build_report.get("schema_version") != "edger_cache_build_report_v1":
+        raise ValueError("full cache build report schema is incompatible")
+    parquet = pq.ParquetFile(dataset)
+    metadata = parquet_metadata(dataset)
+    expected_metadata = {
+        "schema_version": "edger_decision_parquet_v1",
+        "manifest_hash": args.manifest_hash,
+        "scale": "1.0",
+        "compression": "zstd",
+        "row_group_size": str(PARQUET_ROW_GROUP_SIZE),
+    }
+    for key, expected in expected_metadata.items():
+        if metadata.get(key) != expected:
+            raise ValueError(
+                f"full cache Parquet metadata {key} mismatch: "
+                f"expected {expected}, got {metadata.get(key)}"
+            )
+    schema_descriptor = [
+        {
+            "name": field.name,
+            "type": str(field.type),
+            "nullable": field.nullable,
+        }
+        for field in parquet.schema_arrow.remove_metadata()
+    ]
+    schema_sha256 = sha256_bytes(canonical_json(schema_descriptor).encode())
+    if schema_sha256 != args.schema_sha256:
+        raise ValueError("full cache Parquet schema checksum mismatch")
+    if build_report.get("parquet_schema_sha256") != schema_sha256:
+        raise ValueError("full cache build report schema binding mismatch")
+    if parquet.metadata.num_rows != args.rows:
+        raise ValueError(
+            f"full cache row count mismatch: expected {args.rows}, "
+            f"got {parquet.metadata.num_rows}"
         )
-    )
+    expected_groups = math.ceil(args.rows / PARQUET_ROW_GROUP_SIZE)
+    if parquet.num_row_groups != expected_groups:
+        raise ValueError("full cache Parquet row-group count mismatch")
+    for group_index in range(parquet.num_row_groups):
+        group = parquet.metadata.row_group(group_index)
+        expected_rows = (
+            PARQUET_ROW_GROUP_SIZE
+            if group_index < parquet.num_row_groups - 1
+            else args.rows - PARQUET_ROW_GROUP_SIZE * (parquet.num_row_groups - 1)
+        )
+        if group.num_rows != expected_rows:
+            raise ValueError(f"full cache row group {group_index} size mismatch")
+        for column_index in range(group.num_columns):
+            if group.column(column_index).compression != "ZSTD":
+                raise ValueError(
+                    f"full cache row group {group_index} is not entirely Zstd"
+                )
+
+    split_rows = {"train": 0, "validation": 0, "test": 0}
+    logical_content = hashlib.sha256()
+    for row in iter_parquet_rows(dataset):
+        split = row.get("split")
+        if split not in split_rows:
+            raise ValueError(f"full cache contains unexpected split {split}")
+        split_rows[split] += 1
+        logical_content.update((canonical_json(row) + "\n").encode())
+    expected_splits = {
+        "train": args.train_rows,
+        "validation": args.validation_rows,
+        "test": args.test_rows,
+    }
+    if split_rows != expected_splits:
+        raise ValueError(
+            f"full cache split counts mismatch: expected {expected_splits}, "
+            f"got {split_rows}"
+        )
+    logical_sha256 = logical_content.hexdigest()
+    if build_report.get("logical_content_sha256") != logical_sha256:
+        raise ValueError("full cache logical replay-derived content mismatch")
+    if (
+        build_report.get("manifest_hash") != args.manifest_hash
+        or build_report.get("rows") != args.rows
+        or build_report.get("split_rows") != expected_splits
+    ):
+        raise ValueError("full cache build report lineage/count binding mismatch")
+    report = {
+        "schema_version": "edger_full_cache_validation_report_v1",
+        "passed": True,
+        "manifest_hash": args.manifest_hash,
+        "rows": args.rows,
+        "split_rows": split_rows,
+        "parquet_schema_sha256": schema_sha256,
+        "logical_content_sha256": logical_sha256,
+        "compression": "zstd",
+        "row_group_size": PARQUET_ROW_GROUP_SIZE,
+        "row_groups": parquet.num_row_groups,
+        "parquet_sha256": sha256_file(dataset),
+    }
+    output = Path(args.out)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(report, sort_keys=True, indent=2) + "\n")
+    print(json.dumps(report, indent=2))
 
 
 def run_league_guard(args: argparse.Namespace) -> None:
@@ -1516,6 +1642,7 @@ def run_scaling_report(args: argparse.Namespace) -> None:
         "scales": {
             label: {
                 "checkpoint_id": checkpoints[label]["checkpoint_id"],
+                "source_checkpoint_git_commit": checkpoints[label].get("git_commit"),
                 "manifest_hash": checkpoints[label]["manifest_hash"],
                 "manifest_path": str(Path(getattr(args, {
                     "1pct": "one_manifest",
@@ -1569,7 +1696,20 @@ def build_parser() -> argparse.ArgumentParser:
     prepare.add_argument("--out", required=True)
     prepare.add_argument("--manifest-hash", required=True)
     prepare.add_argument("--scale", type=float, required=True)
+    prepare.add_argument("--report")
     prepare.set_defaults(func=run_prepare)
+
+    validate_cache = subparsers.add_parser("validate-cache")
+    validate_cache.add_argument("--dataset", required=True)
+    validate_cache.add_argument("--build-report", required=True)
+    validate_cache.add_argument("--manifest-hash", required=True)
+    validate_cache.add_argument("--schema-sha256", required=True)
+    validate_cache.add_argument("--rows", required=True, type=int)
+    validate_cache.add_argument("--train-rows", required=True, type=int)
+    validate_cache.add_argument("--validation-rows", required=True, type=int)
+    validate_cache.add_argument("--test-rows", required=True, type=int)
+    validate_cache.add_argument("--out", required=True)
+    validate_cache.set_defaults(func=run_validate_cache)
 
     bc = subparsers.add_parser("bc")
     add_training_arguments(bc)

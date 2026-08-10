@@ -60,12 +60,17 @@ jobs:
           path: artifacts/edger-training/health
           retention-days: 30
 
-      - name: Dispatch a cumulative campaign when configured and due
-        if: vars.EDGER_AUTO_CAMPAIGNS == 'true'
+      - name: Dispatch recovery full-cache when reviewed SHA is configured and due
+        if: vars.EDGER_AUTO_CAMPAIGNS == 'true' && vars.EDGER_RECOVERY_CAMPAIGN_SHA != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           should_trigger="$(node -e "const r=require('./artifacts/edger-training/health/report.json'); process.stdout.write(String(Boolean(r.campaign_trigger.should_trigger)))")"
           if [ "$should_trigger" = "true" ]; then
-            gh workflow run edger-campaign.yml
+            gh workflow run edger-campaign.yml \
+              --ref main \
+              -f operation=run \
+              -f campaign_sha="${{ vars.EDGER_RECOVERY_CAMPAIGN_SHA }}" \
+              -f campaign_uri=s3://edge-royale-edger-904869824856-ap-southeast-2/campaigns/20260810-v2-recovery \
+              -f target_stage=full-cache
           fi

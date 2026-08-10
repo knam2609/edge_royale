@@ -1,0 +1,153 @@
+{
+  "schema_version": "edger_scaling_recovery_v1",
+  "source": {
+    "git_commit": "f25a4880e65f0eed6eda8c3ecc33d42d2ad6af33",
+    "campaign_uri": "s3://edge-royale-edger-904869824856-ap-southeast-2/campaigns/20260718-v2-first",
+    "failed_stage_uri": "s3://edge-royale-edger-904869824856-ap-southeast-2/campaigns/20260718-v2-first/failed-stages/scaling/2026-07-27T03-18-54-545Z",
+    "protected_derivation_paths": [
+      "scripts/edger-corpus-core.mjs",
+      "scripts/edger-dataset-core.mjs",
+      "scripts/edger-dataset.mjs",
+      "src/ai/botRuntime.js",
+      "src/ai/v2",
+      "src/replay",
+      "src/sim"
+    ]
+  },
+  "target": {
+    "campaign_uri": "s3://edge-royale-edger-904869824856-ap-southeast-2/campaigns/20260810-v2-recovery"
+  },
+  "failed_attempt": {
+    "uri": "s3://edge-royale-edger-904869824856-ap-southeast-2/campaigns/20260718-v2-first/status/attempts/scaling-2026-07-27T03-18-54-545Z.json",
+    "version_id": "PEbydV7ss0yt7EdVHAdwTGOKEbCEwXCU",
+    "sha256": "a52bedabb3148ad239834c6810ae03bf4b8e7a7d6c2280cab2f7a8561638d115",
+    "local_name": "failed-attempt.json"
+  },
+  "legacy_report": {
+    "uri": "s3://edge-royale-edger-904869824856-ap-southeast-2/campaigns/20260718-v2-first/failed-stages/scaling/2026-07-27T03-18-54-545Z/scaling_report.json",
+    "version_id": "PFRmRtORwmm4rVC4wiki.5tvNm3o9INu",
+    "sha256": "631996eafa762c2feb73a05eb5864fe487ccfa54eff1d02d53c89bf39de0372a",
+    "local_name": "legacy-scaling-report.json"
+  },
+  "scales": {
+    "1pct": {
+      "manifest": {
+        "uri": "s3://edge-royale-edger-904869824856-ap-southeast-2/campaigns/20260718-v2-first/failed-stages/scaling/2026-07-27T03-18-54-545Z/edger_manifest_1pct.json",
+        "version_id": "bC7coOwnay2zMlMt_S4fGBAK04LEpBD7",
+        "sha256": "ade41d58cdf8d0fab80e482ff0791e083ef32c3ad94b9c1b0e9d905a42996713",
+        "local_name": "edger_manifest_1pct.json"
+      },
+      "checkpoint": {
+        "uri": "s3://edge-royale-edger-904869824856-ap-southeast-2/campaigns/20260718-v2-first/failed-stages/scaling/2026-07-27T03-18-54-545Z/bc-1pct.pt",
+        "version_id": "EmJGhshTiMq2HOfbWFZFAVKZ4uDI1CKp",
+        "sha256": "297b4d3acd3a997a63e6385552e8542c8e8630ce7e59eb0364ecd03fb18cced3",
+        "local_name": "bc-1pct.pt"
+      },
+      "model": {
+        "uri": "s3://edge-royale-edger-904869824856-ap-southeast-2/campaigns/20260718-v2-first/failed-stages/scaling/2026-07-27T03-18-54-545Z/model-1pct.json",
+        "version_id": "pNaNiCbgjEiBd.Wa8mYYmrfvlQOVTzSd",
+        "sha256": "d0189ac8999609f148f47c1a0a5e751cbef75bc692824bf29c721f14fae057b2",
+        "local_name": "model-1pct.json"
+      },
+      "frozen_report": {
+        "uri": "s3://edge-royale-edger-904869824856-ap-southeast-2/campaigns/20260718-v2-first/failed-stages/scaling/2026-07-27T03-18-54-545Z/frozen-1pct.json",
+        "version_id": "_SIXd19kFboEbFm6Bs8lkTpGjrQDybyY",
+        "sha256": "4e1b81c8921ab7abf0d906a1cfb88f3dcd96171bfd0d358465610757da727164",
+        "local_name": "frozen-1pct.json"
+      }
+    },
+    "10pct": {
+      "manifest": {
+        "uri": "s3://edge-royale-edger-904869824856-ap-southeast-2/campaigns/20260718-v2-first/failed-stages/scaling/2026-07-27T03-18-54-545Z/edger_manifest_10pct.json",
+        "version_id": "AoExay0GZPmARCjXj.bcihJXv2aFPRez",
+        "sha256": "8ff271bd87aef4185333f608c45435c62973a995059dc2b44c36809692b2594d",
+        "local_name": "edger_manifest_10pct.json"
+      },
+      "checkpoint": {
+        "uri": "s3://edge-royale-edger-904869824856-ap-southeast-2/campaigns/20260718-v2-first/failed-stages/scaling/2026-07-27T03-18-54-545Z/bc-10pct.pt",
+        "version_id": "nwF374aKl3tM6Ih1JRDSi47_sfmSPawm",
+        "sha256": "fb54997b4dd608262439d4121aa7938927001f81e243eee79304e420b45096d8",
+        "local_name": "bc-10pct.pt"
+      },
+      "model": {
+        "uri": "s3://edge-royale-edger-904869824856-ap-southeast-2/campaigns/20260718-v2-first/failed-stages/scaling/2026-07-27T03-18-54-545Z/model-10pct.json",
+        "version_id": "HdZxN2FnaDZ8SmeobSF2PMwMwzu5NaJl",
+        "sha256": "96a3003af446fdfbb566aab97479da5ec7373b679d88f0258e9123bd4d910ff9",
+        "local_name": "model-10pct.json"
+      },
+      "frozen_report": {
+        "uri": "s3://edge-royale-edger-904869824856-ap-southeast-2/campaigns/20260718-v2-first/failed-stages/scaling/2026-07-27T03-18-54-545Z/frozen-10pct.json",
+        "version_id": "M9qST45ATMRTT.H3AmrqSPB_yYUYN9B6",
+        "sha256": "9c4e14b3e097b0ddf1149f5cd74189c4e5b57c6d81f8645ba69b1e3446e2442e",
+        "local_name": "frozen-10pct.json"
+      }
+    },
+    "100pct": {
+      "manifest": {
+        "uri": "s3://edge-royale-edger-904869824856-ap-southeast-2/campaigns/20260718-v2-first/failed-stages/scaling/2026-07-27T03-18-54-545Z/edger_manifest_100pct.json",
+        "version_id": "hMm3bQTvTr5FKwunB61aMMpYtP8VRzNu",
+        "sha256": "bf85a0c3eca5eaeb008bfd818b3b0e726a820f671bc49a15f0b6c89e568c048d",
+        "local_name": "edger_manifest_100pct.json"
+      },
+      "checkpoint": {
+        "uri": "s3://edge-royale-edger-904869824856-ap-southeast-2/campaigns/20260718-v2-first/failed-stages/scaling/2026-07-27T03-18-54-545Z/bc-100pct.pt",
+        "version_id": "IzhtQnuEUk9SuCqnZuEFrxmGRID5YlIN",
+        "sha256": "89fc8d328b6ddceb139d67923a17e5dac51d2e7292daed8dfeb60b76f74a4d1e",
+        "local_name": "bc-100pct.pt"
+      },
+      "model": {
+        "uri": "s3://edge-royale-edger-904869824856-ap-southeast-2/campaigns/20260718-v2-first/failed-stages/scaling/2026-07-27T03-18-54-545Z/model-100pct.json",
+        "version_id": ".QENsI02nS7NCaWNlqNTxOIqeFP8Icfz",
+        "sha256": "5d9795f459466c78fb2cc475271c263a4b6ed4d6ff1149613d4b85d05e5687c2",
+        "local_name": "model-100pct.json"
+      },
+      "frozen_report": {
+        "uri": "s3://edge-royale-edger-904869824856-ap-southeast-2/campaigns/20260718-v2-first/failed-stages/scaling/2026-07-27T03-18-54-545Z/frozen-100pct.json",
+        "version_id": "s_cZ_2r23PpqVJWZjj42mhcqvGHQ_cQJ",
+        "sha256": "5b8d2dc3257a7771a547984ceb4ede7157b6312de11a4994cce991f4947ad978",
+        "local_name": "frozen-100pct.json"
+      }
+    }
+  },
+  "expected": {
+    "corpus_manifest_hash": "ca8435e58fd500f6045727db283de32ac906b3584b187abb84a5aa569867939c",
+    "suite_spec_checksum": "b0517c71c5dcada16a16b23149b3b6f7ab96d08e45cfe7e2403a2a9a5695399b",
+    "failure_gate": "full_held_out_joint_action_loss_below_10pct",
+    "cache": {
+      "rows": 593576,
+      "split_rows": {
+        "train": 475845,
+        "validation": 59529,
+        "test": 58202
+      },
+      "schema_version": "edger_decision_parquet_v1",
+      "schema_sha256": "92c06e0a78684796c7495ae7968992d216d95622b0ae36cf4aaf64e7d36a6698",
+      "compression": "zstd",
+      "row_group_size": 256
+    },
+    "scales": {
+      "1pct": {
+        "manifest_hash": "9fc615a5de92fe96de5a994adade2642b19f5c0f47cd2fb0dc6af740d4616d6e",
+        "checkpoint_id": "edger_v2_bc_b87ad6c780799cf7",
+        "validation_joint_action_loss": 5.66476906505989,
+        "frozen_league_score": 0.54
+      },
+      "10pct": {
+        "manifest_hash": "8c9d2023ad6cacc60020d8a080b50e15e7074c347e53016bdc70f9d114c27f17",
+        "checkpoint_id": "edger_v2_bc_d36e360fe7a1eb74",
+        "validation_joint_action_loss": 4.208889744824017,
+        "frozen_league_score": 0.795
+      },
+      "100pct": {
+        "manifest_hash": "ca8435e58fd500f6045727db283de32ac906b3584b187abb84a5aa569867939c",
+        "checkpoint_id": "edger_v2_bc_418be44c61fba9b1",
+        "validation_joint_action_loss": 3.689103049452064,
+        "frozen_league_score": 0.86
+      }
+    },
+    "nested_training_sets": true,
+    "identical_validation_and_test_sets": true,
+    "illegal_actions": 0,
+    "replay_checks_all_passed": true
+  }
+}

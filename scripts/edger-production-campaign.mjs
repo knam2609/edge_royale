@@ -6,6 +6,16 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 
+import {
+  assertCompletedStageMarker,
+  assertTargetStage,
+  isTargetTerminalStage,
+  stageIncludesParquet,
+} from "./edger-campaign-stages.mjs";
+import {
+  validateRecoveryManifest,
+} from "./edger-scaling-recovery.mjs";
+
 const SEED = 20260718;
 const MEMORY_LIMIT_KIB = 28 * 1024 * 1024;
 const DISK_LIMIT_KIB = 160 * 1024 * 1024;
@@ -20,6 +30,10 @@ function parseArgs(argv) {
     workDir:
       process.env.EDGER_CAMPAIGN_WORK_DIR ??
       path.resolve("artifacts/edger-training/production-campaign"),
+    targetStage: process.env.EDGER_TARGET_STAGE ?? "full-evaluation",
+    scalingRecoveryManifest:
+      process.env.EDGER_SCALING_RECOVERY_MANIFEST ?? null,
+    runLabel: process.env.EDGER_RUN_LABEL ?? `local-${process.pid}`,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -31,6 +45,12 @@ function parseArgs(argv) {
       parsed.referenceHardware = argv[++index];
     } else if (arg === "--work-dir" && argv[index + 1]) {
       parsed.workDir = path.resolve(argv[++index]);
+    } else if (arg === "--target-stage" && argv[index + 1]) {
+      parsed.targetStage = argv[++index];
+    } else if (arg === "--scaling-recovery-manifest" && argv[index + 1]) {
+      parsed.scalingRecoveryManifest = path.resolve(argv[++index]);
+    } else if (arg === "--run-label" && argv[index + 1]) {
+      parsed.runLabel = argv[++index];
     }
   }
   if (!parsed.campaignUri?.startsWith("s3://")) {
@@ -38,6 +58,13 @@ function parseArgs(argv) {
   }
   if (!parsed.corpusStore?.startsWith("s3://")) {
     throw new Error("--corpus-store must be an s3:// URI");
+  }
+  assertTargetStage(parsed.targetStage);
+  if (!parsed.scalingRecoveryManifest) {
+    throw new Error("--scaling-recovery-manifest is required");
+  }
+  if (!/^[A-Za-z0-9._-]+$/.test(parsed.runLabel)) {
+    throw new Error("--run-label may contain only letters, numbers, dot, underscore, dash");
   }
   parsed.campaignUri = parsed.campaignUri.replace(/\/+$/, "");
   return parsed;
@@ -97,7 +124,128 @@ function tryReadS3Json(uri) {
   }
 }
 
-function uploadDirectory(localDir, uri) {
+function listLocalFiles(root) {
+  if (!fs.existsSync(root)) {
+    return [];
+  }
+  const files = [];
+  const visit = (directory) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const filePath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        visit(filePath);
+      } else {
+        files.push(filePath);
+      }
+    }
+  };
+  visit(root);
+  return files.sort();
+}
+
+function tryHeadS3Object(uri) {
+  const { bucket, key } = parseS3Uri(uri);
+  try {
+    return JSON.parse(aws([
+      "s3api",
+      "head-object",
+      "--bucket",
+      bucket,
+      "--key",
+      key,
+      "--output",
+      "json",
+    ]));
+  } catch {
+    return null;
+  }
+}
+
+function objectMetadata({ sha256, gitCommit, recoveryManifestChecksum }) {
+  return {
+    sha256,
+    "git-commit": gitCommit,
+    "recovery-checksum": recoveryManifestChecksum,
+  };
+}
+
+function assertObjectMetadata(head, expected, uri) {
+  const actual = head?.Metadata ?? {};
+  for (const [key, value] of Object.entries(expected)) {
+    if (actual[key] !== value) {
+      throw new Error(`existing target object metadata mismatch at ${uri}: ${key}`);
+    }
+  }
+}
+
+function uploadFileImmutable(localFile, uri, bindings) {
+  const checksum = sha256File(localFile);
+  const metadata = objectMetadata({ sha256: checksum, ...bindings });
+  const existing = tryHeadS3Object(uri);
+  if (existing) {
+    assertObjectMetadata(existing, metadata, uri);
+    return checksum;
+  }
+  aws([
+    "s3",
+    "cp",
+    localFile,
+    uri,
+    "--metadata",
+    Object.entries(metadata).map(([key, value]) => `${key}=${value}`).join(","),
+    "--checksum-algorithm",
+    "SHA256",
+    "--only-show-errors",
+  ], { stdio: "inherit", encoding: undefined });
+  const uploaded = tryHeadS3Object(uri);
+  if (!uploaded) {
+    throw new Error(`immutable upload missing after write: ${uri}`);
+  }
+  assertObjectMetadata(uploaded, metadata, uri);
+  return checksum;
+}
+
+function uploadDirectoryImmutable(localDir, uri, {
+  includeParquet = false,
+  bindings,
+} = {}) {
+  const selected = listLocalFiles(localDir).filter((filePath) => {
+    if (filePath.endsWith(".time.txt")) {
+      return false;
+    }
+    if (filePath.endsWith(".parquet") && !includeParquet) {
+      return false;
+    }
+    return true;
+  });
+  const { bucket, key } = parseS3Uri(uri.replace(/\/+$/, ""));
+  const prefix = `${key}/`;
+  const existing = JSON.parse(aws([
+    "s3api",
+    "list-objects-v2",
+    "--bucket",
+    bucket,
+    "--prefix",
+    prefix,
+    "--output",
+    "json",
+  ])).Contents ?? [];
+  const selectedPaths = new Set(selected.map(
+    (filePath) => path.relative(localDir, filePath).split(path.sep).join("/"),
+  ));
+  const unexpected = existing
+    .map((object) => object.Key.slice(prefix.length))
+    .filter((relative) => relative && !selectedPaths.has(relative));
+  if (unexpected.length > 0) {
+    throw new Error(`existing target prefix contains unbound objects: ${unexpected.join(", ")}`);
+  }
+  for (const filePath of selected) {
+    const relative = path.relative(localDir, filePath).split(path.sep).join("/");
+    uploadFileImmutable(filePath, `${uri.replace(/\/+$/, "")}/${relative}`, bindings);
+  }
+}
+
+function uploadFailureDirectory(localDir, uri) {
   if (!fs.existsSync(localDir)) {
     return;
   }
@@ -125,7 +273,7 @@ function downloadDirectory(uri, localDir) {
   ], { stdio: "inherit", encoding: undefined });
 }
 
-function writeImmutableJson(uri, payload) {
+function writeImmutableJson(uri, payload, bindings) {
   const temporary = path.join(
     os.tmpdir(),
     `edger-status-${process.pid}-${Date.now()}.json`,
@@ -133,6 +281,11 @@ function writeImmutableJson(uri, payload) {
   fs.writeFileSync(temporary, `${JSON.stringify(payload, null, 2)}\n`);
   const { bucket, key } = parseS3Uri(uri);
   try {
+    if (tryHeadS3Object(uri)) {
+      throw new Error(`immutable marker already exists: ${uri}`);
+    }
+    const checksum = sha256File(temporary);
+    const metadata = objectMetadata({ sha256: checksum, ...bindings });
     aws([
       "s3api",
       "put-object",
@@ -144,7 +297,16 @@ function writeImmutableJson(uri, payload) {
       temporary,
       "--if-none-match",
       "*",
+      "--checksum-algorithm",
+      "SHA256",
+      "--metadata",
+      Object.entries(metadata).map(([name, value]) => `${name}=${value}`).join(","),
     ]);
+    const uploaded = tryHeadS3Object(uri);
+    if (!uploaded) {
+      throw new Error(`immutable marker missing after write: ${uri}`);
+    }
+    assertObjectMetadata(uploaded, metadata, uri);
   } finally {
     fs.rmSync(temporary, { force: true });
   }
@@ -170,27 +332,42 @@ function diskUsedKiB(target) {
   return Number.parseInt(lines.at(-1).trim().split(/\s+/)[2], 10);
 }
 
-function durableArtifacts(root) {
+function durableArtifacts(root, { includeParquet = false } = {}) {
   if (!fs.existsSync(root)) {
     return [];
   }
-  const files = [];
-  const visit = (directory) => {
-    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-      const filePath = path.join(directory, entry.name);
-      if (entry.isDirectory()) {
-        visit(filePath);
-      } else if (!entry.name.endsWith(".parquet") && !entry.name.endsWith(".time.txt")) {
-        files.push({
-          path: path.relative(root, filePath),
-          bytes: fs.statSync(filePath).size,
-          sha256: sha256File(filePath),
-        });
-      }
+  return listLocalFiles(root)
+    .filter((filePath) => !filePath.endsWith(".time.txt"))
+    .filter((filePath) => includeParquet || !filePath.endsWith(".parquet"))
+    .map((filePath) => ({
+      path: path.relative(root, filePath).split(path.sep).join("/"),
+      bytes: fs.statSync(filePath).size,
+      sha256: sha256File(filePath),
+    }))
+    .sort((left, right) => left.path.localeCompare(right.path));
+}
+
+function verifyStageArtifacts(root, artifacts) {
+  if (!Array.isArray(artifacts) || artifacts.length === 0) {
+    throw new Error("completed stage marker has no checksum-bound artifacts");
+  }
+  for (const artifact of artifacts) {
+    const filePath = path.join(root, artifact.path);
+    if (
+      !fs.existsSync(filePath) ||
+      fs.statSync(filePath).size !== artifact.bytes ||
+      sha256File(filePath) !== artifact.sha256
+    ) {
+      throw new Error(`resumed stage artifact checksum mismatch: ${artifact.path}`);
     }
-  };
-  visit(root);
-  return files.sort((left, right) => left.path.localeCompare(right.path));
+  }
+  const expectedPaths = new Set(artifacts.map((artifact) => artifact.path));
+  const unexpected = listLocalFiles(root)
+    .map((filePath) => path.relative(root, filePath).split(path.sep).join("/"))
+    .filter((relative) => !expectedPaths.has(relative));
+  if (unexpected.length > 0) {
+    throw new Error(`resumed stage contains unbound target objects: ${unexpected.join(", ")}`);
+  }
 }
 
 function makeCommandRunner(stageDir, resources) {
@@ -243,315 +420,401 @@ function makeCommandRunner(stageDir, resources) {
   };
 }
 
-const args = parseArgs(process.argv.slice(2));
-const gitCommit = currentGitCommit();
-requireCleanGit();
-fs.mkdirSync(args.workDir, { recursive: true });
-
-async function runStage(name, callback) {
-  const stageDir = path.join(args.workDir, name);
-  const completedUri = `${args.campaignUri}/status/completed/${name}.json`;
-  const stageUri = `${args.campaignUri}/stages/${name}`;
-  const completed = tryReadS3Json(completedUri);
-  if (completed) {
-    if (
-      completed.status !== "passed" ||
-      completed.immutable !== true ||
-      completed.git_commit !== gitCommit
-    ) {
-      throw new Error(`completed stage ${name} is not immutable at campaign SHA ${gitCommit}`);
-    }
-    downloadDirectory(stageUri, stageDir);
-    console.log(`resumed immutable completed stage ${name}`);
-    return;
+async function main() {
+  const args = parseArgs(process.argv.slice(2));
+  const gitCommit = currentGitCommit();
+  requireCleanGit();
+  const recovery = validateRecoveryManifest(
+    JSON.parse(fs.readFileSync(args.scalingRecoveryManifest, "utf8")),
+  );
+  if (args.campaignUri !== recovery.target.campaign_uri) {
+    throw new Error("campaign URI does not match scaling recovery manifest target");
   }
+  const recoveryManifestChecksum = sha256File(args.scalingRecoveryManifest);
+  const bindings = { gitCommit, recoveryManifestChecksum };
+  fs.mkdirSync(args.workDir, { recursive: true });
 
-  fs.rmSync(stageDir, { recursive: true, force: true });
-  fs.mkdirSync(stageDir, { recursive: true });
-  const resources = { peak_rss_kib: 0, peak_disk_used_kib: diskUsedKiB(stageDir) };
-  const run = makeCommandRunner(stageDir, resources);
-  const startedAt = new Date();
-  try {
-    await callback({ stageDir, run, resources });
-    uploadDirectory(stageDir, stageUri);
-    const payload = {
-      schema_version: "edger_remote_stage_status_v1",
-      stage: name,
-      status: "passed",
-      immutable: true,
-      git_commit: gitCommit,
-      started_at: startedAt.toISOString(),
-      finished_at: new Date().toISOString(),
-      resources,
-      limits: {
-        peak_rss_kib_below: MEMORY_LIMIT_KIB,
-        disk_used_kib_below: DISK_LIMIT_KIB,
-      },
-      artifacts: durableArtifacts(stageDir),
-    };
-    writeImmutableJson(completedUri, payload);
-  } catch (error) {
-    const attempt = new Date().toISOString().replaceAll(/[:.]/g, "-");
-    uploadDirectory(stageDir, `${args.campaignUri}/failed-stages/${name}/${attempt}`);
-    writeAttemptJson(
-      `${args.campaignUri}/status/attempts/${name}-${attempt}.json`,
-      {
-        schema_version: "edger_remote_stage_status_v1",
+  async function runStage(name, callback) {
+    const stageDir = path.join(args.workDir, name);
+    const completedUri = `${args.campaignUri}/status/completed/${name}.json`;
+    const stageUri = `${args.campaignUri}/stages/${name}`;
+    const completedHead = tryHeadS3Object(completedUri);
+    const completed = tryReadS3Json(completedUri);
+    if (completedHead && !completed) {
+      throw new Error(`existing completed marker is invalid JSON: ${completedUri}`);
+    }
+    if (completed) {
+      assertCompletedStageMarker(completed, {
         stage: name,
-        status: "failed",
-        immutable: false,
+        gitCommit,
+        recoveryManifestChecksum,
+      });
+      fs.rmSync(stageDir, { recursive: true, force: true });
+      downloadDirectory(stageUri, stageDir);
+      verifyStageArtifacts(stageDir, completed.artifacts);
+      console.log(`resumed immutable completed stage ${name}`);
+      return completed.evidence ?? null;
+    }
+
+    fs.rmSync(stageDir, { recursive: true, force: true });
+    fs.mkdirSync(stageDir, { recursive: true });
+    const resources = {
+      peak_rss_kib: 0,
+      peak_disk_used_kib: diskUsedKiB(stageDir),
+    };
+    const run = makeCommandRunner(stageDir, resources);
+    const startedAt = new Date();
+    try {
+      const evidence = await callback({ stageDir, run, resources });
+      const includeParquet = stageIncludesParquet(name);
+      uploadDirectoryImmutable(stageDir, stageUri, { includeParquet, bindings });
+      const payload = {
+        schema_version: "edger_remote_stage_status_v2",
+        stage: name,
+        status: "passed",
+        immutable: true,
         git_commit: gitCommit,
+        recovery_manifest_checksum: recoveryManifestChecksum,
+        target_stage: args.targetStage,
+        run_label: args.runLabel,
         started_at: startedAt.toISOString(),
         finished_at: new Date().toISOString(),
         resources,
-        error: error instanceof Error ? error.stack : String(error),
-      },
-    );
-    throw error;
+        limits: {
+          peak_rss_kib_below: MEMORY_LIMIT_KIB,
+          disk_used_kib_below: DISK_LIMIT_KIB,
+        },
+        artifacts: durableArtifacts(stageDir, { includeParquet }),
+        evidence: evidence ?? null,
+      };
+      writeImmutableJson(completedUri, payload, bindings);
+      return evidence ?? null;
+    } catch (error) {
+      const attempt = new Date().toISOString().replaceAll(/[:.]/g, "-");
+      uploadFailureDirectory(
+        stageDir,
+        `${args.campaignUri}/failed-stages/${name}/${attempt}`,
+      );
+      writeAttemptJson(
+        `${args.campaignUri}/status/attempts/${name}-${attempt}.json`,
+        {
+          schema_version: "edger_remote_stage_status_v2",
+          stage: name,
+          status: "failed",
+          immutable: false,
+          git_commit: gitCommit,
+          recovery_manifest_checksum: recoveryManifestChecksum,
+          target_stage: args.targetStage,
+          run_label: args.runLabel,
+          started_at: startedAt.toISOString(),
+          finished_at: new Date().toISOString(),
+          resources,
+          error: error instanceof Error ? error.stack : String(error),
+        },
+      );
+      throw error;
+    }
   }
-}
 
-const corpusManifest = path.join(args.workDir, "corpus-manifest.json");
-if (!fs.existsSync(corpusManifest)) {
-  aws([
-    "s3",
-    "cp",
-    `${args.campaignUri}/corpus/manifest.json`,
+  function finishTarget() {
+    console.log(JSON.stringify({
+      status: "passed",
+      target_stage: args.targetStage,
+      git_commit: gitCommit,
+      campaign_uri: args.campaignUri,
+      recovery_manifest_checksum: recoveryManifestChecksum,
+      run_label: args.runLabel,
+      promotion_input_uri: args.targetStage === "full-evaluation"
+        ? `${args.campaignUri}/ready-for-promotion`
+        : null,
+    }, null, 2));
+  }
+
+  const scalingDir = path.join(args.workDir, "scaling");
+  await runStage("scaling", async ({ stageDir, run }) => {
+    run("npm", [
+      "run",
+      "edger:scaling:recover",
+      "--",
+      "--manifest",
+      args.scalingRecoveryManifest,
+      "--out-dir",
+      stageDir,
+      "--target-git-sha",
+      gitCommit,
+      "--campaign-uri",
+      args.campaignUri,
+    ]);
+    const recoveryReport = JSON.parse(
+      fs.readFileSync(path.join(stageDir, "recovery_report.json"), "utf8"),
+    );
+    if (
+      recoveryReport.passed !== true ||
+      recoveryReport.recovery_manifest_sha256 !== recoveryManifestChecksum ||
+      recoveryReport.source_lineage?.target_git_commit !== gitCommit
+    ) {
+      throw new Error("recovered scaling report lineage mismatch");
+    }
+    return {
+      recovery_manifest_checksum: recoveryManifestChecksum,
+      source_lineage: recoveryReport.source_lineage,
+      regenerated_scaling_report_sha256:
+        recoveryReport.regenerated_scaling_report_sha256,
+    };
+  });
+
+  const corpusManifest = path.join(scalingDir, "edger_manifest_100pct.json");
+  uploadFileImmutable(
     corpusManifest,
-    "--only-show-errors",
-  ]);
-}
+    `${args.campaignUri}/corpus/manifest.json`,
+    bindings,
+  );
 
-const scalingDir = path.join(args.workDir, "scaling");
-const scaleLabels = ["1pct", "10pct", "100pct"];
+  const fullCacheDir = path.join(args.workDir, "full-cache");
+  await runStage("full-cache", async ({ stageDir, run }) => {
+    const dataset = path.join(stageDir, "edger_decisions_100pct.parquet");
+    const buildReport = `${dataset}.build.json`;
+    const validationReport = path.join(stageDir, "cache-validation.json");
+    run("npm", [
+      "run",
+      "edger:dataset",
+      "--",
+      "--manifest",
+      corpusManifest,
+      "--out",
+      dataset,
+    ]);
+    const expected = recovery.expected.cache;
+    run("npm", [
+      "run",
+      "edger:cache:validate",
+      "--",
+      "--dataset",
+      dataset,
+      "--build-report",
+      buildReport,
+      "--manifest-hash",
+      recovery.expected.corpus_manifest_hash,
+      "--schema-sha256",
+      expected.schema_sha256,
+      "--rows",
+      String(expected.rows),
+      "--train-rows",
+      String(expected.split_rows.train),
+      "--validation-rows",
+      String(expected.split_rows.validation),
+      "--test-rows",
+      String(expected.split_rows.test),
+      "--out",
+      validationReport,
+    ]);
+    const validation = JSON.parse(fs.readFileSync(validationReport, "utf8"));
+    if (validation.passed !== true) {
+      throw new Error("full cache validation did not pass");
+    }
+    return {
+      manifest_hash: validation.manifest_hash,
+      rows: validation.rows,
+      split_rows: validation.split_rows,
+      parquet_schema_sha256: validation.parquet_schema_sha256,
+      logical_content_sha256: validation.logical_content_sha256,
+      parquet_sha256: validation.parquet_sha256,
+    };
+  });
 
-function ensureScalingCaches(run) {
-  if (scaleLabels.every((label) =>
-    fs.existsSync(path.join(scalingDir, `edger_decisions_${label}.parquet`)))) {
+  if (isTargetTerminalStage("full-cache", args.targetStage)) {
+    finishTarget();
     return;
   }
-  fs.mkdirSync(scalingDir, { recursive: true });
-  run("npm", [
-    "run",
-    "edger:dataset",
-    "--",
-    "--manifest",
-    corpusManifest,
-    "--scales-dir",
-    scalingDir,
-  ]);
-}
 
-await runStage("scaling", async ({ stageDir, run }) => {
-  if (stageDir !== scalingDir) {
-    throw new Error("scaling stage directory invariant failed");
-  }
-  ensureScalingCaches(run);
-  for (const label of scaleLabels) {
-    const dataset = path.join(stageDir, `edger_decisions_${label}.parquet`);
-    const checkpoint = path.join(stageDir, `bc-${label}.pt`);
-    const model = path.join(stageDir, `model-${label}.json`);
-    const frozen = path.join(stageDir, `frozen-${label}.json`);
+  const offlineDir = path.join(args.workDir, "offline");
+  await runStage("offline", async ({ stageDir, run }) => {
+    const checkpoint = path.join(stageDir, "shadow-parent.pt");
+    const model = path.join(stageDir, "shadow-parent.json");
+    const recoveredParent = recovery.expected.scales["100pct"].checkpoint_id;
     run("npm", [
-      "run", "edger:train:bc", "--",
-      "--dataset", dataset,
+      "run", "edger:train:offline", "--",
+      "--dataset", path.join(fullCacheDir, "edger_decisions_100pct.parquet"),
+      "--checkpoint", path.join(scalingDir, "bc-100pct.pt"),
       "--out", checkpoint,
       "--seed", String(SEED),
       "--epochs", "1",
       "--batch-size", "32",
-      "--learning-rate", "1e-3",
+      "--learning-rate", "1e-4",
     ]);
     run("npm", [
       "run", "edger:export:v2", "--",
       "--checkpoint", checkpoint,
       "--out", model,
     ]);
+    const accepted = JSON.parse(fs.readFileSync(model, "utf8"));
+    const kl = accepted.training?.metrics?.validation_kl_from_bc;
+    if (accepted.training?.git_commit !== gitCommit) {
+      throw new Error("offline checkpoint is not bound to current campaign Git SHA");
+    }
+    if (accepted.training?.parent_checkpoint !== recoveredParent) {
+      throw new Error("offline checkpoint parent is not exact recovered 100% checkpoint");
+    }
+    if (!Number.isFinite(kl) || kl > 0.05) {
+      throw new Error(`offline accepted validation KL ${kl} exceeds 0.05`);
+    }
+    return {
+      checkpoint_id: accepted.training.checkpoint_id,
+      git_commit: accepted.training.git_commit,
+      parent_checkpoint: accepted.training.parent_checkpoint,
+      validation_kl_from_bc: kl,
+    };
+  });
+
+  if (isTargetTerminalStage("offline", args.targetStage)) {
+    finishTarget();
+    return;
+  }
+
+  const referenceDir = path.join(args.workDir, "live-v1-reference");
+  await runStage("live-v1-reference", async ({ stageDir, run }) => {
+    const reference = path.join(stageDir, "live-champion-reference.json");
     run("npm", [
-      "run", "edger:evaluate:scaling", "--",
-      "--candidate", model,
-      "--checkpoint", checkpoint,
+      "run", "edger:reference:v2", "--",
+      "--champion", "artifacts/edger-training/promoted/edger_policy_current.json",
+      "--games-per-opponent", "200",
       "--workers", "16",
       "--seed", String(SEED),
-      "--out", frozen,
+      "--out", reference,
     ]);
-  }
-  run("npm", [
-    "run", "edger:scaling:report", "--",
-    "--one-checkpoint", path.join(stageDir, "bc-1pct.pt"),
-    "--ten-checkpoint", path.join(stageDir, "bc-10pct.pt"),
-    "--full-checkpoint", path.join(stageDir, "bc-100pct.pt"),
-    "--one-manifest", path.join(stageDir, "edger_manifest_1pct.json"),
-    "--ten-manifest", path.join(stageDir, "edger_manifest_10pct.json"),
-    "--full-manifest", path.join(stageDir, "edger_manifest_100pct.json"),
-    "--one-model", path.join(stageDir, "model-1pct.json"),
-    "--ten-model", path.join(stageDir, "model-10pct.json"),
-    "--full-model", path.join(stageDir, "model-100pct.json"),
-    "--one-league", path.join(stageDir, "frozen-1pct.json"),
-    "--ten-league", path.join(stageDir, "frozen-10pct.json"),
-    "--full-league", path.join(stageDir, "frozen-100pct.json"),
-    "--out", path.join(stageDir, "scaling_report.json"),
-  ]);
-});
+    const inputDir = path.join(stageDir, "campaign-input");
+    fs.mkdirSync(inputDir, { recursive: true });
+    fs.copyFileSync(
+      path.join(scalingDir, "scaling_report.json"),
+      path.join(inputDir, "scaling_report.json"),
+    );
+    fs.copyFileSync(
+      path.join(offlineDir, "shadow-parent.json"),
+      path.join(inputDir, "shadow-parent.json"),
+    );
+    fs.copyFileSync(
+      path.join(offlineDir, "shadow-parent.pt"),
+      path.join(inputDir, "shadow-parent.pt"),
+    );
+    fs.copyFileSync(
+      "artifacts/edger-training/promoted/edger_policy_current.json",
+      path.join(inputDir, "live-champion.json"),
+    );
+    fs.copyFileSync(reference, path.join(inputDir, "live-champion-reference.json"));
+    uploadDirectoryImmutable(inputDir, `${args.campaignUri}/campaign-input`, {
+      bindings,
+    });
+  });
 
-const offlineDir = path.join(args.workDir, "offline");
-await runStage("offline", async ({ stageDir, run }) => {
-  ensureScalingCaches(run);
-  const checkpoint = path.join(stageDir, "shadow-parent.pt");
-  const model = path.join(stageDir, "shadow-parent.json");
-  run("npm", [
-    "run", "edger:train:offline", "--",
-    "--dataset", path.join(scalingDir, "edger_decisions_100pct.parquet"),
-    "--checkpoint", path.join(scalingDir, "bc-100pct.pt"),
-    "--out", checkpoint,
-    "--seed", String(SEED),
-    "--epochs", "1",
-    "--batch-size", "32",
-    "--learning-rate", "1e-4",
-  ]);
-  run("npm", [
-    "run", "edger:export:v2", "--",
-    "--checkpoint", checkpoint,
-    "--out", model,
-  ]);
-  const accepted = JSON.parse(fs.readFileSync(model, "utf8"));
-  const kl = accepted.training?.metrics?.validation_kl_from_bc;
-  if (!Number.isFinite(kl) || kl > 0.05) {
-    throw new Error(`offline accepted validation KL ${kl} exceeds 0.05`);
-  }
-});
+  await runStage("league-smoke", async ({ stageDir, run }) => {
+    run("npm", [
+      "run", "edger:train:league", "--",
+      "--scaling-report", path.join(scalingDir, "scaling_report.json"),
+      "--shadow-parent-model", path.join(offlineDir, "shadow-parent.json"),
+      "--live-champion-model", "artifacts/edger-training/promoted/edger_policy_current.json",
+      "--live-champion-reference", path.join(referenceDir, "live-champion-reference.json"),
+      "--rollout-store", `${args.campaignUri}/league-smoke/rollout`,
+      "--matches", "32",
+      "--workers", "16",
+      "--seed", String(SEED),
+      "--manifest-out", path.join(stageDir, "smoke-manifest.json"),
+      "--report-out", path.join(stageDir, "smoke-report.json"),
+    ]);
+  });
 
-const referenceDir = path.join(args.workDir, "reference");
-await runStage("live-v1-reference", async ({ stageDir, run }) => {
-  const reference = path.join(stageDir, "live-champion-reference.json");
-  run("npm", [
-    "run", "edger:reference:v2", "--",
-    "--champion", "artifacts/edger-training/promoted/edger_policy_current.json",
-    "--games-per-opponent", "200",
-    "--workers", "16",
-    "--seed", String(SEED),
-    "--out", reference,
-  ]);
-  const inputDir = path.join(stageDir, "campaign-input");
-  fs.mkdirSync(inputDir, { recursive: true });
-  fs.copyFileSync(
-    path.join(scalingDir, "scaling_report.json"),
-    path.join(inputDir, "scaling_report.json"),
-  );
-  fs.copyFileSync(
-    path.join(offlineDir, "shadow-parent.json"),
-    path.join(inputDir, "shadow-parent.json"),
-  );
-  fs.copyFileSync(
-    path.join(offlineDir, "shadow-parent.pt"),
-    path.join(inputDir, "shadow-parent.pt"),
-  );
-  fs.copyFileSync(
-    "artifacts/edger-training/promoted/edger_policy_current.json",
-    path.join(inputDir, "live-champion.json"),
-  );
-  fs.copyFileSync(reference, path.join(inputDir, "live-champion-reference.json"));
-  uploadDirectory(inputDir, `${args.campaignUri}/campaign-input`);
-});
+  const leagueDir = path.join(args.workDir, "league-production");
+  await runStage("league-production", async ({ stageDir, run }) => {
+    const checkpoint = path.join(stageDir, "candidate.pt");
+    run("npm", [
+      "run", "edger:train:league", "--",
+      "--scaling-report", path.join(scalingDir, "scaling_report.json"),
+      "--shadow-parent-model", path.join(offlineDir, "shadow-parent.json"),
+      "--shadow-parent-checkpoint", path.join(offlineDir, "shadow-parent.pt"),
+      "--live-champion-model", "artifacts/edger-training/promoted/edger_policy_current.json",
+      "--live-champion-reference", path.join(referenceDir, "live-champion-reference.json"),
+      "--base-manifest", corpusManifest,
+      "--rollout-store", `${args.campaignUri}/league-production/rollout`,
+      "--matches", "1000",
+      "--workers", "16",
+      "--seed", String(SEED),
+      "--epochs", "1",
+      "--batch-size", "32",
+      "--manifest-out", path.join(stageDir, "manifest.json"),
+      "--dataset-out", path.join(stageDir, "league.parquet"),
+      "--out-checkpoint", checkpoint,
+      "--report-out", path.join(stageDir, "league-report.json"),
+    ]);
+    run("npm", [
+      "run", "edger:export:v2", "--",
+      "--checkpoint", checkpoint,
+      "--out", path.join(stageDir, "candidate.json"),
+    ]);
+  });
 
-await runStage("league-smoke", async ({ stageDir, run }) => {
-  run("npm", [
-    "run", "edger:train:league", "--",
-    "--scaling-report", path.join(scalingDir, "scaling_report.json"),
-    "--shadow-parent-model", path.join(offlineDir, "shadow-parent.json"),
-    "--live-champion-model", "artifacts/edger-training/promoted/edger_policy_current.json",
-    "--live-champion-reference", path.join(referenceDir, "live-champion-reference.json"),
-    "--rollout-store", `${args.campaignUri}/league-smoke/rollout`,
-    "--matches", "32",
-    "--workers", "16",
-    "--seed", String(SEED),
-    "--manifest-out", path.join(stageDir, "smoke-manifest.json"),
-    "--report-out", path.join(stageDir, "smoke-report.json"),
-  ]);
-});
+  const qaDir = path.join(args.workDir, "qa");
+  await runStage("qa", async ({ stageDir, run }) => {
+    run("npm", ["test"]);
+    fs.writeFileSync(path.join(stageDir, "test-report.json"), `${JSON.stringify({
+      schema_version: "edger_external_qa_report_v1",
+      kind: "npm-test",
+      command: "npm test",
+      git_commit: gitCommit,
+      passed: true,
+    }, null, 2)}\n`);
+    run("npm", ["run", "smoke:browser"]);
+    fs.writeFileSync(path.join(stageDir, "browser-report.json"), `${JSON.stringify({
+      schema_version: "edger_external_qa_report_v1",
+      kind: "browser-smoke",
+      command: "npm run smoke:browser",
+      git_commit: gitCommit,
+      passed: true,
+    }, null, 2)}\n`);
+  });
 
-const leagueDir = path.join(args.workDir, "league-production");
-await runStage("league-production", async ({ stageDir, run }) => {
-  const checkpoint = path.join(stageDir, "candidate.pt");
-  run("npm", [
-    "run", "edger:train:league", "--",
-    "--scaling-report", path.join(scalingDir, "scaling_report.json"),
-    "--shadow-parent-model", path.join(offlineDir, "shadow-parent.json"),
-    "--shadow-parent-checkpoint", path.join(offlineDir, "shadow-parent.pt"),
-    "--live-champion-model", "artifacts/edger-training/promoted/edger_policy_current.json",
-    "--live-champion-reference", path.join(referenceDir, "live-champion-reference.json"),
-    "--base-manifest", corpusManifest,
-    "--rollout-store", `${args.campaignUri}/league-production/rollout`,
-    "--matches", "1000",
-    "--workers", "16",
-    "--seed", String(SEED),
-    "--epochs", "1",
-    "--batch-size", "32",
-    "--manifest-out", path.join(stageDir, "manifest.json"),
-    "--dataset-out", path.join(stageDir, "league.parquet"),
-    "--out-checkpoint", checkpoint,
-    "--report-out", path.join(stageDir, "league-report.json"),
-  ]);
-  run("npm", [
-    "run", "edger:export:v2", "--",
-    "--checkpoint", checkpoint,
-    "--out", path.join(stageDir, "candidate.json"),
-  ]);
-});
+  await runStage("full-evaluation", async ({ stageDir, run }) => {
+    const candidate = path.join(leagueDir, "candidate.json");
+    run("npm", [
+      "run", "edger:benchmark:throughput", "--",
+      "--candidate", candidate,
+      "--matches", "32",
+      "--workers", "16",
+      "--target-matches", "11300",
+      "--max-minutes", "180",
+      "--reference-hardware", args.referenceHardware,
+      "--out", path.join(stageDir, "throughput-report.json"),
+      "--enforce",
+    ]);
+    run("npm", [
+      "run", "edger:evaluate:v2", "--",
+      "--candidate", candidate,
+      "--champion", "artifacts/edger-training/promoted/edger_policy_current.json",
+      "--reference", path.join(referenceDir, "live-champion-reference.json"),
+      "--test-report", path.join(qaDir, "test-report.json"),
+      "--browser-report", path.join(qaDir, "browser-report.json"),
+      "--profile", "full",
+      "--workers", "16",
+      "--seed", String(SEED),
+      "--reference-hardware", args.referenceHardware,
+      "--out", path.join(stageDir, "evaluation-report.json"),
+    ]);
+    fs.copyFileSync(candidate, path.join(stageDir, "candidate.json"));
+    uploadDirectoryImmutable(stageDir, `${args.campaignUri}/ready-for-promotion`, {
+      bindings,
+    });
+    return {
+      candidate_sha256: sha256File(path.join(stageDir, "candidate.json")),
+      evaluation_report_sha256: sha256File(
+        path.join(stageDir, "evaluation-report.json"),
+      ),
+    };
+  });
 
-const qaDir = path.join(args.workDir, "qa");
-await runStage("qa", async ({ stageDir, run }) => {
-  run("npm", ["test"]);
-  fs.writeFileSync(path.join(stageDir, "test-report.json"), `${JSON.stringify({
-    schema_version: "edger_external_qa_report_v1",
-    kind: "npm-test",
-    command: "npm test",
-    git_commit: gitCommit,
-    passed: true,
-  }, null, 2)}\n`);
-  run("npm", ["run", "smoke:browser"]);
-  fs.writeFileSync(path.join(stageDir, "browser-report.json"), `${JSON.stringify({
-    schema_version: "edger_external_qa_report_v1",
-    kind: "browser-smoke",
-    command: "npm run smoke:browser",
-    git_commit: gitCommit,
-    passed: true,
-  }, null, 2)}\n`);
-});
+  finishTarget();
+}
 
-const evaluationDir = path.join(args.workDir, "evaluation");
-await runStage("full-evaluation", async ({ stageDir, run }) => {
-  const candidate = path.join(leagueDir, "candidate.json");
-  run("npm", [
-    "run", "edger:benchmark:throughput", "--",
-    "--candidate", candidate,
-    "--matches", "32",
-    "--workers", "16",
-    "--target-matches", "11300",
-    "--max-minutes", "180",
-    "--reference-hardware", args.referenceHardware,
-    "--out", path.join(stageDir, "throughput-report.json"),
-    "--enforce",
-  ]);
-  run("npm", [
-    "run", "edger:evaluate:v2", "--",
-    "--candidate", candidate,
-    "--champion", "artifacts/edger-training/promoted/edger_policy_current.json",
-    "--reference", path.join(referenceDir, "live-champion-reference.json"),
-    "--test-report", path.join(qaDir, "test-report.json"),
-    "--browser-report", path.join(qaDir, "browser-report.json"),
-    "--profile", "full",
-    "--workers", "16",
-    "--seed", String(SEED),
-    "--reference-hardware", args.referenceHardware,
-    "--out", path.join(stageDir, "evaluation-report.json"),
-  ]);
-  fs.copyFileSync(candidate, path.join(stageDir, "candidate.json"));
-  uploadDirectory(stageDir, `${args.campaignUri}/ready-for-promotion`);
-});
-
-console.log(JSON.stringify({
-  status: "passed",
-  git_commit: gitCommit,
-  campaign_uri: args.campaignUri,
-  promotion_input_uri: `${args.campaignUri}/ready-for-promotion`,
-}, null, 2));
+try {
+  await main();
+} catch (error) {
+  console.error(error instanceof Error ? error.stack : String(error));
+  process.exitCode = 1;
+}

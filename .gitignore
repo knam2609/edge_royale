@@ -3,6 +3,8 @@ output/
 artifacts/*
 !artifacts/edger-training/
 artifacts/edger-training/*
+!artifacts/edger-training/recovery/
+!artifacts/edger-training/recovery/**
 !artifacts/edger-training/promoted/
 !artifacts/edger-training/promoted/**
 !artifacts/training/

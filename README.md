@@ -157,18 +157,31 @@ bucket, a `main`-only GitHub OIDC role, an SSM instance profile, and an
 egress-only campaign VPC in `ap-southeast-2`. It uses no AWS access keys,
 inbound ports, or SSH key.
 
+The retained `f25a4880e65f0eed6eda8c3ecc33d42d2ad6af33` scaling artifacts are
+recovered only through checked-in
+`artifacts/edger-training/recovery/edger_scaling_recovery_v1.json`. It pins
+every source S3 URI, object version, SHA-256, binding, metric, suite checksum,
+and failure reason. Recovery writes only under
+`campaigns/20260810-v2-recovery`; the failed source campaign stays immutable.
+
 ```bash
-npm run edger:campaign:remote -- launch
-npm run edger:campaign:remote -- status
-npm run edger:campaign:remote -- terminate
+npm run edger:campaign:remote -- launch \
+  --campaign-uri s3://edge-royale-edger-904869824856-ap-southeast-2/campaigns/20260810-v2-recovery \
+  --git-sha <full-reviewed-sha> \
+  --target-stage full-cache \
+  --scaling-recovery-manifest artifacts/edger-training/recovery/edger_scaling_recovery_v1.json \
+  --run-label manual-1
 ```
 
 Launch creates an on-demand `c7g.4xlarge` Amazon Linux 2023 arm64 instance with
 encrypted 200 GiB gp3 storage, instance-initiated termination, and a 24-hour
-safety shutdown. Completed stage records are immutable and bound to one Git
-SHA. Failed stages preserve evidence and never change live v1. GitHub opens an
-unmerged promotion PR only after downloading and checksum-validating the exact
-passing candidate and report.
+safety shutdown. Dispatch targets are `full-cache`, `offline`, then
+`full-evaluation`. `full-cache` rebuilds and durably stores only the recovered
+100% Parquet; later runners checksum-download that exact cache. Stage records
+and objects bind one Git SHA plus recovery-manifest checksum. Failed stages
+preserve evidence and never change live v1. Separate `promote` operation
+requires matching full-evaluation marker and zero active runners, then opens an
+unmerged manual-review PR after revalidating candidate/report checksums.
 
 ## Validation
 

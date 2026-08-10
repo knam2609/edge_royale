@@ -5,7 +5,7 @@
 - `AI-DATA-001` Build the first compatible full-match corpus.
   - Done when simulator collection has useful opponent/outcome coverage and replay validation is clean.
 - `AI-SCALE-001` Run fixed 1%/10%/100% behavior-cloning experiments.
-  - Done when 100% improves held-out joint action loss and does not regress frozen-league score relative to 10%.
+  - Exact source artifacts pass relative gate; done when recovery writes matching immutable scaling marker under `20260810-v2-recovery`.
 - `AI-OFFLINE-001` Run conservative advantage-weighted improvement.
   - Done when one low-rate pass remains under `0.05` validation KL and produces a retained evaluation report.
 - `AI-LEAGUE-001` Run the first 16–32 worker V-trace campaign.
@@ -13,7 +13,7 @@
 - `AI-PERF-001` Increase production rollout/evaluation throughput.
   - Done when 10,000 safety games and full promotion evaluation complete in a practical campaign window.
 - `AI-OPS-001` Execute the first production campaign on dedicated AWS infrastructure.
-  - Done when one reviewed SHA clears pilot, strict corpus aggregation/verification, scaling, offline, isolated league, throughput, and full evaluation gates, or retains an immutable failed-gate report with live v1 untouched.
+  - Next: staged `full-cache`, `offline`, `full-evaluation`, then manual `promote` for one reviewed recovery SHA. Done when all gates clear or later gate retains immutable failure evidence with live v1 untouched.
 - `QA-BROWSER-001` Standardize browser smoke.
   - Done when the Node 20 supervisor/worker smoke, replay-download schema check, Chromium launch, and CI run all pass.
 - `DOC-001` Keep cumulative training and Edger-only product docs aligned.

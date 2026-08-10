@@ -163,6 +163,21 @@ so the scaling proof uses relative held-out improvement instead of a fixed
 absolute floor. Separate frozen-league and full-promotion gates enforce gameplay
 quality. League training refuses to start without both scaling facts.
 
+One-time `edger_scaling_recovery_v1` recovers exact versioned artifacts retained
+from source SHA `f25a4880e65f0eed6eda8c3ecc33d42d2ad6af33`. It verifies source
+ancestry, unchanged dataset/simulator/corpus derivation paths, legacy report's
+sole failed `<0.10` gate, every S3 version and SHA-256, artifact bindings,
+nested training sets, identical held-out sets, zero illegal actions, and replay
+success. It regenerates v2 report with source checkpoint Git commit in every
+scale entry. Source failure prefix is never rewritten.
+
+Recovery campaign adds `full-cache` after scaling. It derives only
+`edger_decisions_100pct.parquet` from exact recovered 100% manifest, then checks
+manifest hash, 593,576 rows, `475,845 / 59,529 / 58,202`
+train/validation/test counts, exact schema, Zstd compression, 256-row groups,
+and logical content against replay-derived build stream. Parquet is durable only
+in this stage; later stages download marker-bound checksum.
+
 Production campaigns use 16–32 Node worker threads and pre-assign paired match specs, making rollout seeds and sides independent of worker count. The exact JavaScript simulator writes full verified episodes before the PyTorch learner runs.
 
 League limits:
@@ -221,6 +236,9 @@ subject to a 14-day cooldown. A 30-day backstop triggers when any new data exist
 SSM-only on-demand `c7g.4xlarge`; heavy training/evaluation does not run on a
 repository self-hosted runner. The `edge-royale-edger-campaign` CloudFormation
 stack creates the retained bucket and runner controls in `ap-southeast-2`.
+Dispatch requires `operation`, full reviewed `campaign_sha`, exact
+`campaign_uri`, and `target_stage`. `run` accepts `full-cache`, `offline`, or
+`full-evaluation`; `promote` stays separate.
 
 The instance has 16 vCPU, 32 GiB RAM, encrypted 200 GiB gp3, no inbound ports
 or key pair, instance-initiated termination, and a 24-hour safety shutdown.
@@ -238,12 +256,16 @@ unsupported-distribution `apt-get` fallback.
 The Python virtual environment lives at `/opt/edge_royale_venv`, outside the
 immutable repository checkout, so bootstrap cannot trip the clean-worktree
 pre-stage gate.
-Every completed remote stage is immutable and Git-SHA-bound in S3. Resume
-downloads only matching completed stages. Peak resident memory must stay below
-28 GiB and disk use below 160 GiB. Failed stages upload logs/reports and leave
-live v1 unchanged. Test and browser reports carry the campaign SHA and the
-evaluator rejects other commits. A separate GitHub-hosted job revalidates exact
-promotion inputs and opens, but never merges, a promotion PR.
+Every completed stage/object is immutable and bound to Git SHA plus recovery
+manifest checksum. Resume downloads only matching stages; mismatched objects or
+markers fail closed. Matching active runners are monitored, never duplicated.
+GitHub polls five hours, then succeeds detached if runner remains active; a
+terminated runner without target marker fails. Each attempt uses unique
+`github-<run>-<attempt>` log, then instance and encrypted volume terminate.
+Peak resident memory stays below 28 GiB and disk use below 160 GiB. Failed
+stages leave live v1 unchanged. `promote` requires matching full-evaluation
+marker, zero active runners, and exact candidate/report checksums; it opens but
+never merges manual-review PR.
 
 ## 7. Commands
 
@@ -270,6 +292,11 @@ npm run edger:promote:v2 -- --model <candidate.json> --report <full-report.json>
 npm run edger:campaign:remote -- launch
 npm run edger:campaign:remote -- status
 npm run edger:campaign:remote -- terminate
+npm run edger:scaling:recover -- \
+  --manifest artifacts/edger-training/recovery/edger_scaling_recovery_v1.json \
+  --out-dir <temporary-directory> \
+  --target-git-sha <full-reviewed-sha> \
+  --campaign-uri s3://edge-royale-edger-904869824856-ap-southeast-2/campaigns/20260810-v2-recovery
 ```
 
 ## 8. Promotion gate

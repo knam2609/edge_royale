@@ -1,58 +1,60 @@
 ## Current State
 
 - As of August 10, 2026, live browser Edger remains tracked v1. No v2 artifact has been promoted or wired into gameplay.
-- Immutable campaign `20260718-v2-first` remains bound to `f25a4880e65f0eed6eda8c3ecc33d42d2ad6af33`. Its pilot and 10,000-game corpus passed; manifest hash `ca8435e58fd500f6045727db283de32ac906b3584b187abb84a5aa569867939c`, 593,576 decisions, 10,000/10,000 replay validation.
-- Retry run `30193108201` outlived its six-hour GitHub monitor and finished scaling on July 27. `1%`, `10%`, and `100%` training/evaluation artifacts were retained under `failed-stages/scaling/2026-07-27T03-18-54-545Z/`.
-- Scaling improved held-out joint-action loss `5.6647690651 -> 4.2088897448 -> 3.6891030495` and frozen-league score `0.54 -> 0.795 -> 0.86`. Replay checks passed, illegal actions were zero, nested training sets passed, and held-out sets were identical.
-- The stage stopped only because `edger_data_scaling_report_v1` also required unnormalized three-head joint cross-entropy below `0.10`. That absolute threshold conflicts with the scaling backlog contract and is not meaningful across legal-action entropy.
-- The repository contract is now `edger_data_scaling_report_v2`: require 100% held-out loss improvement over 10% plus frozen-league non-regression. Legacy v1 reports are refused. Re-evaluation of the exact retained artifacts passes v2.
-- No campaign instance or tagged EBS volume remains. No promotion PR exists. This handoff includes the v2 gate, docs, and regression tests; no new campaign has run from it.
+- Checksum-bound recovery implementation is complete in the working tree but is not yet merged. Final reviewed campaign SHA therefore does not exist yet.
+- Checked-in `edger_scaling_recovery_v1` pins exact retained artifacts from `f25a4880e65f0eed6eda8c3ecc33d42d2ad6af33`. Recovery-manifest SHA-256 is `f3afafdc84303d918ef45be1095e04f7bc8ba75c03eac77184d72428badd760e`.
+- New target is `s3://edge-royale-edger-904869824856-ap-southeast-2/campaigns/20260810-v2-recovery`. No implementation command wrote to this prefix during validation.
+- Source campaign `20260718-v2-first`, failed attempt, and retained failure artifacts remain unchanged.
 
 ## Source of Truth
 
 - Workflow and product boundaries: `AGENTS.md`
 - Product overview and commands: `README.md`
-- Gameplay: `docs/GAME_RULES.md` and `docs/CARD_SPECS.md`
-- Live/shadow runtime: `docs/BOT_LEVELS.md`
-- Corpus, learning, league, AWS runner, and gates: `docs/EDGER_TRAINING.md`
-- Infrastructure: `infra/edger-campaign.yaml`
-- Remote control and gated runner: `scripts/edger-campaign-remote.mjs` and `scripts/edger-production-campaign.mjs`
-- Immutable campaign evidence: `s3://edge-royale-edger-904869824856-ap-southeast-2/campaigns/20260718-v2-first/`
+- Training/recovery/stage contract: `docs/EDGER_TRAINING.md`
+- Recovery artifact versions/checksums/expected evidence: `artifacts/edger-training/recovery/edger_scaling_recovery_v1.json`
+- Remote control and runner: `scripts/edger-campaign-remote.mjs` and `scripts/edger-production-campaign.mjs`
+- Workflow control plane: `.github/workflows/edger-campaign.yml`
+- Source evidence: `s3://edge-royale-edger-904869824856-ap-southeast-2/campaigns/20260718-v2-first/`
 
 ## What Works
 
-- Deterministic game, replay, browser UI, live v1 Edger, shadow v2 actor, corpus, training, league, evaluator, and checksum-bound promotion foundations remain intact.
-- Frozen corpus is balanced across paired seeds, Edger sides, and four opponents, with zero collection failures and exhaustive replay verification.
-- Scaling artifacts bind manifests, checkpoints, models, frozen-suite checksum, illegal-action count, and replay checks. Exact retained production artifacts pass the corrected v2 gate.
-- Remote runners remain SSM-only, encrypted, resource-gated, immutable-SHA-bound, and safe-shutdown controlled. Failed stages preserve evidence without changing live v1.
+- Recovery downloads exact S3 object versions, checks SHA-256, source ancestry, unchanged protected derivation paths, sole legacy `<0.10` failure reason, all artifact bindings, nested training sets, identical held-out sets, zero illegal actions, and replay success.
+- Recovery regenerates passing `edger_data_scaling_report_v2`; each scale records source checkpoint Git commit. Exact losses remain `5.6647690651 / 4.2088897448 / 3.6891030495`; frozen scores remain `0.54 / 0.795 / 0.86`.
+- Scaling marker and all durable objects bind target Git SHA plus recovery-manifest checksum. Existing mismatched objects, extra stage objects, or markers fail closed. Target corpus manifest is seeded only from recovered 100% manifest.
+- Staged runner supports `full-cache`, `offline`, and `full-evaluation`. Matching markers resume; target stage stops cleanly. Only `full-cache` persists Parquet.
+- Full-cache builder creates only recovered 100% cache and validates manifest `ca8435e58fd500f6045727db283de32ac906b3584b187abb84a5aa569867939c`, 593,576 rows, `475,845 / 59,529 / 58,202` split rows, schema, Zstd, 256-row groups, and replay-derived logical content.
+- Offline requires parent `edger_v2_bc_418be44c61fba9b1`, current campaign SHA, and validation KL at most `0.05`.
+- Workflow `run` no-ops on matching marker, monitors matching runner without duplication, launches only when safe, detaches successfully after five hours if still active, fails terminated-without-marker, and uses unique run logs. `promote` requires full-evaluation marker, zero active runners, checksum revalidation, and opens manual-review PR only.
 
 ## Known Gaps
 
-- No canonical v2 completed-stage marker exists; immutable v1 failure evidence must not be rewritten in place.
-- Offline improvement, league smoke/production, throughput gate, live-v1 reference, full evaluator, and promotion review remain unrun.
-- Scaling consumed about 19 hours 40 minutes. Relaunching the unchanged full campaign would rebuild scaling and leave little time under the 24-hour runner guard.
-- GitHub monitor still ends after six hours, shorter than real campaign stages.
+- No reviewed recovery implementation SHA has been merged or recorded.
+- Target prefix emptiness has not been operationally confirmed in this session.
+- No target scaling/full-cache marker or rebuilt Parquet checksum exists yet.
+- Offline, live-v1 reference, league smoke/production, QA, throughput, full evaluator, and promotion dispatches remain unrun.
+- No promotion PR exists.
 
 ## Next Tasks
 
-1. Add a checksum-bound recovery path or faster/resumable scaling cache path for a new immutable campaign SHA; do not relabel the old v1 failure marker or blindly repeat the 20-hour stage.
-2. Resume at offline improvement only after v2 scaling evidence is canonical for the new SHA, then run isolated league smoke/production, throughput, live-v1 reference, and full evaluation gates.
-3. Harden GitHub monitoring so long valid AWS stages do not report as cancelled.
-4. Review any generated promotion PR manually; never auto-merge.
+1. Review and merge recovery implementation; record full reviewed main SHA.
+2. Confirm `s3://edge-royale-edger-904869824856-ap-southeast-2/campaigns/20260810-v2-recovery/` is empty.
+3. Dispatch workflow with `operation=run`, recorded SHA/URI, `target_stage=full-cache`; verify scaling/full-cache markers, cache checksum/count/schema evidence, unique log, instance termination, and volume deletion.
+4. Dispatch `target_stage=offline`; verify recovered parent lineage, current SHA, KL gate, log, and cleanup.
+5. Dispatch `target_stage=full-evaluation`; verify resumed reference, league smoke/production, QA, throughput, evaluator, log, and cleanup.
+6. Dispatch `operation=promote` with `target_stage=full-evaluation`; manually review generated PR and never auto-merge.
 
 ## Validation
 
-- July 20, 2026: native-arm64 pilot passed 64/64 games and replay checks; projected 10,000 games on 16 workers in `1.720204 h`.
-- July 20, 2026: corpus recovery passed strict aggregation and 10,000/10,000 replay validation; frozen manifest `ca8435e58fd500f6045727db283de32ac906b3584b187abb84a5aa569867939c`.
-- July 27, 2026: scaling v1 retained all three model/checkpoint/manifest/frozen-suite sets; stage status `failed`, peak RSS `1,861,464 KiB`, peak disk `12,793,052 KiB`, elapsed about `19 h 40 m`.
-- August 10, 2026: exact retained artifacts regenerated `edger_data_scaling_report_v2` locally -> passed; losses `5.6647690651 / 4.2088897448 / 3.6891030495`, frozen scores `0.54 / 0.795 / 0.86`.
-- August 10, 2026: `node --test tests/edger-scaling-gate.test.js` -> 3/3 passed.
-- August 10, 2026: `npm run test:edger-streaming` -> 3/3 passed in `18.059 s`.
-- August 10, 2026: `npx -y node@20.20.2 --test` -> 128/128 passed in `757471.629 ms`.
-- August 10, 2026: Python compilation, Node syntax checks, and `git diff --check` passed before handoff update.
+- August 10, 2026: `node --test tests/edger-scaling-recovery.test.js tests/edger-campaign-stages.test.js tests/edger-campaign-remote.test.js tests/edger-scaling-gate.test.js` -> 12/12 passed.
+- August 10, 2026: `npm run test:edger-streaming` -> 3/3 passed in `18.217 s`.
+- August 10, 2026: `npm test` -> 135/135 passed in `413117.931 ms`.
+- August 10, 2026: `npx -y node@20.20.2 /usr/local/bin/npm run smoke:browser` -> passed Edger-only runtime and identity-free replay export. System Node 25 attempt hit watchdog; repository-pinned Node 20 passed after `npm ci` refreshed Playwright packages.
+- August 10, 2026: `node scripts/edger-scaling-recovery.mjs --manifest artifacts/edger-training/recovery/edger_scaling_recovery_v1.json --out-dir /tmp/edger-recovery-final.D6RbQM --target-git-sha d00835156bcaac631f040535dd87de61adbbe30b --campaign-uri s3://edge-royale-edger-904869824856-ap-southeast-2/campaigns/20260810-v2-recovery` -> read-only exact-version recovery passed; regenerated v2 report passed and source checkpoint commits matched `f25a4880e65f0eed6eda8c3ecc33d42d2ad6af33`.
+- August 10, 2026: workflow YAML parse, Node syntax, Python source compilation, protected-path diff check, and `git diff --check` passed.
 
 ## Risks / Notes
 
-- Campaign SHA `f25a488` and its v1 failure record are immutable. Corrected code must create new-SHA evidence or use an explicit checksum-bound recovery contract.
-- Removing the absolute loss floor does not promote a model. Frozen gameplay, offline KL, league, throughput, large-sample safety, replay, parity, timing, test, browser, and manual-review gates remain blocking.
-- Current production artifacts show strong scaling, but no later-stage candidate exists yet.
+- Final campaign SHA must descend from source SHA and keep protected corpus/dataset/simulator derivation paths unchanged; recovery correctly refuses otherwise.
+- Target prefix is immutable for one reviewed SHA/recovery checksum. Do not reuse it for later code changes.
+- Rebuilt Parquet intentionally receives a new checksum; equivalence is established through exact manifest, deterministic derivation, rows/splits, schema, compression, row groups, and logical-content hash.
+- Any later gate failure stops campaign and leaves live v1 untouched. Manual promotion PR merge remains only live-model transition.

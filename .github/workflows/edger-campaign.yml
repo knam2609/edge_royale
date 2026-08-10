@@ -3,10 +3,29 @@ name: Edger Production Campaign
 on:
   workflow_dispatch:
     inputs:
+      operation:
+        description: "Run one target stage or open promotion PR"
+        required: true
+        type: choice
+        options:
+          - run
+          - promote
       campaign_sha:
-        description: "Reviewed campaign Git SHA (defaults to workflow main SHA)"
-        required: false
+        description: "Full reviewed campaign Git SHA"
+        required: true
         type: string
+      campaign_uri:
+        description: "Target immutable S3 campaign URI"
+        required: true
+        type: string
+      target_stage:
+        description: "Terminal stage for this runner"
+        required: true
+        type: choice
+        options:
+          - full-cache
+          - offline
+          - full-evaluation
 
 permissions:
   contents: write
@@ -18,15 +37,20 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  AWS_REGION: ${{ vars.AWS_REGION }}
+  AWS_REGION: ap-southeast-2
   EDGER_CORPUS_STORE: ${{ vars.EDGER_CORPUS_STORE }}
-  EDGER_CAMPAIGN_INPUT_URI: ${{ vars.EDGER_CAMPAIGN_INPUT_URI }}
-  CAMPAIGN_GIT_SHA: ${{ inputs.campaign_sha || github.sha }}
+  EDGER_REFERENCE_HARDWARE: aws-c7g.4xlarge-ap-southeast-2
+  CAMPAIGN_GIT_SHA: ${{ inputs.campaign_sha }}
+  CAMPAIGN_URI: ${{ inputs.campaign_uri }}
+  TARGET_STAGE: ${{ inputs.target_stage }}
+  RECOVERY_MANIFEST: artifacts/edger-training/recovery/edger_scaling_recovery_v1.json
+  RUN_LABEL: github-${{ github.run_id }}-${{ github.run_attempt }}
 
 jobs:
-  remote-campaign:
+  run-campaign:
+    if: inputs.operation == 'run'
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 330
     steps:
       - uses: actions/checkout@v4
         with:
@@ -40,63 +64,94 @@ jobs:
 
       - uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-region: ${{ vars.AWS_REGION }}
+          aws-region: ${{ env.AWS_REGION }}
           role-to-assume: ${{ vars.EDGER_AWS_ROLE_ARN }}
           role-duration-seconds: 43200
 
-      - name: Require immutable production configuration
+      - run: npm ci
+
+      - name: Require reviewed immutable recovery target
         run: |
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          printf '%s\n' "$CAMPAIGN_GIT_SHA" | grep -Eq '^[0-9a-f]{40}$'
           git merge-base --is-ancestor "$CAMPAIGN_GIT_SHA" "$GITHUB_SHA"
-          test "$AWS_REGION" = "ap-southeast-2"
+          node --input-type=module -e "
+            import fs from 'node:fs';
+            import { validateRecoveryManifest } from './scripts/edger-scaling-recovery.mjs';
+            const recovery = validateRecoveryManifest(JSON.parse(fs.readFileSync(process.env.RECOVERY_MANIFEST)));
+            if (process.env.CAMPAIGN_URI !== recovery.target.campaign_uri) process.exit(1);
+          "
+          test "$EDGER_REFERENCE_HARDWARE" = "aws-c7g.4xlarge-ap-southeast-2"
           case "$EDGER_CORPUS_STORE" in s3://*) ;; *) exit 1 ;; esac
-          case "$EDGER_CAMPAIGN_INPUT_URI" in s3://*) ;; *) exit 1 ;; esac
-          test "${{ vars.EDGER_REFERENCE_HARDWARE }}" = "aws-c7g.4xlarge-ap-southeast-2"
+          echo "RECOVERY_CHECKSUM=$(shasum -a 256 "$RECOVERY_MANIFEST" | cut -d' ' -f1)" >> "$GITHUB_ENV"
 
-      - name: Launch the SSM-only c7g campaign runner
-        run: npm run edger:campaign:remote -- launch --git-sha "$CAMPAIGN_GIT_SHA"
-
-      - name: Wait for the immutable full-evaluation gate
+      - name: Launch or monitor matching SSM runner
         run: |
-          campaign_uri="${EDGER_CAMPAIGN_INPUT_URI%/campaign-input}"
-          for attempt in $(seq 1 350); do
-            if aws s3 cp \
-              "$campaign_uri/status/completed/full-evaluation.json" \
-              /tmp/full-evaluation.json \
-              --only-show-errors 2>/dev/null; then
-              node -e "
-                const fs = require('fs');
-                const report = JSON.parse(fs.readFileSync('/tmp/full-evaluation.json'));
-                if (report.status !== 'passed' || !report.immutable || report.git_commit !== process.env.CAMPAIGN_GIT_SHA) {
-                  process.exit(1);
-                }
-              "
+          npm run edger:campaign:remote -- launch \
+            --campaign-uri "$CAMPAIGN_URI" \
+            --git-sha "$CAMPAIGN_GIT_SHA" \
+            --target-stage "$TARGET_STAGE" \
+            --scaling-recovery-manifest "$RECOVERY_MANIFEST" \
+            --run-label "$RUN_LABEL"
+
+      - name: Monitor target marker for up to five hours
+        run: |
+          marker="/tmp/${TARGET_STAGE}.json"
+          validate_marker() {
+            aws s3 cp \
+              "$CAMPAIGN_URI/status/completed/${TARGET_STAGE}.json" \
+              "$marker" \
+              --only-show-errors 2>/dev/null || return 1
+            node --input-type=module -e "
+              import fs from 'node:fs';
+              import { assertCompletedStageMarker } from './scripts/edger-campaign-stages.mjs';
+              assertCompletedStageMarker(JSON.parse(fs.readFileSync(process.argv[1])), {
+                stage: process.env.TARGET_STAGE,
+                gitCommit: process.env.CAMPAIGN_GIT_SHA,
+                recoveryManifestChecksum: process.env.RECOVERY_CHECKSUM,
+              });
+            " "$marker"
+          }
+          active_count() {
+            campaign_id="${CAMPAIGN_URI##*/}"
+            aws ec2 describe-instances \
+              --filters \
+                "Name=tag:campaign,Values=${campaign_id}" \
+                "Name=tag:campaign-git-sha,Values=${CAMPAIGN_GIT_SHA}" \
+                "Name=tag:campaign-target-stage,Values=${TARGET_STAGE}" \
+                "Name=instance-state-name,Values=pending,running" \
+              --query 'length(Reservations[].Instances[])' \
+              --output text
+          }
+          for attempt in $(seq 1 300); do
+            if validate_marker; then
               exit 0
             fi
-            active="$(aws ec2 describe-instances \
-              --filters \
-                "Name=tag:campaign,Values=20260718-v2-first" \
-                "Name=tag:campaign-git-sha,Values=$CAMPAIGN_GIT_SHA" \
-                "Name=instance-state-name,Values=pending,running,stopping,stopped" \
-              --query 'length(Reservations[].Instances[])' \
-              --output text)"
-            if [ "$active" = "0" ]; then
-              echo "Remote runner terminated before the full-evaluation gate passed." >&2
+            if [ "$(active_count)" = "0" ]; then
+              echo "Runner terminated without matching ${TARGET_STAGE} marker." >&2
               exit 1
             fi
             sleep 60
           done
-          echo "Remote campaign exceeded the six-hour GitHub monitor window." >&2
+          if validate_marker; then
+            exit 0
+          fi
+          if [ "$(active_count)" != "0" ]; then
+            echo "Runner remains active after five hours; monitor detached successfully."
+            exit 0
+          fi
+          echo "Runner terminated without matching ${TARGET_STAGE} marker." >&2
           exit 1
 
-  promotion-pr:
-    needs: remote-campaign
+  promote:
+    if: inputs.operation == 'promote'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.campaign_sha || github.sha }}
+          ref: ${{ inputs.campaign_sha }}
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -105,40 +160,79 @@ jobs:
 
       - uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-region: ${{ vars.AWS_REGION }}
+          aws-region: ${{ env.AWS_REGION }}
           role-to-assume: ${{ vars.EDGER_AWS_ROLE_ARN }}
           role-duration-seconds: 43200
 
       - run: npm ci
 
-      - name: Download exact checksum-bound promotion inputs
+      - name: Require completed campaign and zero active runners
         run: |
-          campaign_uri="${EDGER_CAMPAIGN_INPUT_URI%/campaign-input}"
+          test "$TARGET_STAGE" = "full-evaluation"
+          test "$(git rev-parse HEAD)" = "$CAMPAIGN_GIT_SHA"
+          node --input-type=module -e "
+            import fs from 'node:fs';
+            import { validateRecoveryManifest } from './scripts/edger-scaling-recovery.mjs';
+            const recovery = validateRecoveryManifest(JSON.parse(fs.readFileSync(process.env.RECOVERY_MANIFEST)));
+            if (process.env.CAMPAIGN_URI !== recovery.target.campaign_uri) process.exit(1);
+          "
+          recovery_checksum="$(shasum -a 256 "$RECOVERY_MANIFEST" | cut -d' ' -f1)"
+          echo "RECOVERY_CHECKSUM=${recovery_checksum}" >> "$GITHUB_ENV"
+          aws s3 cp \
+            "$CAMPAIGN_URI/status/completed/full-evaluation.json" \
+            /tmp/full-evaluation.json \
+            --only-show-errors
+          RECOVERY_CHECKSUM="$recovery_checksum" node --input-type=module -e "
+            import fs from 'node:fs';
+            import { assertCompletedStageMarker } from './scripts/edger-campaign-stages.mjs';
+            assertCompletedStageMarker(JSON.parse(fs.readFileSync('/tmp/full-evaluation.json')), {
+              stage: 'full-evaluation',
+              gitCommit: process.env.CAMPAIGN_GIT_SHA,
+              recoveryManifestChecksum: process.env.RECOVERY_CHECKSUM,
+            });
+          "
+          campaign_id="${CAMPAIGN_URI##*/}"
+          active="$(aws ec2 describe-instances \
+            --filters \
+              "Name=tag:campaign,Values=${campaign_id}" \
+              "Name=tag:campaign-git-sha,Values=${CAMPAIGN_GIT_SHA}" \
+              "Name=instance-state-name,Values=pending,running" \
+            --query 'length(Reservations[].Instances[])' \
+            --output text)"
+          test "$active" = "0"
+
+      - name: Download and revalidate exact promotion inputs
+        run: |
           mkdir -p artifacts/edger-training/campaign
           aws s3 cp \
-            "$campaign_uri/ready-for-promotion/" \
+            "$CAMPAIGN_URI/ready-for-promotion/" \
             artifacts/edger-training/campaign/ \
             --recursive \
             --only-show-errors
-          node -e "
-            const fs = require('fs');
+          node --input-type=module -e "
+            import crypto from 'node:crypto';
+            import fs from 'node:fs';
+            const marker = JSON.parse(fs.readFileSync('/tmp/full-evaluation.json'));
+            const expected = Object.fromEntries(marker.artifacts.map((artifact) => [artifact.path, artifact.sha256]));
+            for (const name of ['candidate.json', 'evaluation-report.json']) {
+              const bytes = fs.readFileSync('artifacts/edger-training/campaign/' + name);
+              const actual = crypto.createHash('sha256').update(bytes).digest('hex');
+              if (actual !== expected[name]) throw new Error(name + ' marker checksum mismatch');
+            }
             const report = JSON.parse(fs.readFileSync('artifacts/edger-training/campaign/evaluation-report.json'));
             if (report.campaign_git_commit !== process.env.CAMPAIGN_GIT_SHA || !report.promotion?.passed) {
-              process.exit(1);
+              throw new Error('evaluation report is not promotable for campaign SHA');
             }
           "
-
-      - name: Revalidate checksums and prepare the reviewed promotion change
-        run: |
           npm run edger:promote:v2 -- \
             --model artifacts/edger-training/campaign/candidate.json \
             --report artifacts/edger-training/campaign/evaluation-report.json
 
-      - name: Open promotion pull request without auto-merge
+      - name: Open manual-review promotion pull request
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          branch="codex/edger-v2-promotion-${GITHUB_RUN_ID}"
+          branch="codex/edger-v2-promotion-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -b "$branch"
@@ -149,4 +243,4 @@ jobs:
             --base main \
             --head "$branch" \
             --title "Promote cumulative Edger v2 policy" \
-            --body "The checksum-bound candidate from campaign SHA ${CAMPAIGN_GIT_SHA} passed every immutable production gate. This PR requires manual review and merge."
+            --body "Checksum-bound candidate from campaign SHA ${CAMPAIGN_GIT_SHA} passed every immutable production gate. Manual review and merge required."

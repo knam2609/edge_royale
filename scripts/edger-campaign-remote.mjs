@@ -1,15 +1,28 @@
 #!/usr/bin/env node
 
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+
+import {
+  assertCompletedStageMarker,
+  assertTargetStage,
+} from "./edger-campaign-stages.mjs";
+import {
+  RECOVERY_CAMPAIGN_URI,
+  validateRecoveryManifest,
+} from "./edger-scaling-recovery.mjs";
 
 const DEFAULT_REGION = process.env.AWS_REGION ?? "ap-southeast-2";
 const DEFAULT_STACK = "edge-royale-edger-campaign";
 const REMOTE_CAMPAIGN_TIMEOUT_SECONDS = "86400";
 const DEFAULT_CAMPAIGN_INPUT =
   process.env.EDGER_CAMPAIGN_INPUT_URI ??
-  "s3://edge-royale-edger-904869824856-ap-southeast-2/campaigns/20260718-v2-first/campaign-input";
+  `${RECOVERY_CAMPAIGN_URI}/campaign-input`;
+const DEFAULT_RECOVERY_MANIFEST =
+  "artifacts/edger-training/recovery/edger_scaling_recovery_v1.json";
 const PLAYWRIGHT_AL2023_PACKAGES = [
   "alsa-lib",
   "at-spi2-atk",
@@ -49,6 +62,10 @@ function parseArgs(argv) {
       "s3://edge-royale-edger-904869824856-ap-southeast-2/corpus",
     gitSha: null,
     instanceId: null,
+    targetStage: process.env.EDGER_TARGET_STAGE ?? "full-evaluation",
+    recoveryManifest:
+      process.env.EDGER_SCALING_RECOVERY_MANIFEST ?? DEFAULT_RECOVERY_MANIFEST,
+    runLabel: process.env.EDGER_RUN_LABEL ?? `local-${process.pid}`,
   };
   for (let index = 1; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -64,9 +81,31 @@ function parseArgs(argv) {
       parsed.gitSha = argv[++index];
     } else if (arg === "--instance-id" && argv[index + 1]) {
       parsed.instanceId = argv[++index];
+    } else if (arg === "--target-stage" && argv[index + 1]) {
+      parsed.targetStage = argv[++index];
+    } else if (arg === "--scaling-recovery-manifest" && argv[index + 1]) {
+      parsed.recoveryManifest = argv[++index];
+    } else if (arg === "--run-label" && argv[index + 1]) {
+      parsed.runLabel = argv[++index];
     }
   }
   parsed.gitSha ??= git(["rev-parse", "HEAD"]).trim();
+  assertTargetStage(parsed.targetStage);
+  if (!/^[a-f0-9]{40}$/.test(parsed.gitSha)) {
+    throw new Error("--git-sha must be a full reviewed 40-character SHA");
+  }
+  if (!/^[A-Za-z0-9._-]+$/.test(parsed.runLabel)) {
+    throw new Error("--run-label may contain only letters, numbers, dot, underscore, dash");
+  }
+  const recovery = validateRecoveryManifest(
+    JSON.parse(fs.readFileSync(parsed.recoveryManifest, "utf8")),
+  );
+  if (parsed.campaignUri !== recovery.target.campaign_uri) {
+    throw new Error("--campaign-uri must match recovery manifest target");
+  }
+  parsed.recoveryManifestChecksum = createHash("sha256")
+    .update(fs.readFileSync(parsed.recoveryManifest))
+    .digest("hex");
   return parsed;
 }
 
@@ -104,14 +143,20 @@ function campaignId(campaignUri) {
   return campaignUri.split("/").filter(Boolean).at(-1);
 }
 
-function findInstances(args) {
+function findInstances(args, { matchTarget = true } = {}) {
+  const filters = [
+    `Name=tag:campaign,Values=${campaignId(args.campaignUri)}`,
+    `Name=tag:campaign-git-sha,Values=${args.gitSha}`,
+    "Name=instance-state-name,Values=pending,running",
+  ];
+  if (matchTarget) {
+    filters.push(`Name=tag:campaign-target-stage,Values=${args.targetStage}`);
+  }
   const response = awsJson([
     "ec2",
     "describe-instances",
     "--filters",
-    `Name=tag:campaign,Values=${campaignId(args.campaignUri)}`,
-    `Name=tag:campaign-git-sha,Values=${args.gitSha}`,
-    "Name=instance-state-name,Values=pending,running,stopping,stopped",
+    ...filters,
   ], args);
   return response.Reservations.flatMap((reservation) => reservation.Instances);
 }
@@ -147,6 +192,13 @@ export function bootstrapCommands(args) {
   const quotedCampaign = JSON.stringify(args.campaignUri);
   const quotedCorpus = JSON.stringify(args.corpusStore);
   const quotedSha = JSON.stringify(args.gitSha);
+  const targetStage = JSON.stringify(args.targetStage ?? "full-evaluation");
+  const recoveryManifest = JSON.stringify(
+    args.recoveryManifest ?? DEFAULT_RECOVERY_MANIFEST,
+  );
+  const runLabel = JSON.stringify(args.runLabel ?? "test-run");
+  const localLog = `/var/log/edge-royale/${args.runLabel ?? "test-run"}.log`;
+  const logUri = `${args.campaignUri}/logs/${args.runLabel ?? "test-run"}.log`;
   return [
     "set -euo pipefail",
     [
@@ -175,14 +227,19 @@ export function bootstrapCommands(args) {
       `EDGER_CAMPAIGN_URI=${quotedCampaign}`,
       `EDGER_CORPUS_STORE=${quotedCorpus}`,
       "EDGER_REFERENCE_HARDWARE=aws-c7g.4xlarge-ap-southeast-2",
-      "node scripts/edger-production-campaign.mjs",
+      `node scripts/edger-production-campaign.mjs --campaign-uri ${quotedCampaign}`,
+      `--target-stage ${targetStage}`,
+      `--scaling-recovery-manifest ${recoveryManifest}`,
+      `--run-label ${runLabel}`,
       "2>&1",
-      "| tee /var/log/edge-royale/campaign.log",
+      `| tee ${JSON.stringify(localLog)}`,
     ].join(" "),
     "campaign_status=${PIPESTATUS[0]}",
-    `aws s3 cp /var/log/edge-royale/campaign.log ${quotedCampaign}/logs/remote-campaign.log --only-show-errors`,
+    `aws s3 cp ${JSON.stringify(localLog)} ${JSON.stringify(logUri)} --only-show-errors`,
+    "log_status=$?",
     "shutdown -h now",
-    "exit ${campaign_status}",
+    "if [ ${campaign_status} -ne 0 ]; then exit ${campaign_status}; fi",
+    "exit ${log_status}",
   ];
 }
 
@@ -194,10 +251,31 @@ export function ssmCommandParameters(args) {
 }
 
 async function launch(args) {
+  const completed = targetMarker(args);
+  if (completed) {
+    console.log(JSON.stringify({
+      status: "already-passed",
+      target_stage: args.targetStage,
+      campaign_uri: args.campaignUri,
+      git_sha: args.gitSha,
+    }, null, 2));
+    return;
+  }
   const existing = findInstances(args);
   if (existing.length > 0) {
+    console.log(JSON.stringify({
+      status: "monitoring-existing",
+      instance_id: existing[0].InstanceId,
+      target_stage: args.targetStage,
+      campaign_uri: args.campaignUri,
+      git_sha: args.gitSha,
+    }, null, 2));
+    return;
+  }
+  const otherTarget = findInstances(args, { matchTarget: false });
+  if (otherTarget.length > 0) {
     throw new Error(
-      `campaign already has non-terminal instance ${existing[0].InstanceId}`,
+      `campaign has active non-matching runner ${otherTarget[0].InstanceId}`,
     );
   }
   const outputs = stackOutputs(args);
@@ -222,6 +300,8 @@ async function launch(args) {
     { Key: "workload", Value: "edger-campaign" },
     { Key: "campaign", Value: campaignId(args.campaignUri) },
     { Key: "campaign-git-sha", Value: args.gitSha },
+    { Key: "campaign-run-label", Value: args.runLabel },
+    { Key: "campaign-target-stage", Value: args.targetStage },
   ];
   const response = awsJson([
     "ec2",
@@ -277,7 +357,7 @@ async function launch(args) {
     "--parameters",
     JSON.stringify(ssmCommandParameters(args)),
     "--comment",
-    `Edge Royale Edger campaign ${campaignId(args.campaignUri)} at ${args.gitSha}`,
+    `Edge Royale Edger ${args.targetStage} ${campaignId(args.campaignUri)} at ${args.gitSha}`,
   ], args);
   console.log(JSON.stringify({
     status: "running",
@@ -285,7 +365,35 @@ async function launch(args) {
     command_id: command.Command.CommandId,
     campaign_uri: args.campaignUri,
     git_sha: args.gitSha,
+    target_stage: args.targetStage,
+    run_label: args.runLabel,
   }, null, 2));
+}
+
+function targetMarker(args) {
+  const uri = `${args.campaignUri}/status/completed/${args.targetStage}.json`;
+  try {
+    const marker = JSON.parse(aws(["s3", "cp", uri, "-", "--only-show-errors"], args));
+    return assertCompletedStageMarker(marker, {
+      stage: args.targetStage,
+      gitCommit: args.gitSha,
+      recoveryManifestChecksum: args.recoveryManifestChecksum,
+    });
+  } catch (error) {
+    const { bucket, key } = (() => {
+      const match = /^s3:\/\/([^/]+)\/(.+)$/.exec(uri);
+      return match ? { bucket: match[1], key: match[2] } : {};
+    })();
+    if (!bucket) {
+      throw error;
+    }
+    try {
+      aws(["s3api", "head-object", "--bucket", bucket, "--key", key], args);
+    } catch {
+      return null;
+    }
+    throw error;
+  }
 }
 
 function status(args) {
@@ -314,6 +422,8 @@ function status(args) {
     git_sha: args.gitSha,
     instances,
     completed_stages: completedStages,
+    target_stage: args.targetStage,
+    target_marker_passed: Boolean(targetMarker(args)),
   }, null, 2));
 }
 
