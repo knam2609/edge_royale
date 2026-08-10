@@ -100,8 +100,9 @@ class StreamingTrainingTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
-    def prepare(self, rows: list[dict[str, object]], output: Path) -> None:
+    def prepare(self, rows: list[dict[str, object]], output: Path) -> Path:
         ndjson = "".join(json.dumps(row, separators=(",", ":")) + "\n" for row in rows)
+        report = output.with_suffix(output.suffix + ".build.json")
         run_training(
             [
                 "prepare",
@@ -113,10 +114,13 @@ class StreamingTrainingTest(unittest.TestCase):
                 "streaming-test-manifest",
                 "--scale",
                 "1",
+                "--report",
+                str(report),
             ],
             cwd=self.git_root,
             input_text=ndjson,
         )
+        return report
 
     def scaling_fixture(
         self,
@@ -150,6 +154,7 @@ class StreamingTrainingTest(unittest.TestCase):
                 "checkpoint_id": checkpoint_id,
                 "manifest_hash": manifest["manifest_hash"],
                 "metrics": {"validation": {"joint_action_loss": loss}},
+                "git_commit": f"source-{label}",
             },
             checkpoint_path,
         )
@@ -194,7 +199,7 @@ class StreamingTrainingTest(unittest.TestCase):
             for index in range(257)
         ]
         output = self.root / "logical.parquet"
-        self.prepare(rows, output)
+        build_report = self.prepare(rows, output)
         parquet = pq.ParquetFile(output)
 
         self.assertEqual(parquet.num_row_groups, 2)
@@ -204,6 +209,37 @@ class StreamingTrainingTest(unittest.TestCase):
         )
         self.assertEqual(parquet.schema_arrow.metadata[b"row_group_size"], b"256")
         self.assertEqual(parquet.read().to_pylist(), rows)
+        cache_build = json.loads(build_report.read_text())
+        validation = self.root / "cache-validation.json"
+        run_training(
+            [
+                "validate-cache",
+                "--dataset",
+                str(output),
+                "--build-report",
+                str(build_report),
+                "--manifest-hash",
+                "streaming-test-manifest",
+                "--schema-sha256",
+                cache_build["parquet_schema_sha256"],
+                "--rows",
+                "257",
+                "--train-rows",
+                "86",
+                "--validation-rows",
+                "86",
+                "--test-rows",
+                "85",
+                "--out",
+                str(validation),
+            ],
+            cwd=self.git_root,
+        )
+        validated = json.loads(validation.read_text())
+        self.assertTrue(validated["passed"])
+        self.assertEqual(validated["compression"], "zstd")
+        self.assertEqual(validated["row_group_size"], 256)
+        self.assertEqual(validated["logical_content_sha256"], cache_build["logical_content_sha256"])
 
     def test_scaling_gate_uses_relative_loss_and_gameplay_non_regression(self) -> None:
         fixtures = {
@@ -241,6 +277,11 @@ class StreamingTrainingTest(unittest.TestCase):
         self.assertTrue(report["full_improves_held_out_joint_action_loss"])
         self.assertTrue(report["full_non_regressing_frozen_league_score"])
         self.assertNotIn("full_held_out_joint_action_loss_below_10pct", report)
+        for label in ["1pct", "10pct", "100pct"]:
+            self.assertEqual(
+                report["scales"][label]["source_checkpoint_git_commit"],
+                f"source-{label}",
+            )
         run_training(
             ["league", "--scaling-report", str(output)],
             cwd=self.git_root,
