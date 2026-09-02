@@ -3,6 +3,7 @@ import fs from "node:fs";
 import test from "node:test";
 
 import {
+  RECOVERY_CAMPAIGN_URI,
   RECOVERY_SOURCE_SHA,
   assertRecoveredEvidence,
   assertSourceLineage,
@@ -111,6 +112,19 @@ function recoveryFixture() {
 test("valid checksum-bound recovery evidence passes", () => {
   const fixture = recoveryFixture();
   assert.equal(assertRecoveredEvidence(fixture.recovery, fixture), true);
+});
+
+test("corrected cache contract uses a fresh immutable campaign prefix", () => {
+  assert.equal(checkedInRecovery.target.campaign_uri, RECOVERY_CAMPAIGN_URI);
+  assert.ok(RECOVERY_CAMPAIGN_URI.endsWith("/20260903-v2-recovery"));
+  assert.equal(checkedInRecovery.expected.cache.schema_sha256,
+    "db321aeefdb97390989837f6427657a422978f2449b5711c5a60973a2e11c811");
+  const oldTarget = structuredClone(checkedInRecovery);
+  oldTarget.target.campaign_uri = RECOVERY_CAMPAIGN_URI.replace("20260903", "20260810");
+  assert.throws(() => validateRecoveryManifest(oldTarget), /recovery target must remain/);
+  const healthWorkflow = fs.readFileSync(".github/workflows/edger-corpus-health.yml", "utf8");
+  assert.match(healthWorkflow, /process\.stdout\.write\(r\.target\.campaign_uri\)/);
+  assert.ok(!healthWorkflow.includes("campaigns/20260810-v2-recovery"));
 });
 
 test("wrong S3 version or SHA-256 fails closed", () => {
