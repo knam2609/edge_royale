@@ -67,10 +67,11 @@ jobs:
         run: |
           should_trigger="$(node -e "const r=require('./artifacts/edger-training/health/report.json'); process.stdout.write(String(Boolean(r.campaign_trigger.should_trigger)))")"
           if [ "$should_trigger" = "true" ]; then
+            campaign_uri="$(node -e "const r=require('./artifacts/edger-training/recovery/edger_scaling_recovery_v1.json'); process.stdout.write(r.target.campaign_uri)")"
             gh workflow run edger-campaign.yml \
               --ref main \
               -f operation=run \
               -f campaign_sha="${{ vars.EDGER_RECOVERY_CAMPAIGN_SHA }}" \
-              -f campaign_uri=s3://edge-royale-edger-904869824856-ap-southeast-2/campaigns/20260810-v2-recovery \
+              -f campaign_uri="$campaign_uri" \
               -f target_stage=full-cache
           fi

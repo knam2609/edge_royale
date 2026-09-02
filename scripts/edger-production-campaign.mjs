@@ -572,6 +572,8 @@ async function main() {
 
   const fullCacheDir = path.join(args.workDir, "full-cache");
   await runStage("full-cache", async ({ stageDir, run }) => {
+    // Exercise the pinned cache contract in this runner before the hours-long scan.
+    run("npm", ["run", "test:edger-streaming"]);
     const dataset = path.join(stageDir, "edger_decisions_100pct.parquet");
     const buildReport = `${dataset}.build.json`;
     const validationReport = path.join(stageDir, "cache-validation.json");

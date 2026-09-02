@@ -16,7 +16,7 @@ export const RECOVERY_SOURCE_CAMPAIGN_URI =
 export const RECOVERY_FAILED_STAGE_URI =
   `${RECOVERY_SOURCE_CAMPAIGN_URI}/failed-stages/scaling/2026-07-27T03-18-54-545Z`;
 export const RECOVERY_CAMPAIGN_URI =
-  "s3://edge-royale-edger-904869824856-ap-southeast-2/campaigns/20260810-v2-recovery";
+  "s3://edge-royale-edger-904869824856-ap-southeast-2/campaigns/20260903-v2-recovery";
 export const SCALE_LABELS = Object.freeze(["1pct", "10pct", "100pct"]);
 const ARTIFACT_KINDS = Object.freeze([
   "manifest",

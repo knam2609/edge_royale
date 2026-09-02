@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import test from "node:test";
 
 import {
@@ -31,6 +32,16 @@ test("Parquet is durable only in full-cache stage", () => {
   for (const stage of ["scaling", "offline", "league-production", "full-evaluation"]) {
     assert.equal(stageIncludesParquet(stage), false);
   }
+});
+
+test("full-cache runs the pinned contract tests before scanning the corpus", () => {
+  const source = fs.readFileSync("scripts/edger-production-campaign.mjs", "utf8");
+  const fullCache = source.slice(source.indexOf('await runStage("full-cache"'));
+  const preflight = fullCache.indexOf('run("npm", ["run", "test:edger-streaming"])');
+  assert.ok(preflight >= 0);
+  assert.ok(preflight < fullCache.indexOf('"edger:dataset"'));
+  const launcher = fs.readFileSync("scripts/edger-streaming-tests.mjs", "utf8");
+  assert.match(launcher, /PYTHONDONTWRITEBYTECODE: "1"/);
 });
 
 test("existing target marker with mismatched SHA or recovery checksum is refused", () => {

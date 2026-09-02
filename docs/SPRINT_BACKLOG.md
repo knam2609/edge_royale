@@ -5,11 +5,13 @@
 - `AI-DATA-001` Build the first compatible full-match corpus.
   - Done when simulator collection has useful opponent/outcome coverage and replay validation is clean.
 - `AI-SCALE-001` Run fixed 1%/10%/100% behavior-cloning experiments.
-  - Exact source artifacts pass relative gate; done when recovery writes matching immutable scaling marker under `20260810-v2-recovery`.
+  - Recovered scaling marker passed under `20260810-v2-recovery`; reproduce the same source evidence under the new reviewed recovery SHA/prefix.
+- `AI-CACHE-001` Validate and persist the recovered full cache.
+  - Schema-pin/lossless-hash correction awaits review and a full `20260903-v2-recovery` run. Done when exact schema, rows/splits, row groups, content and Parquet checksums pass and runner cleanup is verified.
 - `AI-OFFLINE-001` Run conservative advantage-weighted improvement.
   - Done when one low-rate pass remains under `0.05` validation KL and produces a retained evaluation report.
 - `AI-LEAGUE-001` Run the first 16–32 worker V-trace campaign.
-  - Blocked on `AI-SCALE-001`; done when paired-seed exact-JS episodes and a lineage-preserving candidate checkpoint complete.
+  - Blocked on `AI-CACHE-001` and `AI-OFFLINE-001`; done when paired-seed exact-JS episodes and a lineage-preserving candidate checkpoint complete.
 - `AI-PERF-001` Increase production rollout/evaluation throughput.
   - Done when 10,000 safety games and full promotion evaluation complete in a practical campaign window.
 - `AI-OPS-001` Execute the first production campaign on dedicated AWS infrastructure.

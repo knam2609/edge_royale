@@ -76,6 +76,14 @@ def sha256_file(path: str | Path) -> str:
     return digest.hexdigest()
 
 
+def parquet_schema_sha256(schema: pa.Schema) -> str:
+    descriptor = [
+        {"name": field.name, "type": str(field.type), "nullable": field.nullable}
+        for field in schema.remove_metadata()
+    ]
+    return sha256_bytes(canonical_json(descriptor).encode())
+
+
 def git_commit() -> str:
     try:
         return subprocess.check_output(
@@ -1319,6 +1327,13 @@ def run_prepare(args: argparse.Namespace) -> None:
                 use_dictionary=True,
             )
         table = pa.Table.from_pylist(pending, schema=arrow_schema)
+        normalized_rows = table.to_pylist()
+        # Arrow may promote JSON 0 to 0.0. Compare values before hashing the
+        # storage representation, rejecting truncation and dropped fields.
+        if normalized_rows != pending:
+            raise ValueError("decision cache requires a lossless Arrow row conversion")
+        for row in normalized_rows:
+            logical_content.update((canonical_json(row) + "\n").encode())
         assert writer is not None
         writer.write_table(table, row_group_size=PARQUET_ROW_GROUP_SIZE)
         rows_written += len(pending)
@@ -1329,7 +1344,6 @@ def run_prepare(args: argparse.Namespace) -> None:
             if not line.strip():
                 continue
             row = json.loads(line)
-            logical_content.update((canonical_json(row) + "\n").encode())
             split = str(row.get("split", "missing"))
             split_rows[split] = split_rows.get(split, 0) + 1
             pending.append(row)
@@ -1351,14 +1365,6 @@ def run_prepare(args: argparse.Namespace) -> None:
             handle.close()
     assert arrow_schema is not None
     persisted_schema = pq.ParquetFile(output).schema_arrow.remove_metadata()
-    schema_descriptor = [
-        {
-            "name": field.name,
-            "type": str(field.type),
-            "nullable": field.nullable,
-        }
-        for field in persisted_schema
-    ]
     report = {
         "schema_version": "edger_cache_build_report_v1",
         "cache": str(output.resolve()),
@@ -1368,9 +1374,7 @@ def run_prepare(args: argparse.Namespace) -> None:
         "manifest_hash": args.manifest_hash,
         "scale": args.scale,
         "parquet_schema_version": "edger_decision_parquet_v1",
-        "parquet_schema_sha256": sha256_bytes(
-            canonical_json(schema_descriptor).encode()
-        ),
+        "parquet_schema_sha256": parquet_schema_sha256(persisted_schema),
         "logical_content_sha256": logical_content.hexdigest(),
         "compression": "zstd",
         "row_group_size": PARQUET_ROW_GROUP_SIZE,
@@ -1401,17 +1405,12 @@ def run_validate_cache(args: argparse.Namespace) -> None:
                 f"full cache Parquet metadata {key} mismatch: "
                 f"expected {expected}, got {metadata.get(key)}"
             )
-    schema_descriptor = [
-        {
-            "name": field.name,
-            "type": str(field.type),
-            "nullable": field.nullable,
-        }
-        for field in parquet.schema_arrow.remove_metadata()
-    ]
-    schema_sha256 = sha256_bytes(canonical_json(schema_descriptor).encode())
+    schema_sha256 = parquet_schema_sha256(parquet.schema_arrow)
     if schema_sha256 != args.schema_sha256:
-        raise ValueError("full cache Parquet schema checksum mismatch")
+        raise ValueError(
+            "full cache Parquet schema checksum mismatch: "
+            f"expected {args.schema_sha256}, got {schema_sha256}"
+        )
     if build_report.get("parquet_schema_sha256") != schema_sha256:
         raise ValueError("full cache build report schema binding mismatch")
     if parquet.metadata.num_rows != args.rows:

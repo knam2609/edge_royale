@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -31,7 +32,7 @@ def run_training(
     input_text: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["python3", str(TRAINING_SCRIPT), *arguments],
+        [sys.executable, str(TRAINING_SCRIPT), *arguments],
         cwd=cwd,
         input=input_text,
         text=True,
@@ -68,6 +69,41 @@ def decision_row(index: int, split: str) -> dict[str, object]:
         "delay_ticks": 1,
         "per_tick_gamma": 0.9997,
         "reward": 0.0,
+    }
+
+
+def recovery_decision_row(index: int) -> dict[str, object]:
+    """Production field order/types, including JSON integer-valued floats.
+
+    Matches the first 256 replay-derived rows of manifest ca8435e58fd500f6...
+    (PyArrow 17 and 21). Short vectors suffice for this serialization test.
+    """
+    return {
+        "episode_id": f"episode-{index:04d}",
+        "tick": index + 1,
+        "actor": "red",
+        "opponent_stratum": "edger_heuristic",
+        "board": [0, 0.5, 1],
+        "global": [0, 0.25, 1],
+        "legal_masks": {"card": [1, 0], "placement": [0, 1], "delay": [1, 0]},
+        "selected": {"card_index": 0, "placement_index": 0, "delay_index": 0},
+        "delay_ticks": 1,
+        "reward": 0 if index % 2 == 0 else 0.25,
+        "discounted_return": 0 if index % 2 == 0 else 0.5,
+        "behavior_log_probability": 0,
+        "vtrace_eligible": True,
+        "source_kind": "simulator",
+        "is_winner": False,
+        "policy_id": "edger_heuristic",
+        "policy_checkpoint_id": "edger_heuristic",
+        "policy_league_rating": None,
+        "split": ["train", "validation", "test"][index % 3],
+        "result_winner": "blue",
+        "compatibility_cohort": "test-cohort",
+        "reward_version": "edger_potential_reward_v1",
+        "per_tick_gamma": 0.9997,
+        "balance_stratum": "simulator|edger_heuristic|loss",
+        "sample_weight": 0.5,
     }
 
 
@@ -121,6 +157,75 @@ class StreamingTrainingTest(unittest.TestCase):
             input_text=ndjson,
         )
         return report
+
+    def validate_cache(self, output: Path, schema_sha256: str) -> dict:
+        validation = output.with_suffix(".validation.json")
+        run_training(
+            [
+                "validate-cache", "--dataset", str(output),
+                "--build-report", str(output) + ".build.json",
+                "--manifest-hash", "streaming-test-manifest",
+                "--schema-sha256", schema_sha256,
+                "--rows", "257", "--train-rows", "86",
+                "--validation-rows", "86", "--test-rows", "85",
+                "--out", str(validation),
+            ],
+            cwd=self.git_root,
+        )
+        return json.loads(validation.read_text())
+
+    def test_recovery_cache_matches_independently_pinned_schema(self) -> None:
+        rows = [recovery_decision_row(index) for index in range(257)]
+        output = self.root / "recovery.parquet"
+        report = json.loads(self.prepare(rows, output).read_text())
+        recovery_path = ROOT / "artifacts/edger-training/recovery/edger_scaling_recovery_v1.json"
+        recovery = json.loads(recovery_path.read_text())
+        expected = recovery["expected"]["cache"]["schema_sha256"]
+        self.assertEqual(report["parquet_schema_sha256"], expected)
+        validated = self.validate_cache(output, expected)
+        self.assertTrue(validated["passed"])
+        self.assertEqual(validated["row_groups"], 2)
+        self.assertEqual(
+            validated["logical_content_sha256"], report["logical_content_sha256"],
+        )
+        self.assertEqual(validated["parquet_sha256"], sha256_file(output))
+        self.assertEqual(pq.read_table(output).to_pylist(), rows)
+        repeated = self.root / "recovery-repeat.parquet"
+        self.prepare(rows, repeated)
+        self.assertEqual(sha256_file(repeated), sha256_file(output))
+
+        with self.assertRaises(subprocess.CalledProcessError) as rejected:
+            self.validate_cache(output, "0" * 64)
+        self.assertIn("schema checksum mismatch", rejected.exception.stderr)
+
+    def test_logical_hash_accepts_lossless_numeric_round_trip_only(self) -> None:
+        rows = [recovery_decision_row(index) for index in range(257)]
+        output = self.root / "numeric.parquet"
+        report = json.loads(self.prepare(rows, output).read_text())
+        self.assertNotEqual(
+            canonical_json(rows[0]),
+            canonical_json(pq.read_table(output).to_pylist()[0]),
+        )
+        self.assertTrue(self.validate_cache(output, report["parquet_schema_sha256"])["passed"])
+
+        report["logical_content_sha256"] = "0" * 64
+        Path(str(output) + ".build.json").write_text(json.dumps(report))
+        with self.assertRaises(subprocess.CalledProcessError) as rejected:
+            self.validate_cache(output, report["parquet_schema_sha256"])
+        self.assertIn("logical replay-derived content mismatch", rejected.exception.stderr)
+
+    def test_prepare_rejects_late_lossy_casts_and_dropped_fields(self) -> None:
+        for key, value in [("behavior_log_probability", -0.25), ("late_field", 1)]:
+            with self.subTest(key=key):
+                rows = [recovery_decision_row(index) for index in range(257)]
+                rows[-1][key] = value
+                output = self.root / f"lossy-{key}.parquet"
+                with self.assertRaises(subprocess.CalledProcessError) as rejected:
+                    self.prepare(rows, output)
+                self.assertIn("lossless", rejected.exception.stderr)
+                self.assertFalse(output.exists())
+                self.assertFalse(output.with_suffix(".parquet.partial").exists())
+                self.assertFalse(Path(str(output) + ".build.json").exists())
 
     def scaling_fixture(
         self,
