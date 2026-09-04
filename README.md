@@ -161,14 +161,15 @@ The retained `f25a4880e65f0eed6eda8c3ecc33d42d2ad6af33` scaling artifacts are
 recovered only through checked-in
 `artifacts/edger-training/recovery/edger_scaling_recovery_v1.json`. It pins
 every source S3 URI, object version, SHA-256, binding, metric, suite checksum,
-and failure reason. The corrected recovery targets
-`campaigns/20260903-v2-recovery`; both the failed source campaign and the
-consumed `20260810-v2-recovery` prefix stay immutable. The corrected schema pin
-and lossless content-hash check require a new reviewed SHA before dispatch.
+and failure reason. The canonical-schema correction targets the fresh
+`campaigns/20260904-v2-recovery`; failed `20260903-v2-recovery`, the source
+campaign, and consumed `20260810-v2-recovery` stay immutable. The corrected
+schema pin and lossless content-hash check require a new reviewed SHA before
+dispatch.
 
 ```bash
 npm run edger:campaign:remote -- launch \
-  --campaign-uri s3://edge-royale-edger-904869824856-ap-southeast-2/campaigns/20260903-v2-recovery \
+  --campaign-uri s3://edge-royale-edger-904869824856-ap-southeast-2/campaigns/20260904-v2-recovery \
   --git-sha <full-reviewed-sha> \
   --target-stage full-cache \
   --scaling-recovery-manifest artifacts/edger-training/recovery/edger_scaling_recovery_v1.json \

@@ -31,8 +31,8 @@ The simulator remains the source of truth. Training episodes and workers use the
 
 ## Current roadmap
 
-1. Review and merge the cache schema-pin/lossless-hash correction; record a new full reviewed main-branch SHA. The August recovery passed scaling but failed full-cache; preserve its consumed prefix.
-2. Confirm `campaigns/20260903-v2-recovery` is empty and no matching runner is active; dispatch `full-cache`; verify scaling/full-cache markers, cache checksum, instance/volume deletion.
+1. Review and merge the canonical decision-cache schema correction; record a new full reviewed main-branch SHA. Preserve the consumed August and September prefixes.
+2. Confirm `campaigns/20260904-v2-recovery` is empty and no matching runner is active; dispatch `full-cache`; verify scaling/full-cache markers, cache checksum, instance/volume deletion.
 3. Dispatch `offline`; require current campaign SHA, recovered parent `edger_v2_bc_418be44c61fba9b1`, validation KL at most `0.05`, cleanup.
 4. Dispatch `full-evaluation`; resume through live-v1 reference, isolated league smoke/production, QA, throughput, evaluator.
 5. Dispatch `promote` only after full evaluation and zero active runners; manually review generated PR.

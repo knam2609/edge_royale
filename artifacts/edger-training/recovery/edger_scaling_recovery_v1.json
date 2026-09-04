@@ -15,7 +15,7 @@
     ]
   },
   "target": {
-    "campaign_uri": "s3://edge-royale-edger-904869824856-ap-southeast-2/campaigns/20260903-v2-recovery"
+    "campaign_uri": "s3://edge-royale-edger-904869824856-ap-southeast-2/campaigns/20260904-v2-recovery"
   },
   "failed_attempt": {
     "uri": "s3://edge-royale-edger-904869824856-ap-southeast-2/campaigns/20260718-v2-first/status/attempts/scaling-2026-07-27T03-18-54-545Z.json",
@@ -120,8 +120,8 @@
         "validation": 59529,
         "test": 58202
       },
-      "schema_version": "edger_decision_parquet_v1",
-      "schema_sha256": "db321aeefdb97390989837f6427657a422978f2449b5711c5a60973a2e11c811",
+      "schema_version": "edger_decision_parquet_v2",
+      "schema_sha256": "3623ade0a47e7b66b64f46581788b2dda46cee2b78b6b02c3ceeae34c11e2f5a",
       "compression": "zstd",
       "row_group_size": 256
     },

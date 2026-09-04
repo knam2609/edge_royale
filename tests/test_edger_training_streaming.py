@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import pyarrow as pa
 import pyarrow.parquet as pq
 import torch
 
@@ -44,31 +45,38 @@ def run_training(
 def decision_row(index: int, split: str) -> dict[str, object]:
     return {
         "episode_id": f"episode-{index:04d}",
-        "actor": "red",
         "tick": index + 1,
+        "actor": "red",
+        "opponent_stratum": "edger_heuristic",
         "board": [0.0] * (32 * 18 * 24),
         "global": [0.0] * 96,
         "legal_masks": {
-            "card": [True] * 9,
-            "placement": [True] * (32 * 18),
-            "delay": [True] * 200,
+            "card": [1] * 9,
+            "placement": [1] * (32 * 18),
+            "delay": [1] * 200,
         },
         "selected": {
             "card_index": 0,
             "placement_index": 0,
             "delay_index": 0,
         },
+        "delay_ticks": 1,
+        "reward": 0.0,
         "discounted_return": 0.0,
-        "sample_weight": 1.0,
-        "opponent_stratum": "edger_heuristic",
+        "behavior_log_probability": -6.0,
+        "vtrace_eligible": True,
+        "source_kind": "simulator",
         "is_winner": False,
+        "policy_id": "edger_v2_test",
+        "policy_checkpoint_id": "checkpoint-test",
         "policy_league_rating": None,
         "split": split,
-        "vtrace_eligible": True,
-        "behavior_log_probability": -6.0,
-        "delay_ticks": 1,
+        "result_winner": "blue",
+        "compatibility_cohort": "test-cohort",
+        "reward_version": "edger_potential_reward_v1",
         "per_tick_gamma": 0.9997,
-        "reward": 0.0,
+        "balance_stratum": "simulator|edger_heuristic|loss",
+        "sample_weight": 1.0,
     }
 
 
@@ -214,8 +222,25 @@ class StreamingTrainingTest(unittest.TestCase):
             self.validate_cache(output, report["parquet_schema_sha256"])
         self.assertIn("logical replay-derived content mismatch", rejected.exception.stderr)
 
+    def test_prepare_accepts_late_fractional_behavior_log_probability(self) -> None:
+        rows = [recovery_decision_row(index) for index in range(257)]
+        rows[-1]["behavior_log_probability"] = -0.25
+        output = self.root / "league-mixed.parquet"
+        report = json.loads(self.prepare(rows, output).read_text())
+        persisted = pq.read_table(output).to_pylist()
+
+        self.assertEqual(
+            pq.ParquetFile(output).schema_arrow.field("behavior_log_probability").type,
+            pa.float64(),
+        )
+        self.assertEqual(persisted[-1]["behavior_log_probability"], -0.25)
+        self.assertEqual(persisted, rows)
+        self.assertTrue(
+            self.validate_cache(output, report["parquet_schema_sha256"])["passed"]
+        )
+
     def test_prepare_rejects_late_lossy_casts_and_dropped_fields(self) -> None:
-        for key, value in [("behavior_log_probability", -0.25), ("late_field", 1)]:
+        for key, value in [("delay_ticks", 1.25), ("late_field", 1)]:
             with self.subTest(key=key):
                 rows = [recovery_decision_row(index) for index in range(257)]
                 rows[-1][key] = value
@@ -293,16 +318,7 @@ class StreamingTrainingTest(unittest.TestCase):
         }
 
     def test_prepare_writes_stable_256_row_groups_without_changing_rows(self) -> None:
-        rows = [
-            {
-                "ordinal": index,
-                "split": ["train", "validation", "test"][index % 3],
-                "sample_weight": 0.5 + index,
-                "legal_masks": {"card": [True, False, True]},
-                "selected": {"card_index": index % 3},
-            }
-            for index in range(257)
-        ]
+        rows = [recovery_decision_row(index) for index in range(257)]
         output = self.root / "logical.parquet"
         build_report = self.prepare(rows, output)
         parquet = pq.ParquetFile(output)

@@ -178,19 +178,22 @@ train/validation/test counts, exact schema, Zstd compression, 256-row groups,
 and logical content against replay-derived build stream. Parquet is durable only
 in this stage; later stages download marker-bound checksum.
 
-The recovery cache's persisted schema checksum is
-`db321aeefdb97390989837f6427657a422978f2449b5711c5a60973a2e11c811`:
+The recovery cache's canonical v2 persisted schema checksum is
+`3623ade0a47e7b66b64f46581788b2dda46cee2b78b6b02c3ceeae34c11e2f5a`:
 SHA-256 of canonical JSON for the ordered `{name, type, nullable}` field
 descriptors read back from Parquet, excluding metadata. The first 256 production
 rows and retained smoke caches reproduce this schema with PyArrow 17 and 21.
-The previous `92c06e...` pin was incorrect; the August 11 full-cache attempt
-therefore failed after building all 593,576 rows. Its evidence stays under
-`campaigns/20260810-v2-recovery`; corrected code targets the fresh
-`campaigns/20260903-v2-recovery` prefix with a new reviewed SHA and recovery
-manifest checksum. Source artifact versions, checksums, and scaling metrics
-remain unchanged.
+The previous inferred v1 schema stored integer/null behavior probabilities and
+could not losslessly append fractional league probabilities. The September 4
+full-evaluation attempt therefore stopped during league dataset preparation.
+Its evidence stays under `campaigns/20260903-v2-recovery`; canonical-schema code
+targets fresh `campaigns/20260904-v2-recovery` with a new reviewed SHA and
+recovery-manifest checksum. Source artifact versions, checksums, and scaling
+metrics remain unchanged.
 
-Build-time logical hashing uses each bounded Arrow row group's normalized
+The v2 schema fixes field order and types before the first row group, including
+nullable float64 behavior probability and policy league rating. Build-time
+logical hashing uses each bounded Arrow row group's normalized
 values only after verifying value equality with the original replay-derived
 rows. This accepts lossless JSON numeric representation changes (`0` to `0.0`)
 but rejects truncation, dropped fields, or other value changes. Validation hashes
@@ -321,7 +324,7 @@ npm run edger:scaling:recover -- \
   --manifest artifacts/edger-training/recovery/edger_scaling_recovery_v1.json \
   --out-dir <temporary-directory> \
   --target-git-sha <full-reviewed-sha> \
-  --campaign-uri s3://edge-royale-edger-904869824856-ap-southeast-2/campaigns/20260903-v2-recovery
+  --campaign-uri s3://edge-royale-edger-904869824856-ap-southeast-2/campaigns/20260904-v2-recovery
 ```
 
 ## 8. Promotion gate

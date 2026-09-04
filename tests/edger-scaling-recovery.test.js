@@ -116,11 +116,11 @@ test("valid checksum-bound recovery evidence passes", () => {
 
 test("corrected cache contract uses a fresh immutable campaign prefix", () => {
   assert.equal(checkedInRecovery.target.campaign_uri, RECOVERY_CAMPAIGN_URI);
-  assert.ok(RECOVERY_CAMPAIGN_URI.endsWith("/20260903-v2-recovery"));
+  assert.ok(RECOVERY_CAMPAIGN_URI.endsWith("/20260904-v2-recovery"));
   assert.equal(checkedInRecovery.expected.cache.schema_sha256,
-    "db321aeefdb97390989837f6427657a422978f2449b5711c5a60973a2e11c811");
+    "3623ade0a47e7b66b64f46581788b2dda46cee2b78b6b02c3ceeae34c11e2f5a");
   const oldTarget = structuredClone(checkedInRecovery);
-  oldTarget.target.campaign_uri = RECOVERY_CAMPAIGN_URI.replace("20260903", "20260810");
+  oldTarget.target.campaign_uri = RECOVERY_CAMPAIGN_URI.replace("20260904", "20260903");
   assert.throws(() => validateRecoveryManifest(oldTarget), /recovery target must remain/);
   const healthWorkflow = fs.readFileSync(".github/workflows/edger-corpus-health.yml", "utf8");
   assert.match(healthWorkflow, /process\.stdout\.write\(r\.target\.campaign_uri\)/);
