@@ -57,7 +57,56 @@ ADVANTAGE_TEMPERATURE = 0.25
 ADVANTAGE_WEIGHT_MIN = 0.1
 ADVANTAGE_WEIGHT_MAX = 20.0
 PARQUET_ROW_GROUP_SIZE = 256
+DECISION_PARQUET_SCHEMA_VERSION = "edger_decision_parquet_v2"
 SCALING_REPORT_SCHEMA = "edger_data_scaling_report_v2"
+
+DECISION_CACHE_SCHEMA = pa.schema(
+    [
+        pa.field("episode_id", pa.string()),
+        pa.field("tick", pa.int64()),
+        pa.field("actor", pa.string()),
+        pa.field("opponent_stratum", pa.string()),
+        pa.field("board", pa.list_(pa.float64())),
+        pa.field("global", pa.list_(pa.float64())),
+        pa.field(
+            "legal_masks",
+            pa.struct(
+                [
+                    pa.field("card", pa.list_(pa.int64())),
+                    pa.field("delay", pa.list_(pa.int64())),
+                    pa.field("placement", pa.list_(pa.int64())),
+                ]
+            ),
+        ),
+        pa.field(
+            "selected",
+            pa.struct(
+                [
+                    pa.field("card_index", pa.int64()),
+                    pa.field("delay_index", pa.int64()),
+                    pa.field("placement_index", pa.int64()),
+                ]
+            ),
+        ),
+        pa.field("delay_ticks", pa.int64()),
+        pa.field("reward", pa.float64()),
+        pa.field("discounted_return", pa.float64()),
+        pa.field("behavior_log_probability", pa.float64()),
+        pa.field("vtrace_eligible", pa.bool_()),
+        pa.field("source_kind", pa.string()),
+        pa.field("is_winner", pa.bool_()),
+        pa.field("policy_id", pa.string()),
+        pa.field("policy_checkpoint_id", pa.string()),
+        pa.field("policy_league_rating", pa.float64()),
+        pa.field("split", pa.string()),
+        pa.field("result_winner", pa.string()),
+        pa.field("compatibility_cohort", pa.string()),
+        pa.field("reward_version", pa.string()),
+        pa.field("per_tick_gamma", pa.float64()),
+        pa.field("balance_stratum", pa.string()),
+        pa.field("sample_weight", pa.float64()),
+    ]
+)
 
 
 def canonical_json(value: Any) -> str:
@@ -1307,18 +1356,15 @@ def run_prepare(args: argparse.Namespace) -> None:
         if not pending:
             return
         if arrow_schema is None:
-            table = pa.Table.from_pylist(pending)
-            metadata = dict(table.schema.metadata or {})
-            metadata.update(
+            arrow_schema = DECISION_CACHE_SCHEMA.with_metadata(
                 {
-                    b"schema_version": b"edger_decision_parquet_v1",
+                    b"schema_version": DECISION_PARQUET_SCHEMA_VERSION.encode(),
                     b"manifest_hash": args.manifest_hash.encode(),
                     b"scale": str(args.scale).encode(),
                     b"compression": b"zstd",
                     b"row_group_size": str(PARQUET_ROW_GROUP_SIZE).encode(),
                 }
             )
-            arrow_schema = table.schema.with_metadata(metadata)
             writer = pq.ParquetWriter(
                 partial,
                 arrow_schema,
@@ -1373,7 +1419,7 @@ def run_prepare(args: argparse.Namespace) -> None:
         "bytes": output.stat().st_size,
         "manifest_hash": args.manifest_hash,
         "scale": args.scale,
-        "parquet_schema_version": "edger_decision_parquet_v1",
+        "parquet_schema_version": DECISION_PARQUET_SCHEMA_VERSION,
         "parquet_schema_sha256": parquet_schema_sha256(persisted_schema),
         "logical_content_sha256": logical_content.hexdigest(),
         "compression": "zstd",
@@ -1393,7 +1439,7 @@ def run_validate_cache(args: argparse.Namespace) -> None:
     parquet = pq.ParquetFile(dataset)
     metadata = parquet_metadata(dataset)
     expected_metadata = {
-        "schema_version": "edger_decision_parquet_v1",
+        "schema_version": DECISION_PARQUET_SCHEMA_VERSION,
         "manifest_hash": args.manifest_hash,
         "scale": "1.0",
         "compression": "zstd",
