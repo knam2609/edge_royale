@@ -31,11 +31,11 @@ The simulator remains the source of truth. Training episodes and workers use the
 
 ## Current roadmap
 
-1. Review and merge the canonical decision-cache schema correction; record a new full reviewed main-branch SHA. Preserve the consumed August and September prefixes.
-2. Confirm `campaigns/20260904-v2-recovery` is empty and no matching runner is active; dispatch `full-cache`; verify scaling/full-cache markers, cache checksum, instance/volume deletion.
-3. Dispatch `offline`; require current campaign SHA, recovered parent `edger_v2_bc_418be44c61fba9b1`, validation KL at most `0.05`, cleanup.
-4. Dispatch `full-evaluation`; resume through live-v1 reference, isolated league smoke/production, QA, throughput, evaluator.
-5. Dispatch `promote` only after full evaluation and zero active runners; manually review generated PR.
+1. Runtime cost for the confirmed three learned-trained checkpoints is reviewed. The October 24 [runtime review](EDGER_RUNTIME_REVIEW.md) accepts the complete-path and warm frame costs measured in the October 17 [local results](EDGER_RUNTIME_COST_RESULTS.md) for desktop at 60 Hz, under both controllers. Mobile and reference-host costs are not accepted. Next, complete local tactical, numerical-parity and candidate-quality work following [the full-evaluation diagnosis](EDGER_EVALUATION_DIAGNOSIS.md). Prepare the bounded timing-only reference-host request for separate approval when the budget allows. The September 4 recovery campaign failed five final gates; preserve it unchanged.
+2. Review the V-trace target-freshness, tactical-fixture, evaluator-preflight, and runtime-performance fixes. Obtain explicit approval before committing or any cloud action.
+3. Prepare a new immutable SHA/prefix and compatible fresh-scaling campaign path. The existing recovery guard intentionally rejects changed `src/ai/v2` paths; do not bypass it.
+4. After local preflight passes, request approval for a bounded cloud pilot, then separately for full evaluation with exact artifacts and unchanged thresholds.
+5. Consider manual promotion only after a matching passed full-evaluation marker and verified cleanup; review an unmerged PR separately.
 
 ## Quality gates
 
@@ -62,7 +62,7 @@ V2-specific implemented checks:
 - immutable checkpoint lineage
 - clean full-Git-SHA provenance for collection and training
 - bounded-memory two-pass dataset generation and 256-row Parquet groups
-- deterministic row-group/batch training and episode-grouped V-trace targets
+- deterministic BC/offline row-group training and V-trace targets refreshed before every episode update
 - strict ten-shard aggregation and parallel full-corpus verification
 - Git-SHA-bound external QA reports and immutable remote stage status
 

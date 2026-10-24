@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
+import copy
 import json
+import math
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -16,6 +20,10 @@ import torch
 
 ROOT = Path(__file__).resolve().parents[1]
 TRAINING_SCRIPT = ROOT / "scripts" / "edger-v2-training.py"
+spec = importlib.util.spec_from_file_location("edger_training", TRAINING_SCRIPT)
+training = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = training
+spec.loader.exec_module(training)
 
 
 def canonical_json(value: object) -> str:
@@ -115,7 +123,7 @@ def recovery_decision_row(index: int) -> dict[str, object]:
     }
 
 
-class StreamingTrainingTest(unittest.TestCase):
+class TrainingFixture(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory(prefix="edger-streaming-test-")
         self.root = Path(self.temporary.name)
@@ -182,6 +190,8 @@ class StreamingTrainingTest(unittest.TestCase):
         )
         return json.loads(validation.read_text())
 
+
+class StreamingTrainingTest(TrainingFixture):
     def test_recovery_cache_matches_independently_pinned_schema(self) -> None:
         rows = [recovery_decision_row(index) for index in range(257)]
         output = self.root / "recovery.parquet"
@@ -529,14 +539,207 @@ class StreamingTrainingTest(unittest.TestCase):
             cwd=self.git_root,
         )
         vtrace_payload = torch.load(vtrace, map_location="cpu", weights_only=False)
-        self.assertTrue(
-            vtrace_payload["metrics"]["vtrace"]["episode_grouped_target_parquet"],
-        )
         self.assertEqual(
-            vtrace_payload["metrics"]["vtrace"]["target_row_group_size"],
-            256,
+            vtrace_payload["metrics"]["vtrace"]["target_refresh"],
+            "before_each_episode_update",
         )
+        self.assertEqual(vtrace_payload["metrics"]["vtrace"]["optimizer_updates"], 6)
         self.assertEqual(vtrace_payload["metrics"]["train_samples"], 6)
+        # A bounded learner comparison needs the pre-clip gradient norm of every
+        # episode update, not only the fact that training finished.
+        gradients = vtrace_payload["metrics"]["vtrace"]["gradient_norms_per_epoch"]
+        self.assertEqual(len(gradients), 1)
+        self.assertEqual(gradients[0]["epoch"], 0)
+        self.assertEqual(gradients[0]["updates"], 6)
+        self.assertTrue(gradients[0]["all_finite"])
+        self.assertEqual(gradients[0]["clip_threshold"], 1.0)
+        self.assertGreaterEqual(gradients[0]["maximum"], gradients[0]["mean"])
+        self.assertGreaterEqual(gradients[0]["mean"], gradients[0]["minimum"])
+        self.assertGreaterEqual(gradients[0]["minimum"], 0.0)
+        self.assertLessEqual(gradients[0]["clipped_updates"], 6)
+
+
+class VtraceFreshnessTest(unittest.TestCase):
+    def test_targets_refresh_after_each_update_and_microbatches_do_not_step(self):
+        torch.set_num_threads(1)
+        training.seed_everything(91)
+        model = training.EdgerV2Policy(1)
+        full_batch_model = copy.deepcopy(model)
+        rows = [decision_row(index, "train") for index in range(5)]
+        for row in rows:
+            row["episode_id"] = "one-trajectory"
+            row["reward"] = -0.1
+        optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
+        full_optimizer = torch.optim.SGD(full_batch_model.parameters(), lr=0.1)
+        options = dict(value_loss_weight=0.5, entropy_bonus=0.001)
+        vocab, device = {"edger_heuristic": 0}, torch.device("cpu")
+        snapshots = []
+        attach = training.attach_vtrace_targets
+
+        def capture(*args):
+            targets = attach(*args)
+            snapshots.append([row["target_log_probability_before_update"] for row in targets])
+            return targets
+
+        with mock.patch.object(training, "attach_vtrace_targets", side_effect=capture), \
+                mock.patch.object(optimizer, "step", wraps=optimizer.step) as step:
+            update = training.train_vtrace_episode(model, rows, vocab, 2, device, optimizer, **options)
+            self.assertEqual(step.call_count, 1)
+            self.assertEqual(update["samples"], 5)
+            self.assertTrue(math.isfinite(update["gradient_norm"]))
+            full_update = training.train_vtrace_episode(
+                full_batch_model, rows, vocab, 5, device, full_optimizer, **options
+            )
+            # Microbatched accumulation must also report the same pre-clip norm
+            # as the equivalent single-batch update.
+            self.assertAlmostEqual(
+                update["gradient_norm"], full_update["gradient_norm"], places=5
+            )
+            for name, value in model.state_dict().items():
+                torch.testing.assert_close(value, full_batch_model.state_dict()[name], rtol=1e-5, atol=1e-7)
+            training.train_vtrace_episode(model, rows, vocab, 2, device, optimizer, **options)
+            self.assertEqual(step.call_count, 2)
+            self.assertNotEqual(snapshots[0], snapshots[2])
+
+    def test_negative_advantage_is_reweighted_by_current_policy(self):
+        class TinyPolicy(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.card = torch.nn.Parameter(torch.zeros(9))
+
+            def actor_logits(self, board, global_features, selected_card, selected_placement):
+                size = board.shape[0]
+                return {
+                    "card": self.card.expand(size, -1),
+                    "placement": torch.zeros(size, 576),
+                    "delay": torch.zeros(size, 200),
+                    "fused": torch.zeros(size, 1),
+                }
+
+            def value(self, fused, stratum):
+                return fused[:, 0]
+
+        torch.set_num_threads(1)
+        model = TinyPolicy()
+        optimizer = torch.optim.SGD(model.parameters(), lr=1)
+        row = decision_row(0, "train")
+        row["reward"] = -1.0
+        row["behavior_log_probability"] = -float(torch.log(torch.tensor(9.0 * 200)))
+        vocab, device = {"edger_heuristic": 0}, torch.device("cpu")
+        initial = training.attach_vtrace_targets(model, [row], vocab, 1, device)[0]
+        for _ in range(100):
+            training.train_vtrace_episode(model, [row], vocab, 1, device, optimizer,
+                                         value_loss_weight=0, entropy_bonus=0)
+        final = training.attach_vtrace_targets(model, [row], vocab, 1, device)[0]
+        # Reusing the initial advantage would keep a near-unit gradient even
+        # after the rejected action becomes vanishingly unlikely.
+        self.assertLess(abs(final["vtrace_advantage"]), abs(initial["vtrace_advantage"]) / 50)
+        self.assertGreater(final["target_log_probability_before_update"], -15)
+
+
+class LogitScaleMetricTest(TrainingFixture):
+    def _validation(self, model: "training.EdgerV2Policy") -> dict[str, object]:
+        rows = [
+            decision_row(index, "train" if index < 4 else "validation")
+            for index in range(6)
+        ]
+        dataset = self.root / "logit-scale.parquet"
+        self.prepare(rows, dataset)
+        return training.evaluate_loss_parquet(
+            model,
+            dataset,
+            "validation",
+            {"edger_heuristic": 0},
+            2,
+            torch.device("cpu"),
+        )
+
+    def test_validation_reports_a_logit_scale_warning(self) -> None:
+        torch.set_num_threads(1)
+        training.seed_everything(23)
+        model = training.EdgerV2Policy(1).eval()
+        conditioned = self._validation(model)
+        self.assertLess(
+            conditioned["maximum_legal_logit_magnitude"],
+            training.LOGIT_SCALE_WARNING_MAGNITUDE,
+        )
+        self.assertFalse(conditioned["logit_scale_warning"])
+
+        # A shared bias raises magnitude without changing softmax probabilities.
+        # This merits a scale warning, not a conclusion that parity is impossible.
+        with torch.no_grad():
+            model.delay_head.bias.add_(1_000.0)
+        diverged = self._validation(model)
+        self.assertGreater(
+            diverged["maximum_legal_logit_magnitude"],
+            training.LOGIT_SCALE_WARNING_MAGNITUDE,
+        )
+        self.assertTrue(diverged["logit_scale_warning"])
+        self.assertEqual(diverged["logit_scale_warning_threshold"], training.LOGIT_SCALE_WARNING_MAGNITUDE)
+
+    def test_logit_scale_warning_estimate_follows_the_absolute_tolerance(self) -> None:
+        self.assertEqual(training.PARITY_ABSOLUTE_TOLERANCE, 1e-5)
+        self.assertAlmostEqual(training.LOGIT_SCALE_WARNING_MAGNITUDE, 83.886, places=3)
+
+
+class ActorExportFidelityTest(unittest.TestCase):
+    def _checkpoint(self) -> dict[str, object]:
+        return {
+            "checkpoint_id": "edger_v2_bc_export_fidelity",
+            "phase": "bc",
+            "seed": 11,
+            "git_commit": "0" * 40,
+            "parent_checkpoint": None,
+            "manifest_hash": "a" * 64,
+            "dataset_checksum": "b" * 64,
+            "environment": {"python": "test"},
+            "metrics": {},
+        }
+
+    def _model(self) -> "training.EdgerV2Policy":
+        torch.set_num_threads(1)
+        training.seed_everything(17)
+        model = training.EdgerV2Policy(1)
+        # Weights this small lost trained digits under the old eight-decimal
+        # export, which is exactly the range conv1 occupies after training.
+        with torch.no_grad():
+            model.conv1.weight.view(-1)[0] = 5.8231e-06
+            model.conv1.weight.view(-1)[1] = -1.234567891e-03
+            model.delay_head.weight.view(-1)[0] = 9.87654321e-05
+        return model.eval()
+
+    def test_exported_actor_reloads_as_the_trained_float32_weights(self) -> None:
+        model = self._model()
+        payload = training.export_model_payload(self._checkpoint(), model, None)
+        reloaded = training.load_actor_payload(payload)
+        trained = dict(model.named_parameters())
+        for name, parameter in reloaded.named_parameters():
+            if name.startswith(("value_head", "value_stratum")):
+                continue
+            self.assertTrue(
+                torch.equal(trained[name].detach(), parameter.detach()),
+                f"{name} did not reload as the trained float32 weights",
+            )
+        encoded = (json.dumps(payload, sort_keys=True, indent=2) + "\n").encode()
+        self.assertLessEqual(len(encoded), 1_000_000)
+
+    def test_eight_decimal_rounding_is_rejected_as_a_lossy_export(self) -> None:
+        model = self._model()
+        with mock.patch.object(training, "float32_json", lambda value: round(float(value), 8)):
+            with self.assertRaises(ValueError) as caught:
+                training.export_model_payload(self._checkpoint(), model, None)
+        self.assertIn("lossy", str(caught.exception))
+
+    def test_float32_json_round_trips_every_trained_weight(self) -> None:
+        model = self._model()
+        values = [
+            float(value)
+            for parameter in training.actor_parameters(model)
+            for value in parameter.detach().cpu().flatten()
+        ]
+        encoded = [training.float32_json(value) for value in values]
+        reloaded = torch.tensor(encoded, dtype=torch.float32).tolist()
+        self.assertEqual(values, reloaded)
 
 
 if __name__ == "__main__":

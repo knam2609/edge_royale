@@ -14,3 +14,4 @@ artifacts/training/*
 !artifacts/training/promoted/**
 .DS_Store
 .playwright-cli/
+__pycache__/

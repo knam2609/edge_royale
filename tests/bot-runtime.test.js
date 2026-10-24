@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   EDGER_BOT_ID,
   HEURISTIC_BOT_ID,
+  actionSortKey,
   enumerateLegalCardActions,
   evaluateSpellAction,
   getBotConfig,
@@ -13,6 +14,7 @@ import {
   selectBotDecision,
   selectEdgerAction,
   selectHeuristicAction,
+  warmUpBotDecision,
 } from "../src/ai/botRuntime.js";
 import { createEdgerV2BootstrapModel } from "../src/ai/v2/policy.js";
 import { EDGER_POLICY_MODEL } from "../src/ai/generated/edgerPolicyCurrent.js";
@@ -21,6 +23,8 @@ import { FIREBALL_CONFIG } from "../src/sim/config.js";
 import { createEngine } from "../src/sim/engine.js";
 import { ROYALE_LANE_X, ROYALE_TOWER_X, ROYALE_TOWER_Y, createArena, createRoyaleArena } from "../src/sim/map.js";
 import { createTower, createTroop } from "../src/sim/entities.js";
+import { createProductionEngine } from "../src/sim/productionMatch.js";
+import { createRng } from "../src/sim/random.js";
 import { getTowerStats } from "../src/sim/stats.js";
 
 function makeCardState(redHand, blueHand = ["giant", "knight", "archers", "arrows"]) {
@@ -53,6 +57,43 @@ function makeEngine(redHand, { blueHand, blueElixir = 5 } = {}) {
   engine.state.elixir.blue.elixir = blueElixir;
   engine.state.elixir.red.elixir = 10;
   return engine;
+}
+
+// Heuristic blue against the given red bot on a production engine, the way the
+// browser loop schedules decisions. Records every decision for both actors.
+function playProductionMatch({ redBotId, edgerModel, seed = 314, ticks = 400 }) {
+  const engine = createProductionEngine({ seed });
+  const bots = {
+    blue: { botId: HEURISTIC_BOT_ID, rng: createRng(seed ^ 0x9e3779b9), nextTick: 1 },
+    red: { botId: redBotId, rng: createRng(seed ^ 0x5f3759df), nextTick: 1 },
+  };
+  const decisions = [];
+  const legalActionKeys = [];
+  for (let tick = 1; tick <= ticks && !engine.getMatchResult(); tick += 1) {
+    const actions = [];
+    for (const actor of ["blue", "red"]) {
+      const legalActions = enumerateLegalCardActions({ engine, actor });
+      legalActionKeys.push(legalActions.map(actionSortKey));
+      const bot = bots[actor];
+      if (tick < bot.nextTick) {
+        continue;
+      }
+      const decision = selectBotDecision({ botId: bot.botId, engine, actor, legalActions, rng: bot.rng, edgerModel });
+      bot.nextTick = tick + decision.delayTicks;
+      decisions.push([tick, actor, JSON.stringify(decision.action ?? null), decision.delayTicks]);
+      if (decision.action?.type === "PLAY_CARD") {
+        const { cardId, x, y } = decision.action;
+        actions.push({ tick, type: "PLAY_CARD", actor, cardId, x, y });
+      }
+    }
+    engine.step(actions);
+  }
+  return {
+    decisions,
+    legalActionKeys,
+    stateHash: engine.getStateHash(),
+    nextRedRandom: bots.red.rng(),
+  };
 }
 
 function makeRoyaleEngine(redHand, { blueLeftHp = getTowerStats("crown").hp, blueRightHp = getTowerStats("crown").hp } = {}) {
@@ -132,6 +173,24 @@ function makeTieModel() {
   model.weights.scorer.bias = [0];
   return model;
 }
+
+test("enumerateLegalCardActions orders live match actions by strictly increasing sort key", () => {
+  const { legalActionKeys } = playProductionMatch({ redBotId: HEURISTIC_BOT_ID, ticks: 1200 });
+  const cardsSeen = new Set();
+
+  for (const keys of legalActionKeys) {
+    for (let index = 1; index < keys.length; index += 1) {
+      // Unique, strictly increasing keys admit exactly one sorted order, so any
+      // stable sort by these keys returns the same list.
+      assert.ok(keys[index - 1].localeCompare(keys[index]) < 0, `${keys[index - 1]} !< ${keys[index]}`);
+    }
+    for (const key of keys) {
+      cardsSeen.add(key.split("|")[0]);
+    }
+  }
+  assert.ok(legalActionKeys.some((keys) => keys.length > 100));
+  assert.ok(["giant", "knight", "arrows", "fireball"].every((cardId) => cardsSeen.has(cardId)));
+});
 
 test("Edger returns a legal action when one is available", () => {
   const engine = makeEngine(["giant", "knight", "arrows", "fireball"]);
@@ -220,6 +279,28 @@ test("v2 Edger runtime honors the model-selected decision delay", () => {
   assert.deepEqual(decision.action, { type: "PASS" });
   assert.equal(decision.delayTicks, 200);
 });
+
+for (const [label, makeModel] of [
+  ["v1", () => JSON.parse(JSON.stringify(EDGER_POLICY_MODEL))],
+  ["v2", () => createEdgerV2BootstrapModel()],
+]) {
+  test(`warmUpBotDecision leaves ${label} Edger decisions, state and random stream unchanged`, () => {
+    // Fresh model objects start with cold model caches, as on page load.
+    const cold = playProductionMatch({ redBotId: EDGER_BOT_ID, edgerModel: makeModel() });
+
+    const warmedModel = makeModel();
+    const disposable = createProductionEngine();
+    const disposableHash = disposable.getStateHash();
+    warmUpBotDecision({ botId: EDGER_BOT_ID, engine: disposable, edgerModel: warmedModel });
+    assert.equal(disposable.getStateHash(), disposableHash);
+    const warmed = playProductionMatch({ redBotId: EDGER_BOT_ID, edgerModel: warmedModel });
+
+    assert.ok(cold.decisions.some(([, actor]) => actor === "red"));
+    assert.deepEqual(warmed.decisions, cold.decisions);
+    assert.equal(warmed.stateHash, cold.stateHash);
+    assert.equal(warmed.nextRedRandom, cold.nextRedRandom);
+  });
+}
 
 test("Edger ML deterministic tie-break chooses the stable action-sort key", () => {
   const engine = makeEngine(["knight", "giant", "arrows", "fireball"]);

@@ -281,6 +281,11 @@ function runConv(input, layer) {
           const kernel = compiledKernels[kernelY * layer.kernel_size + kernelX];
           for (let inputChannel = 0; inputChannel < layer.input_channels; inputChannel += 1) {
             const inputValue = input[sourceBase + inputChannel];
+            // Observations and ReLU activations are sparse. Skipping exact zero
+            // products preserves accumulation order for every nonzero term.
+            if (inputValue === 0) {
+              continue;
+            }
             const weightBase = inputChannel * layer.output_channels;
             for (let outputChannel = 0; outputChannel < layer.output_channels; outputChannel += 1) {
               accumulator[outputChannel] +=

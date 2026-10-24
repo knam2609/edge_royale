@@ -15,7 +15,11 @@ import {
   validateEdgerV2PolicyModel,
 } from "../src/ai/v2/policy.js";
 import { createProductionEngine } from "../src/sim/productionMatch.js";
-import { checkCandidateParity } from "../scripts/edger-v2-evaluation-core.mjs";
+import {
+  buildCandidateParityFixtures,
+  checkCandidateParity,
+  float32Ulp,
+} from "../scripts/edger-v2-evaluation-core.mjs";
 import { spawnNativePython } from "../scripts/python-runtime.mjs";
 
 function addSparseNonzeroWeights(model) {
@@ -144,5 +148,162 @@ test("candidate parity compares computed argmax when the forced fixture card is 
   assert.equal(parity.passed, true, JSON.stringify(parity));
   assert.equal(parity.js_argmax.card, 1);
   assert.equal(parity.pytorch_argmax.card, 1);
+  assert.equal(parity.heads.card.maximum_legal_logit_magnitude, 10);
+  assert.ok(parity.heads.card.maximum_logit_difference <= 1e-5);
   fs.rmSync(root, { recursive: true, force: true });
+});
+
+function denseWeights(model, scale = 1) {
+  let seed = 91;
+  const weight = () => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    return (seed / 4294967296 - 0.5) * 0.25;
+  };
+  for (const layer of Object.values(model.weights)) {
+    for (const values of Array.isArray(layer) ? [layer] : [layer.weights, layer.bias]) {
+      values.forEach((_, index) => { values[index] = weight(); });
+    }
+  }
+  for (const head of ["card_head", "placement_scorer", "delay_head"]) {
+    const layer = model.weights[head];
+    layer.weights.forEach((value, index) => { layer.weights[index] = value * scale; });
+    layer.bias.forEach((value, index) => { layer.bias[index] = value * scale; });
+  }
+  return model;
+}
+
+test("dense nonzero v2 weights retain the strict absolute parity tolerance", { timeout: 60_000 }, () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "edger-v2-dense-parity-"));
+  try {
+    const model = denseWeights(createEdgerV2BootstrapModel());
+    const modelPath = path.join(root, "dense.json");
+    fs.writeFileSync(modelPath, JSON.stringify(model));
+    const parity = checkCandidateParity(modelPath, model);
+    assert.equal(parity.passed, true, JSON.stringify(parity.reason ?? null));
+    assert.equal(parity.tolerance, 1e-5);
+    assert.ok(parity.card_indices_covered.some((index) => index > 0));
+    for (const head of ["card", "placement", "delay"]) {
+      assert.ok(parity.heads[head].maximum_logit_difference <= 1e-5);
+    }
+    assert.ok(parity.fixtures.every((fixture) => fixture.argmax_agreement));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("matching argmax does not excuse large absolute logit error", { timeout: 30_000 }, () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "edger-v2-parity-reject-"));
+  try {
+    const model = createEdgerV2BootstrapModel();
+    model.weights.conv3.bias[0] = 0.1;
+    model.weights.fusion.weights[0] = 10_000;
+    model.weights.card_head.weights[0] = 1;
+    const modelPath = path.join(root, "amplified.json");
+    fs.writeFileSync(modelPath, JSON.stringify(model));
+    const parity = checkCandidateParity(modelPath, model);
+    assert.equal(parity.argmax_agreement, true);
+    assert.ok(parity.maximum_logit_difference > 1e-5);
+    assert.equal(parity.passed, false);
+    const worst = parity.worst_absolute_error;
+    assert.equal(worst.absolute_difference, parity.maximum_logit_difference);
+    assert.equal(worst.ulp_error, worst.absolute_difference / worst.float32_ulp);
+    assert.match(parity.reason, /exceeded tolerance/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("parity covers mid-match states, not only the opening position", () => {
+  const model = validateEdgerV2PolicyModel(
+    addSparseNonzeroWeights(createEdgerV2BootstrapModel()),
+  );
+  const fixtures = buildCandidateParityFixtures(model);
+  assert.ok(fixtures.length > 1, `expected a fixture bank, got ${fixtures.length}`);
+  assert.match(fixtures[0].id, /^opening-/);
+  const midMatch = fixtures.filter((fixture) => /-tick(?!1$)\d+$/.test(fixture.id));
+  assert.ok(midMatch.length >= 6, `expected mid-match fixtures, got ${midMatch.length}`);
+  const plays = fixtures.filter((fixture) => fixture.payload.forced_card_index > 0);
+  assert.ok(plays.length > 0, "must exercise card-conditioned play branches");
+  assert.ok(plays.some((fixture) => fixture.payload.legal_masks.placement.reduce((a, b) => a + b, 0) > 1));
+  assert.ok(plays.some((fixture) => fixture.payload.forced_placement_index > 0));
+  for (const fixture of plays) {
+    assert.equal(fixture.payload.legal_masks.card[fixture.payload.forced_card_index], 1);
+    assert.equal(fixture.payload.legal_masks.placement[fixture.payload.forced_placement_index], 1);
+    assert.equal(fixture.payload.forced_placement_index, fixture.js.selected.placement_index);
+  }
+  // The bank must be reproducible so a rejected report can be re-derived.
+  assert.deepEqual(
+    buildCandidateParityFixtures(model).map((fixture) => fixture.id),
+    fixtures.map((fixture) => fixture.id),
+  );
+});
+
+test("float32 ULP is the exact spacing at the measured logit magnitude", () => {
+  assert.equal(float32Ulp(1), 2 ** -23);
+  assert.equal(float32Ulp(0.8166071176528931), 2 ** -24);
+  assert.equal(float32Ulp(1519.18), 0.0001220703125);
+  assert.equal(float32Ulp(489_964_320), 32);
+  assert.equal(float32Ulp(0), 2 ** -149);
+});
+
+test("amplified heads still fail the unchanged absolute tolerance", {
+  timeout: 60_000,
+}, () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "edger-v2-parity-scale-"));
+  try {
+    const model = denseWeights(createEdgerV2BootstrapModel(), 4096);
+    const modelPath = path.join(root, "amplified-heads.json");
+    fs.writeFileSync(modelPath, JSON.stringify(model));
+    const parity = checkCandidateParity(modelPath, model);
+
+    assert.equal(parity.passed, false);
+    assert.equal(parity.argmax_agreement, true);
+    assert.ok(parity.maximum_logit_difference > 1e-5);
+    assert.match(parity.reason, /exceeded tolerance/);
+    assert.equal(Object.hasOwn(parity, "absolute_tolerance_feasible"), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("large exactly matching logits pass without a magnitude-based rejection", { timeout: 60_000 }, () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "edger-v2-exact-large-"));
+  try {
+    const model = createEdgerV2BootstrapModel();
+    model.weights.card_head.bias[0] = 1024;
+    const modelPath = path.join(root, "model.json");
+    fs.writeFileSync(modelPath, JSON.stringify(model));
+    const parity = checkCandidateParity(modelPath, model);
+    assert.equal(parity.maximum_legal_logit_magnitude, 1024);
+    assert.equal(parity.maximum_logit_difference, 0);
+    assert.equal(parity.passed, true);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("parity rejects a discrepancy confined to a non-PASS card embedding", { timeout: 60_000 }, () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "edger-v2-play-parity-"));
+  try {
+    const runtime = createEdgerV2BootstrapModel();
+    runtime.weights.placement_scorer.weights[0] = 1;
+    // Delay input: 64 fused features, 16 spatial features, then the embedding.
+    runtime.weights.delay_encoder.weights[80 * 64] = 1;
+    runtime.weights.delay_head.weights[0] = 1;
+    const reference = structuredClone(runtime);
+    reference.weights.card_embedding[16] = 1000;
+    const modelPath = path.join(root, "reference.json");
+    fs.writeFileSync(modelPath, JSON.stringify(reference));
+    // Inject a branch-local runtime/reference discrepancy. The old PASS-only
+    // fixture bank returned passed=true and zero error for this exact pair.
+    const parity = checkCandidateParity(modelPath, runtime);
+    assert.equal(parity.passed, false);
+    assert.equal(parity.heads.placement.maximum_logit_difference, 1000);
+    assert.equal(parity.heads.delay.maximum_logit_difference, 1000);
+    assert.ok(parity.fixtures.filter((fixture) => fixture.forced_card_index === 0)
+      .every((fixture) => fixture.maximum_logit_difference === 0));
+    assert.equal(parity.worst_absolute_error.float32_ulp, float32Ulp(1000));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });

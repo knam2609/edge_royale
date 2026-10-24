@@ -5,6 +5,7 @@ import { EDGER_POLICY_MODEL } from "../src/ai/generated/edgerPolicyCurrent.js";
 import {
   checkPromotionReport,
   evaluateScenarioLeague,
+  evaluateScenarioFeasibility,
   evaluateTiming,
   wilsonLowerBound,
 } from "../scripts/edger-evaluation-core.mjs";
@@ -34,6 +35,22 @@ test("scenario league reports heuristic-relative categories", () => {
     assert.ok(report.categories[category], `missing ${category}`);
     assert.ok(typeof report.categories[category].passed === "boolean");
   }
+});
+
+test("every tactical minimum is reachable with a legal action and the fixed deck", () => {
+  const report = evaluateScenarioFeasibility();
+  assert.equal(report.passed, true, JSON.stringify(report));
+  const spell = report.scenarios.find((scenario) => scenario.category === "spell_value");
+  assert.equal(spell.minimum, 0.7);
+  assert.equal(spell.maximum_score, 0.96);
+  assert.equal(spell.best_action.cardId, "arrows");
+  for (const scenario of report.scenarios) {
+    assert.equal(scenario.valid_fixed_decks, true);
+    assert.equal(scenario.production_arena, true);
+    assert.ok(scenario.maximum_score >= scenario.minimum);
+  }
+  const impossible = evaluateScenarioFeasibility({ minimums: { spell_value: 1.3 } });
+  assert.equal(impossible.passed, false);
 });
 
 test("timing report includes p95 and budget fields", () => {

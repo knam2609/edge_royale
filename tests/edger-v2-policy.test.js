@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 
 import { enumerateLegalCardActions } from "../src/ai/botRuntime.js";
 import { DEFAULT_DECK } from "../src/sim/cards.js";
@@ -127,4 +128,39 @@ test("v2 bootstrap inference respects masks and is deterministic", () => {
   });
   assert.deepEqual(decision.action, { type: "PASS" });
   assert.equal(decision.delayTicks, 200);
+});
+
+test("sparse-input convolution preserves the original dense-runtime golden logits", () => {
+  const model = createEdgerV2BootstrapModel();
+  let seed = 1729;
+  const random = () => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    return seed / 4294967296;
+  };
+  for (const layer of Object.values(model.weights)) {
+    const arrays = Array.isArray(layer) ? [layer] : [layer.weights, layer.bias];
+    for (const values of arrays) {
+      values.forEach((_, index) => { values[index] = (random() - 0.5) * 0.25; });
+    }
+  }
+  const observation = {
+    board: Float32Array.from({ length: 32 * 18 * 24 }, (_, index) => index % 7 === 0 ? random() : 0),
+    global: Float32Array.from({ length: 96 }, random),
+  };
+  const logits = computeEdgerV2Logits({
+    model, observation,
+    legalMasks: {
+      card: new Uint8Array(9).fill(1),
+      placement: new Uint8Array(576).fill(1),
+      delay: new Uint8Array(200).fill(1),
+    },
+    forcedCardIndex: 3,
+    forcedPlacementIndex: 77,
+  });
+  const hash = createHash("sha256");
+  for (const head of ["card", "placement", "delay"]) {
+    hash.update(Buffer.from(logits[head].buffer));
+  }
+  // Captured from the pre-optimization implementation at 0270d828.
+  assert.equal(hash.digest("hex"), "a397521ee3073037623b9a07ceeaaafc2d12beae71130ecbc956702adfabdaab");
 });

@@ -266,7 +266,11 @@ export function enumerateLegalCardActions({ engine, actor = "red" }) {
     }
   }
 
-  return actions.sort((left, right) => actionSortKey(left).localeCompare(actionSortKey(right)));
+  // Build each sort key once; the stable sort sees the same comparisons and order.
+  return actions
+    .map((action) => ({ action, key: actionSortKey(action) }))
+    .sort((left, right) => left.key.localeCompare(right.key))
+    .map(({ action }) => action);
 }
 
 function getEnemiesInRadius(state, actor, x, y, radius) {
@@ -878,4 +882,19 @@ export function selectBotDecision({
     }),
     delayTicks,
   };
+}
+
+// Makes one throwaway decision on a disposable engine so the first live
+// decision does not pay one-time model validation/compilation and JIT warm-up.
+// It uses its own constant RNG and discards the result, so no live engine,
+// random stream or decision is touched.
+export function warmUpBotDecision({
+  botId,
+  tierId,
+  engine,
+  actor = "red",
+  edgerModel = EDGER_POLICY_MODEL,
+}) {
+  const legalActions = enumerateLegalCardActions({ engine, actor });
+  selectBotDecision({ botId, tierId, engine, actor, legalActions, rng: () => 0, edgerModel });
 }

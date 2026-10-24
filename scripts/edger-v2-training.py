@@ -11,9 +11,9 @@ import math
 import os
 import platform
 import random
+import struct
 import subprocess
 import sys
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterator
@@ -57,6 +57,11 @@ ADVANTAGE_TEMPERATURE = 0.25
 ADVANTAGE_WEIGHT_MIN = 0.1
 ADVANTAGE_WEIGHT_MAX = 20.0
 PARQUET_ROW_GROUP_SIZE = 256
+PARITY_ABSOLUTE_TOLERANCE = 1e-5
+# A two-roundoff estimate for a diagnostic warning, not a parity guarantee or
+# an impossibility threshold. Only measured PyTorch/JS parity can establish
+# whether a candidate passes; accumulation/cancellation can exceed this estimate.
+LOGIT_SCALE_WARNING_MAGNITUDE = PARITY_ABSOLUTE_TOLERANCE / (2 * 2 ** -24)
 DECISION_PARQUET_SCHEMA_VERSION = "edger_decision_parquet_v2"
 SCALING_REPORT_SCHEMA = "edger_data_scaling_report_v2"
 
@@ -168,8 +173,20 @@ def seed_everything(seed: int) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
-def round_float(value: float) -> float:
-    return round(float(value), 8)
+def float32_json(value: float) -> float:
+    """Shortest decimal that reloads as the identical float32 weight.
+
+    ``round(value, 8)`` keeps eight decimal places, not eight significant
+    digits, so weights below about 1e-2 lost trained precision and the exported
+    actor stopped being the trained model. Nine significant digits always
+    round-trip a float32; this returns the shortest form that still does.
+    """
+    exact = struct.unpack("<f", struct.pack("<f", float(value)))[0]
+    for digits in range(1, 10):
+        candidate = float(f"{exact:.{digits}g}")
+        if struct.unpack("<f", struct.pack("<f", candidate))[0] == exact:
+            return candidate
+    return exact
 
 
 class EdgerV2Policy(nn.Module):
@@ -510,6 +527,7 @@ def evaluate_loss_parquet(
         "value": 0.0,
     }
     count = 0
+    maximum_logit = 0.0
     with torch.no_grad():
         for batch in batches_for_parquet(
             path,
@@ -521,6 +539,14 @@ def evaluate_loss_parquet(
         ):
             batch = batch.to(device)
             logits = forward_batch(model, batch)
+            for head, mask in (
+                ("card", batch.card_mask),
+                ("placement", batch.placement_mask),
+                ("delay", batch.delay_mask),
+            ):
+                legal = logits[head][mask.bool()]
+                if legal.numel():
+                    maximum_logit = max(maximum_logit, float(legal.abs().max()))
             joint, parts = actor_losses(logits, batch)
             value = model.value(logits["fused"], batch.stratum)
             value_loss = F.mse_loss(value, batch.discounted_return, reduction="none")
@@ -538,6 +564,9 @@ def evaluate_loss_parquet(
             "placement_loss": None,
             "delay_loss": None,
             "value_loss": None,
+            "maximum_legal_logit_magnitude": None,
+            "logit_scale_warning": None,
+            "logit_scale_warning_threshold": LOGIT_SCALE_WARNING_MAGNITUDE,
         }
     return {
         "joint_action_loss": totals["joint"] / count,
@@ -545,6 +574,9 @@ def evaluate_loss_parquet(
         "placement_loss": totals["placement"] / count,
         "delay_loss": totals["delay"] / count,
         "value_loss": totals["value"] / count,
+        "maximum_legal_logit_magnitude": maximum_logit,
+        "logit_scale_warning": maximum_logit > LOGIT_SCALE_WARNING_MAGNITUDE,
+        "logit_scale_warning_threshold": LOGIT_SCALE_WARNING_MAGNITUDE,
     }
 
 
@@ -1021,67 +1053,83 @@ def iter_vtrace_episodes(path: str | Path) -> Iterator[list[dict[str, Any]]]:
         yield current_rows
 
 
-def write_vtrace_target_parquet(
-    *,
+def train_vtrace_episode(
     model: EdgerV2Policy,
-    source: str | Path,
-    out: str | Path,
+    rows: list[dict[str, Any]],
     vocab: dict[str, int],
     batch_size: int,
     device: torch.device,
-) -> int:
-    output = Path(out)
-    partial = output.with_suffix(output.suffix + ".partial")
-    partial.unlink(missing_ok=True)
-    writer: pq.ParquetWriter | None = None
-    arrow_schema: pa.Schema | None = None
-    written = 0
-    source_metadata = {
-        key.encode(): value.encode()
-        for key, value in parquet_metadata(source).items()
+    optimizer: torch.optim.Optimizer,
+    *,
+    value_loss_weight: float,
+    entropy_bonus: float,
+) -> dict[str, float]:
+    # V-trace's rho, values and advantages must describe the policy receiving
+    # this gradient. A whole-epoch target cache becomes stale after step one;
+    # fixed negative advantages can then drive log probabilities to -infinity.
+    targets = attach_vtrace_targets(model, rows, vocab, batch_size, device)
+    model.train()
+    optimizer.zero_grad(set_to_none=True)
+    for batch in loader_for(targets, vocab, batch_size, False, 1):
+        batch = batch.to(device)
+        logits = forward_batch(model, batch)
+        log_probability = selected_joint_log_probability(logits, batch)
+        entropy = actor_entropy(logits, batch)
+        value = model.value(logits["fused"], batch.stratum)
+        policy_loss = -(
+            log_probability * batch.vtrace_advantage.detach() * batch.sample_weight
+        ).sum()
+        value_loss = F.mse_loss(value, batch.vtrace_target, reduction="sum")
+        loss = (
+            policy_loss + value_loss_weight * value_loss - entropy_bonus * entropy.sum()
+        ) / len(targets)
+        if not torch.isfinite(loss):
+            raise ValueError("non-finite V-trace episode loss; no candidate accepted")
+        loss.backward()
+    # Microbatches bound activation memory, but never step between them: every
+    # target and gradient in this trajectory uses the same learner parameters.
+    # The pre-clip norm is reported so a bounded experiment can distinguish a
+    # diverging learner from one whose updates are merely being clipped.
+    gradient_norm = nn.utils.clip_grad_norm_(
+        model.parameters(), 1.0, error_if_nonfinite=True
+    )
+    optimizer.step()
+    return {"samples": len(targets), "gradient_norm": float(gradient_norm)}
+
+
+GRADIENT_CLIP_NORM = 1.0
+
+
+def gradient_norm_summary(
+    epoch: int,
+    norms: list[float],
+) -> dict[str, float | int | bool]:
+    """Summarize one epoch's pre-clip gradient norms.
+
+    ``clip_grad_norm_`` already aborts on a non-finite norm, so ``all_finite``
+    records the observed fact rather than adding a second gate.
+    """
+    if not norms:
+        return {
+            "epoch": epoch,
+            "updates": 0,
+            "all_finite": True,
+            "maximum": None,
+            "mean": None,
+            "minimum": None,
+            "clip_threshold": GRADIENT_CLIP_NORM,
+            "clipped_updates": 0,
+        }
+    return {
+        "epoch": epoch,
+        "updates": len(norms),
+        "all_finite": all(math.isfinite(value) for value in norms),
+        "maximum": max(norms),
+        "mean": sum(norms) / len(norms),
+        "minimum": min(norms),
+        "clip_threshold": GRADIENT_CLIP_NORM,
+        "clipped_updates": sum(1 for value in norms if value > GRADIENT_CLIP_NORM),
     }
-    source_metadata[b"vtrace_targets"] = b"episode_grouped_v1"
-
-    def write_rows(rows: list[dict[str, Any]]) -> None:
-        nonlocal writer, arrow_schema, written
-        for start in range(0, len(rows), PARQUET_ROW_GROUP_SIZE):
-            group = rows[start:start + PARQUET_ROW_GROUP_SIZE]
-            if arrow_schema is None:
-                table = pa.Table.from_pylist(group)
-                arrow_schema = table.schema.with_metadata(source_metadata)
-                writer = pq.ParquetWriter(
-                    partial,
-                    arrow_schema,
-                    compression="zstd",
-                    compression_level=9,
-                    use_dictionary=True,
-                )
-            table = pa.Table.from_pylist(group, schema=arrow_schema)
-            assert writer is not None
-            writer.write_table(table, row_group_size=PARQUET_ROW_GROUP_SIZE)
-            written += len(group)
-
-    try:
-        for episode_rows in iter_vtrace_episodes(source):
-            targets = attach_vtrace_targets(
-                model,
-                episode_rows,
-                vocab,
-                batch_size,
-                device,
-            )
-            write_rows(targets)
-        if writer is None:
-            raise ValueError("league cache has no V-trace-eligible simulator samples")
-        writer.close()
-        writer = None
-        partial.replace(output)
-    except BaseException:
-        if writer is not None:
-            writer.close()
-        partial.unlink(missing_ok=True)
-        raise
-    return written
 
 
 def run_vtrace(args: argparse.Namespace) -> None:
@@ -1101,46 +1149,21 @@ def run_vtrace(args: argparse.Namespace) -> None:
         optimizer_restored = True
     trained_samples = 0
 
-    with tempfile.TemporaryDirectory(prefix="edger-vtrace-targets-") as target_dir:
-        for epoch in range(args.epochs):
-            target_path = Path(target_dir) / f"epoch-{epoch}.parquet"
-            trained_samples = write_vtrace_target_parquet(
-                model=model,
-                source=args.dataset,
-                out=target_path,
-                vocab=vocab,
-                batch_size=args.batch_size,
-                device=device,
+    optimizer_updates = 0
+    epoch_gradients: list[dict[str, float | int | bool]] = []
+    for epoch in range(args.epochs):
+        trained_samples = 0
+        epoch_norms: list[float] = []
+        for episode_rows in iter_vtrace_episodes(args.dataset):
+            update = train_vtrace_episode(
+                model, episode_rows, vocab, args.batch_size, device, optimizer,
+                value_loss_weight=args.value_loss_weight,
+                entropy_bonus=args.entropy_bonus,
             )
-            model.train()
-            for batch in batches_for_parquet(
-                target_path,
-                vocab,
-                args.batch_size,
-                split="train",
-                shuffle=True,
-                seed=args.seed + epoch,
-            ):
-                batch = batch.to(device)
-                optimizer.zero_grad(set_to_none=True)
-                logits = forward_batch(model, batch)
-                log_probability = selected_joint_log_probability(logits, batch)
-                entropy = actor_entropy(logits, batch)
-                value = model.value(logits["fused"], batch.stratum)
-                policy_loss = -(
-                    log_probability
-                    * batch.vtrace_advantage.detach()
-                    * batch.sample_weight
-                ).mean()
-                value_loss = F.mse_loss(value, batch.vtrace_target)
-                loss = (
-                    policy_loss
-                    + args.value_loss_weight * value_loss
-                    - args.entropy_bonus * entropy.mean()
-                )
-                loss.backward()
-                nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-                optimizer.step()
+            trained_samples += int(update["samples"])
+            epoch_norms.append(update["gradient_norm"])
+            optimizer_updates += 1
+        epoch_gradients.append(gradient_norm_summary(epoch, epoch_norms))
 
     metrics = {
         "train_samples": trained_samples,
@@ -1152,8 +1175,11 @@ def run_vtrace(args: argparse.Namespace) -> None:
             "parent_optimizer_restored": optimizer_restored,
             "epochs": args.epochs,
             "entropy_bonus": args.entropy_bonus,
-            "episode_grouped_target_parquet": True,
-            "target_row_group_size": PARQUET_ROW_GROUP_SIZE,
+            "target_refresh": "before_each_episode_update",
+            "optimizer_updates": optimizer_updates,
+            "gradient_microbatch_size": args.batch_size,
+            "episode_order": "source_manifest_order",
+            "gradient_norms_per_epoch": epoch_gradients,
         },
         "validation": evaluate_loss_parquet(
             model, args.dataset, "validation", vocab, args.batch_size, device
@@ -1178,8 +1204,8 @@ def linear_json(layer: nn.Linear) -> dict[str, Any]:
     return {
         "input_dim": layer.in_features,
         "output_dim": layer.out_features,
-        "weights": [round_float(value) for value in layer.weight.detach().cpu().t().flatten()],
-        "bias": [round_float(value) for value in layer.bias.detach().cpu().flatten()],
+        "weights": [float32_json(value) for value in layer.weight.detach().cpu().t().flatten()],
+        "bias": [float32_json(value) for value in layer.bias.detach().cpu().flatten()],
     }
 
 
@@ -1188,8 +1214,8 @@ def conv_json(layer: nn.Conv2d) -> dict[str, Any]:
         "input_channels": layer.in_channels,
         "output_channels": layer.out_channels,
         "kernel_size": layer.kernel_size[0],
-        "weights": [round_float(value) for value in layer.weight.detach().cpu().flatten()],
-        "bias": [round_float(value) for value in layer.bias.detach().cpu().flatten()],
+        "weights": [float32_json(value) for value in layer.weight.detach().cpu().flatten()],
+        "bias": [float32_json(value) for value in layer.bias.detach().cpu().flatten()],
     }
 
 
@@ -1217,7 +1243,7 @@ def export_model_payload(
             "card_head": linear_json(model.card_head),
             "placement_context": linear_json(model.placement_context),
             "card_embedding": [
-                round_float(value)
+                float32_json(value)
                 for value in model.card_embedding.weight.detach().cpu().flatten()
             ],
             "placement_scorer": linear_json(model.placement_scorer),
@@ -1240,10 +1266,30 @@ def export_model_payload(
     parameters = actor_parameter_count(model)
     if parameters > 50_000:
         raise ValueError(f"actor parameter count {parameters} exceeds 50,000")
+    assert_lossless_actor_export(model, payload)
     encoded = (json.dumps(payload, sort_keys=True, indent=2) + "\n").encode()
     if len(encoded) > 1_000_000:
         raise ValueError(f"actor export is {len(encoded)} bytes; limit is 1,000,000")
     return payload
+
+
+def assert_lossless_actor_export(
+    model: EdgerV2Policy,
+    payload: dict[str, Any],
+) -> None:
+    """Reject an export whose weights no longer reload as the trained float32."""
+    reloaded = load_actor_payload(payload)
+    trained = dict(model.named_parameters())
+    for name, parameter in reloaded.named_parameters():
+        if name.startswith("value_head") or name.startswith("value_stratum"):
+            continue
+        source = trained[name].detach().cpu()
+        if not torch.equal(source, parameter.detach().cpu()):
+            altered = int((source != parameter.detach().cpu()).sum())
+            raise ValueError(
+                f"actor export is lossy: {altered} of {source.numel()} "
+                f"{name} values do not reload as the trained float32"
+            )
 
 
 def run_export(args: argparse.Namespace) -> None:
@@ -1271,7 +1317,10 @@ def run_export(args: argparse.Namespace) -> None:
 
 
 def load_actor_json(path: str | Path) -> EdgerV2Policy:
-    payload = json.loads(Path(path).read_text())
+    return load_actor_payload(json.loads(Path(path).read_text()))
+
+
+def load_actor_payload(payload: dict[str, Any]) -> EdgerV2Policy:
     if payload.get("schema_version") != MODEL_SCHEMA:
         raise ValueError("parity model must use edger_policy_model_v2")
     model = EdgerV2Policy(1)
@@ -1312,9 +1361,7 @@ def load_actor_json(path: str | Path) -> EdgerV2Policy:
     return model.eval()
 
 
-def run_parity(args: argparse.Namespace) -> None:
-    model = load_actor_json(args.model)
-    fixture = json.loads(Path(args.fixture).read_text())
+def parity_logits(model: EdgerV2Policy, fixture: dict[str, Any]) -> dict[str, Any]:
     board = torch.tensor(fixture["observation"]["board"], dtype=torch.float32).reshape(
         1, BOARD_HEIGHT, BOARD_WIDTH, BOARD_INPUT_CHANNELS
     )
@@ -1328,13 +1375,31 @@ def run_parity(args: argparse.Namespace) -> None:
     with torch.no_grad():
         logits = model.actor_logits(board, global_features, card, placement)
     masks = fixture["legal_masks"]
-    result = {}
+    result: dict[str, Any] = {}
     for key in ["card", "placement", "delay"]:
         values = logits[key].squeeze(0)
         mask = torch.tensor(masks[key], dtype=torch.bool)
         values = values.masked_fill(~mask, -1e30)
         result[key] = [float(value) for value in values]
         result[f"{key}_argmax"] = int(torch.argmax(values).item())
+    return result
+
+
+def run_parity(args: argparse.Namespace) -> None:
+    model = load_actor_json(args.model)
+    payload = json.loads(Path(args.fixture).read_text())
+    # A single mid-match state cannot show whether the runtimes stay in
+    # agreement once activations grow, so the evaluator sends a bank of states
+    # and one process handles all of them.
+    if isinstance(payload, dict) and "fixtures" in payload:
+        result: dict[str, Any] = {
+            "fixtures": [
+                {"id": fixture.get("id"), **parity_logits(model, fixture)}
+                for fixture in payload["fixtures"]
+            ],
+        }
+    else:
+        result = parity_logits(model, payload)
     Path(args.out).write_text(json.dumps(result, separators=(",", ":")) + "\n")
 
 

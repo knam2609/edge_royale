@@ -7,7 +7,7 @@ import { createEngine } from "../src/sim/engine.js";
 import { createTower, createTroop } from "../src/sim/entities.js";
 import { createArena, ROYALE_TOWER_X, ROYALE_TOWER_Y, createRoyaleArena } from "../src/sim/map.js";
 import { getTowerStats } from "../src/sim/stats.js";
-import { getCard } from "../src/sim/cards.js";
+import { DEFAULT_DECK, getCard } from "../src/sim/cards.js";
 import {
   EDGER_BOT_ID,
   HEURISTIC_BOT_ID,
@@ -59,26 +59,13 @@ function makeCardState(redHand, blueHand = ["giant", "knight", "archers", "arrow
   return {
     blue: {
       hand: blueHand,
-      draw_pile: ["musketeer", "mini_pekka", "goblins", "fireball"],
+      draw_pile: DEFAULT_DECK.filter((card) => !blueHand.includes(card)),
     },
     red: {
       hand: redHand,
-      draw_pile: ["musketeer", "mini_pekka", "goblins", "archers"],
+      draw_pile: DEFAULT_DECK.filter((card) => !redHand.includes(card)),
     },
   };
-}
-
-function makeBasicEngine({ redHand, blueHand, initialEntities, blueElixir = 5, redElixir = 10, seed = 6101 }) {
-  const engine = createEngine({
-    seed,
-    arena: createArena({ minX: 0, maxX: 18, minY: 0, maxY: 32 }),
-    fireballConfig: FIREBALL_CONFIG,
-    initialEntities,
-    initialCardState: makeCardState(redHand, blueHand),
-  });
-  engine.state.elixir.blue.elixir = blueElixir;
-  engine.state.elixir.red.elixir = redElixir;
-  return engine;
 }
 
 function makeRoyaleEngine({ redHand, blueHand, blueLeftHp, blueRightHp, extraEntities = [], blueElixir = 5, redElixir = 10, seed = 6201 }) {
@@ -175,15 +162,13 @@ function scorePocketPressure(engine, action) {
   return inPocket ? 1.15 : Math.max(0, 0.6 - Math.abs(action.x - ROYALE_TOWER_X.left) / 10);
 }
 
-const SCENARIO_FIXTURES = Object.freeze([
+export const SCENARIO_FIXTURES = Object.freeze([
   {
     id: "defense_giant_lane",
     category: "defense",
-    makeEngine: () => makeBasicEngine({
+    makeEngine: () => makeRoyaleEngine({
       redHand: ["mini_pekka", "musketeer", "knight", "fireball"],
-      initialEntities: [
-        createTower({ id: "blue_tower", team: "blue", x: 9, y: 29 }),
-        createTower({ id: "red_tower", team: "red", x: 9, y: 3 }),
+      extraEntities: [
         createTroop({ id: "blue_giant", cardId: "giant", team: "blue", x: 9, y: 13.5, hp: 2800 }),
       ],
       blueElixir: 4,
@@ -194,13 +179,13 @@ const SCENARIO_FIXTURES = Object.freeze([
   {
     id: "spell_cluster_value",
     category: "spell_value",
-    makeEngine: () => makeBasicEngine({
+    makeEngine: () => makeRoyaleEngine({
       redHand: ["arrows", "fireball", "knight", "giant"],
-      initialEntities: [
-        createTower({ id: "blue_tower", team: "blue", x: 9, y: 29 }),
-        createTower({ id: "red_tower", team: "red", x: 9, y: 3 }),
+      extraEntities: [
         createTroop({ id: "blue_goblins", cardId: "goblins", team: "blue", x: 8.7, y: 12, hp: 220 }),
         createTroop({ id: "blue_archers", cardId: "archers", team: "blue", x: 9.4, y: 12.3, hp: 300 }),
+        // Three individual targets make the unchanged 0.70 floor attainable.
+        createTroop({ id: "blue_archer_2", cardId: "archers", team: "blue", x: 9.1, y: 11.8, hp: 300 }),
       ],
       blueElixir: 6,
       seed: 6302,
@@ -242,6 +227,40 @@ const SCENARIO_FIXTURES = Object.freeze([
     score: scorePocketPressure,
   },
 ]);
+
+export function evaluateScenarioFeasibility({
+  minimums = PROMOTION_GATE_CONFIG.scenarioCategoryMinimums,
+} = {}) {
+  const scenarios = SCENARIO_FIXTURES.map((fixture) => {
+    const engine = fixture.makeEngine();
+    const actions = [{ type: "PASS" }, ...enumerateLegalCardActions({ engine, actor: "red" })];
+    let maximum = -Infinity;
+    let bestAction = null;
+    for (const action of actions) {
+      const score = fixture.score(engine, action);
+      if (score > maximum) {
+        maximum = score;
+        bestAction = action;
+      }
+    }
+    const minimum = minimums[fixture.category] ?? 0;
+    const validDecks = ["blue", "red"].every((actor) => {
+      const cards = [...engine.getHand(actor), ...engine.getDeckQueue(actor)];
+      return cards.length === DEFAULT_DECK.length &&
+        DEFAULT_DECK.every((card) => cards.filter((value) => value === card).length === 1);
+    });
+    const productionArena = engine.state.arena.grid?.step === 1 &&
+      engine.state.arena.grid.offsetX === 0.5 && engine.state.arena.grid.offsetY === 0.5 &&
+      engine.state.entities.filter((entity) => entity.entity_type === "tower").length === 6;
+    return {
+      id: fixture.id, category: fixture.category, minimum,
+      maximum_score: Number(maximum.toFixed(4)), best_action: bestAction,
+      valid_fixed_decks: validDecks, production_arena: productionArena,
+      passed: validDecks && productionArena && maximum >= minimum,
+    };
+  });
+  return { passed: scenarios.every((scenario) => scenario.passed), scenarios };
+}
 
 function selectScenarioAction(engine, model, selector) {
   const legalActions = enumerateLegalCardActions({ engine, actor: "red" });

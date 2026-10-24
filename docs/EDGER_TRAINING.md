@@ -84,10 +84,11 @@ The split is stable across machines and worker counts. Disposable PyTorch caches
 
 Production cache building never materializes the corpus at once. Pass one
 counts balancing strata; pass two replays one episode at a time and streams
-decision rows into deterministic 256-row Parquet groups. Training and
-evaluation deterministically shuffle row groups and rows within each group,
-then consume bounded batches. Temporary V-trace targets are computed and
-written episode-by-episode.
+decision rows into deterministic 256-row Parquet groups. BC and offline training
+deterministically shuffle row groups and rows within each group, then consume
+bounded batches. Evaluation uses stable batches. V-trace visits contiguous
+episodes in source manifest order, refreshes targets using the current learner,
+accumulates gradients in bounded microbatches, and steps once per episode.
 
 ## 3. Compact v2 policy
 
@@ -112,7 +113,24 @@ Actor:
 
 The exported actor has 36,402 parameters and must stay under 50,000 parameters and 1 MB. The opponent-stratum embedding and value head exist only in PyTorch checkpoints. V2 inference never calls the handcrafted prior.
 
+Export writes each weight as the shortest decimal that reloads as the identical
+trained float32, and refuses to emit an actor whose weights do not reload
+exactly. Eight-decimal rounding is not lossless: it keeps decimal places rather
+than significant digits, so it altered 53.5% of a real BC actor's weights, worst
+case `1.29e-3` relative on `conv1`. The measured BC export grew about 3%, while the league export became smaller;
+both stay inside the 1 MB cap. Other candidates must still satisfy the byte gate.
+
 PyTorch dense weights are transposed into input-major generated-JS arrays. Golden fixtures require maximum logit error at or below `1e-5` and identical masked argmax.
+
+The runtime stores activations as float32 and accumulates dot products in
+JavaScript numbers. PyTorch can use different summation orders; exact agreement
+is not guaranteed ([PyTorch numerical accuracy](https://docs.pytorch.org/docs/2.14/notes/numerical_accuracy.html)).
+Float32 spacing is neither a minimum error nor a bound on accumulated error.
+Large logits can match exactly, and small logits can still disagree. There is
+no proven `83.886` cutoff for parity. Logit scale is a useful warning for local
+experiments; the unchanged measured `1e-5` error and identical masked argmax
+remain the actual gate. ULP diagnostics alone do not prove runtime fidelity or
+candidate ill-conditioning.
 
 ## 4. Learning
 
@@ -135,6 +153,60 @@ weight = clip(exp(A / 0.25), 0.1, 20)
 The actor rolls back and stops if validation KL from BC exceeds `0.05` nats.
 
 Every checkpoint is immutable and contains parent checkpoint ID, optimizer state, seeds, manifest hash, dataset checksum, Git commit, environment versions, and metrics. Later phases warm-start from an accepted v2 checkpoint.
+
+### Decision-cadence diagnostic (local only, never promotable)
+
+`scripts/edger-v2-cadence-experiment.mjs` (with `edger-v2-cadence-core.mjs`,
+`edger-v2-cadence-worker.mjs` and `edger-v2-cadence-experiment.py`) compares
+the shipped learned delay against a fixed one-tick cadence. It is not used by
+the live bot, the promotion evaluator or campaigns.
+
+- `learned`: card, placement, then a 1–200 tick delay, exactly as
+  `selectEdgerV2PolicyDecision`.
+- `fixed_one_tick`: the same card and placement heads reconsidered every tick.
+  PASS stays available and is never overridden; the delay head is not
+  evaluated; the delay is one tick with probability one.
+- Sampled rollouts record per-head behaviour log-probabilities from the actual
+  temperature-1 masked softmax. Fixed-cadence rows record delay index 0 and
+  delay log-probability 0. Rewards use `edger_potential_reward_v1` over the
+  actual decision intervals, identical to `deriveDecisionSequence`.
+- The `learned` learner mode is the production V-trace update unchanged
+  (bit-identical in `tests/test_edger_v2_cadence.py`). `fixed_one_tick` drops
+  the delay term from the policy log-probability and entropy, so the delay head
+  receives no gradient. Learned-mode trajectories must not be relabelled as
+  fixed-cadence data.
+- Attribution controls (`train-arm --loss-mode`, default `full`):
+  `critic_only` removes both the policy loss and the actor entropy, so the
+  actor moves only through value-loss gradients into the shared trunk;
+  `value_detached` keeps the full actor loss but trains the value head on
+  detached trunk features. The loss mode cannot change within an arm.
+- `--decompose-every N` measures policy, value and entropy gradients
+  separately (`torch.autograd.grad` on the same graph) on every Nth update,
+  with their trunk cosine. The applied step is still the one combined backward
+  pass (bit-identical, tested). Learner metrics also record the effective
+  per-group parameter step and a `conditional` block: forced-PASS fraction
+  (no legal card), card entropy and importance ratios on rows with a real card
+  choice, and placement entropy on play rows. Row-weighted averages are
+  diluted by PASS rows and should not be read as per-decision sharpness.
+- `replicate-seeds --base <seed plan>` derives independent training seed plans
+  (new training seeds and opponent schedule; the base development and probe
+  seeds, so evaluations stay paired) and a reserved confirmation seed set,
+  all disjoint from each other and the frozen suites. `--episodes-root` and
+  `--prune-episodes` keep large trajectory bodies off the repository volume
+  and delete them after a successful update; headers with body checksums stay
+  in the arm directory.
+- `evaluate --seed-set development|confirmation` is required. Development
+  seeds come only from a base or per-run seed plan, confirmation seeds only
+  from the replication plan; a mismatched file, missing set or too few seeds
+  fails. The whole named set must be distinct and disjoint from the frozen
+  suites, every other set in the plan and each `--exclude-seed-plans` file
+  (pass the base plan for confirmation, since r0 trained on its seeds).
+  Reports record the set, plan schema, excluded-plan checksums and exact seeds.
+- Checkpoints use `edger_v2_cadence_diagnostic_checkpoint_v1`, which production
+  `load_checkpoint` rejects, and exports are labelled
+  `diagnostic_only_not_promotable`. The diagnostic learner records the dirty
+  worktree diff hash instead of requiring a clean tree; it is not authoritative
+  training.
 
 ## 5. Scaling and snapshot league
 
@@ -223,6 +295,31 @@ Opponent allocation:
 - 20% PFSP over history/contenders with `(1−score)²+0.05`
 
 Every selected seed is played from both sides. Only simulator decisions with known behavior log-probabilities enter V-trace. Importance and trace coefficients are clipped at 1.
+
+V-trace targets, clipped importance ratios, and gradients for an episode must
+use the same learner parameters. Do not cache targets for an entire optimizer
+epoch: negative advantages then continue penalizing actions after their current
+probability has collapsed. Each episode now refreshes targets before its sole
+optimizer update; microbatch losses are normalized by total eligible episode
+rows. Non-finite losses or gradient norms abort without saving a candidate.
+Every epoch records a pre-clip gradient-norm summary under
+`metrics.vtrace.gradient_norms_per_epoch`: `updates`, `all_finite`,
+`minimum`/`mean`/`maximum`, the `1.0` `clip_threshold` and `clipped_updates`.
+This is observability for bounded comparisons, not an additional gate; the
+existing `clip_grad_norm_(error_if_nonfinite=True)` abort is unchanged.
+This follows the current-policy correction in
+[IMPALA, section 4](https://proceedings.mlr.press/v80/espeholt18a.html).
+The correction is not evidence of learned improvement; promotion still requires
+all existing gates.
+
+Every validation report records `maximum_legal_logit_magnitude`,
+`logit_scale_warning`, and `logit_scale_warning_threshold`. The warning threshold
+is approximately `83.886`, a two-roundoff estimate from `1e-5 / (2 * 2**-24)`.
+It is advisory, neither a parity guarantee below it nor a rejection above it.
+The previous uncommitted `parity_verifiable_logit_scale` name was misleading and
+has been replaced. Do not add a training abort based on this estimate. Use
+measured exported-model parity and held-out quality to select candidates; any
+regularization or rollback rule needs bounded real-corpus evidence first.
 
 League collection accepts `--base-manifest` and `--rollout-store`. The learner
 manifest is the immutable 10,000-game base plus only the current command's
@@ -339,3 +436,24 @@ The corpus, BC, offline-improvement, scaling, league/V-trace, parity, large-samp
 - tactical, replay, determinism, full-suite, browser, and `p95 ≤ 5 ms` gates
 
 Failed campaigns retain reports/checkpoints and never update the promoted artifact.
+
+Parity, tactical feasibility/quality, and timing run before the match workers.
+A failed preflight produces a rejected report with `generated_matches=0`,
+`match_suite_skipped=true`, and failed/skipped match gates. The tactical suite
+uses six-tower production arenas and complete fixed decks. Every category floor
+must be reachable by an enumerated legal action; the spell-cluster fixture has
+three targets so its unchanged 0.70 floor is achievable. Parity checks the
+opening position plus mid-match states the candidate itself reaches. At each
+state it tests PASS and every legal card, comparing legal placement logits and
+conditioning delay on that card's JS-selected legal placement; PyTorch must
+independently agree on masked argmax. Reports include state/branch coverage,
+per-head errors and magnitudes, and the worst absolute error with its own
+coordinate's values and ULP spacing. Malformed/non-finite outputs are rejected.
+Failure reasons report measured errors or argmax disagreement without inferring
+a root cause from logit scale. The
+absolute `1e-5`, identical argmax, quality, safety, and `p95 ≤ 5 ms` thresholds
+are unchanged.
+
+Failure reports are retained under `failed-stages/<stage>/<attempt>/`, separate
+from passed `stages/` artifacts. See [the September diagnosis](EDGER_EVALUATION_DIAGNOSIS.md)
+for exact versioned evidence and the approval-dependent next campaign plan.

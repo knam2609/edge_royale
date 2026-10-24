@@ -9,6 +9,7 @@ import { spawnSync } from "node:child_process";
 import {
   EDGER_V2_EVALUATION_PROFILES,
   buildEdgerV2EvaluationSpecs,
+  evaluateEdgerV2Candidate,
   pairedBootstrapLowerBound,
   validateExternalCampaignReport,
   validateEdgerV2ReferenceReport,
@@ -99,6 +100,32 @@ test("external test and browser reports are bound to the campaign Git commit", (
   );
   assert.equal(mismatch.passed, false);
   assert.match(mismatch.reason, /does not match/);
+});
+
+test("failed tactical preflight skips all full-profile matches and cannot promote", { timeout: 30_000 }, async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "edger-preflight-"));
+  try {
+    const candidateModelPath = path.join(root, "candidate.json");
+    fs.writeFileSync(candidateModelPath, JSON.stringify(createEdgerV2BootstrapModel()));
+    const report = await evaluateEdgerV2Candidate({
+      candidateModelPath,
+      championModelPath: "artifacts/edger-training/promoted/edger_policy_current.json",
+      profileName: "full",
+      workers: 1,
+    });
+    assert.equal(report.gates.pytorch_js_parity.passed, true);
+    assert.equal(report.gates.tactical_scenarios.passed, false);
+    assert.equal(report.gates.tactical_scenarios.feasibility.passed, true);
+    assert.equal(report.generated_matches, 0);
+    assert.equal(report.match_suite_skipped, true);
+    assert.equal(report.promotion.passed, false);
+    for (const gate of ["champion", "weak_baselines", "anchors", "frozen_league", "safety", "replay"]) {
+      assert.equal(report.gates[gate].passed, false);
+      assert.equal(report.gates[gate].skipped, true);
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("v2 promotion command refuses an incomplete report", () => {

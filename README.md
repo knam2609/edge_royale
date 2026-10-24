@@ -107,9 +107,10 @@ verification before freezing the manifest.
 
 Cache construction is bounded-memory: it counts balancing strata in a first
 pass, streams decision rows in a second pass, and writes deterministic 256-row
-Parquet groups. BC, offline improvement, and V-trace iterate deterministically
-shuffled row groups and batches. V-trace targets are written episode-by-episode
-to a temporary Parquet cache.
+Parquet groups. BC and offline improvement iterate deterministically shuffled
+row groups and batches. V-trace visits episodes in source manifest order and
+refreshes targets immediately before each episode's optimizer update. Gradient
+microbatches bound activation memory without changing parameters mid-episode.
 
 Scaling caches reduce only training episodes. Validation and test episode lists
 are identical in the 1%, 10%, and 100% manifests. Export each BC checkpoint,
@@ -225,6 +226,12 @@ npm run edger:promote:v2 -- \
 ```
 
 The promotion command refuses smoke profiles, artifact checksum mismatches, missing external reports, or any failed gate. Campaign automation opens a pull request after it succeeds.
+
+The evaluator runs parity, tactical feasibility/quality, and timing first. A
+failed preflight writes a rejected report with the match gates explicitly
+skipped, avoiding the expensive match suite. See
+[`docs/EDGER_EVALUATION_DIAGNOSIS.md`](docs/EDGER_EVALUATION_DIAGNOSIS.md) for the
+September 2026 failure evidence, local corrections, and remaining cloud blockers.
 
 ## Docs
 
