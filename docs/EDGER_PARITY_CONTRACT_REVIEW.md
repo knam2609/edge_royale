@@ -4,9 +4,11 @@ This prepares Next Task 2, a reviewed decision on the PyTorch/JS parity
 contract. It measures each candidate contract and each isolated runtime fix on
 all seven local v2 models.
 
-**Nothing has changed.** The `1e-5` tolerance, the gate code, the runtime and
-the tie semantics are unchanged. Every option below needs explicit approval,
-tests and fresh provenance before it lands. The September 27
+**Nothing has changed yet.** The `1e-5` tolerance, the gate code, the runtime
+and the tie semantics are unchanged. On October 25 the owner approved the
+[recommendation](#recommendation-for-review); the
+[decision](#decision--october-25-2026) sets out what lands and in what order.
+Each step still needs its own tests and fresh provenance. The September 27
 [isolation](EDGER_EVALUATION_DIAGNOSIS.md#parity-failure-isolation--september-27)
 is the background.
 
@@ -105,6 +107,32 @@ coordinate over `1e-5`, and the number of fixtures over `1e-5`.
    - Report fragile-margin counts, and send any non-zero count to review.
    - This leaves `1e-5` in force below magnitude 32, and it still rejects the current V0 runtime for four models. The contract therefore cannot hide the known pooling deviation.
 3. **Keep the logit-scale warning advisory** (option F) until a learner experiment shows that bounding the scale does not cost play. Option E alone is not recommended.
+
+## Decision — October 25, 2026
+
+The owner approved recommendations 1–3 as written. **Nothing is implemented
+yet:** `1e-5`, the gate code and the runtime stay as they are until each step
+lands. The approval does not cover pushing, cloud actions, promotion or any
+other gate change. Implement in this order:
+
+1. **Float64 mean pool (V1)** in `meanPool`, `src/ai/v2/policy.js`, as its own change.
+   - Add tests that the pool equals float64 accumulation rounded once, and that bank and full-match decisions are unchanged.
+   - Run `npm test` and the bot-bench gate. Live v1 runs `src/ai/mlPolicy.js`, so the bot-bench output is expected to be byte-identical.
+   - Defer V2 (`Math.fround` weights); it matters only against a float64 reference.
+   - No runtime-cost hash pins `src/ai/v2/policy.js` (checked October 25), so no pin edit is expected. The October 17 costs then describe the pre-change runtime; the frozen stage is never edited or rerun.
+2. **Option C with k = 4**, against the float32 PyTorch reference.
+   - Change both checks to `abs ≤ max(1e-5, 4·ulp32(max(|js|, |ref|)))`: `EDGER_V2_PARITY_TOLERANCE` in `scripts/edger-v2-evaluation-core.mjs` and `PARITY_ABSOLUTE_TOLERANCE` in `scripts/edger-v2-training.py`.
+   - Make tie-set identity an explicit requirement next to the identical masked argmax. Report fragile-margin counts; any non-zero count goes to review.
+   - Tests must show that:
+     - the tolerance is still exactly `1e-5` below magnitude 32;
+     - V0 is still rejected for the four models that need more than 4 ULP (learned r0, fixed r0–r2);
+     - the September 21 counterexamples are still caught.
+   - Update the parity text in `docs/EDGER_TRAINING.md` in the same change.
+   - Re-measure k on the reference host's PyTorch before any campaign relies on it.
+3. **Option F stays an advisory warning.** Option E is not adopted.
+
+Both code changes touch protected paths. They join the accumulated-diff review
+and need a fresh campaign prefix. The recovery guard is not bypassed.
 
 ## Decision preservation
 

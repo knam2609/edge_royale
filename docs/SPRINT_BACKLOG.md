@@ -40,11 +40,11 @@
   - October 25 [tactical review](EDGER_TACTICAL_REVIEW.md):
     - Troop-placement ties are structural (identical all-zero 3×3 patches, lowest-index tie-break to back-center, a cell teachers use in 0.9% of tied rows).
     - Fireball loss has three measured causes: no lethal or cluster signal in the representation, opportunity states diluted by non-casting teachers, and RL suppression (P(Fireball) down 80–370× for r0/r1).
-    - Proposals, including broader defense and punishment scoring, await review.
+    - The proposals, including broader defense and punishment scoring, were approved on October 25 and are not yet implemented.
   - October 25 [parity-contract packet](EDGER_PARITY_CONTRACT_REVIEW.md):
     - All seven models agree with PyTorch on every argmax and tie set; only absolute placement error fails.
     - The float64 mean pool is decision-preserving (banks plus 70 full matches) and cuts the worst error from 11 to 3 ULP.
-    - Recommended for review: land the pool fix, then a hybrid `max(1e-5, 4 ULP)` tolerance. `1e-5` is unchanged until approved.
+    - Approved on October 25, not yet implemented: land the pool fix, then a hybrid `max(1e-5, 4 ULP)` tolerance. `1e-5` stays in force until that lands.
 - `AI-PERF-001` Increase production rollout/evaluation throughput.
   - Done when 10,000 safety games and full promotion evaluation complete in a practical campaign window.
 - `AI-OPS-001` Execute the first production campaign on dedicated AWS infrastructure.

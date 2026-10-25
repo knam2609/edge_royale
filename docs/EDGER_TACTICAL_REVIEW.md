@@ -6,7 +6,9 @@ exact troop-placement ties found by the September 28
 [tactical audit](EDGER_EVALUATION_DIAGNOSIS.md#tactical-suite-audit--september-27).
 
 It is read-only. No gate, floor, scorer, fixture, model, observation or runtime
-changed, and nothing here selects a model or clears a gate.
+changed, and nothing here selects a model or clears a gate. The owner approved
+the [proposals](#proposals--approved-october-25-not-yet-implemented) on
+October 25; none is implemented yet.
 
 - `X` = `~/edge_royale-runs/20261025-tactical-parity-warmup.noindex/`. Scripts and outputs are in `X/tactical/`; models are in `X/models/`; the corpus subset is in `X/corpus/`.
 
@@ -137,10 +139,19 @@ All seven models pick the teacher's cell on **1.5%** of structural rows, against
 60.6–62.7% of the other troop rows. Edger v2's back-center deployments are a
 tie-break artifact that the network cannot express a preference against.
 
-## Proposals — separate review, none implemented
+## Proposals — approved October 25, not yet implemented
 
-Each proposal needs its own review, tests and fresh provenance. None lowers a
-floor or adds a handcrafted spell or placement override.
+**Owner decision, October 25, 2026.** All four proposals are approved as
+written, including the scoring gate change in proposal 4. **None is implemented
+yet.** Each lands as its own change, with its own tests and fresh provenance.
+None lowers a floor or adds a handcrafted spell or placement override. The
+approval does not cover pushing, cloud actions or promotion.
+
+Notes for implementation:
+- **Order.** Land the approved [parity decision](EDGER_PARITY_CONTRACT_REVIEW.md#decision--october-25-2026) first: no current model passes the unchanged `1e-5`, so new models could not pass parity either.
+- **Schema.** Proposals 1 and 2 need a new v2 observation schema. Existing v2 models and caches will not load under it, so each needs a re-derived cache and a bounded local BC ablation. Live v1 runs `src/ai/mlPolicy.js` and is unaffected. Stay within the 50,000-parameter and 1 MB actor caps.
+- **Choosing the proposal 1 variant.** Choose between static geometry and the September 21 ablation by the measured structural-tie rate (47.9% of troop rows now) and the recomputed ln(k) bound.
+- **Gate change.** Proposal 4 changes a gate. Rebaseline the heuristic and v1 under the new scorers and bank, and record the before and after scores.
 
 1. **Placement representation.**
    - Add static geometry to the board: normalized row/column, own/enemy half, bridge/river cells and lane.

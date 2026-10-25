@@ -1,6 +1,10 @@
 # Current State
 
-- October 25, 2026: former Next Tasks 1–3 are done as read-only local diagnostics. The repository changes are docs only, uncommitted on `edger-v2-accumulated`. Evidence is in `X` = `~/edge_royale-runs/20261025-tactical-parity-warmup.noindex/` (`SHA256SUMS` `89dc327c…`, 376 files).
+- October 25, 2026 (later): the owner **approved** both recommendations below, and **neither is implemented**. Implementation is Next Tasks 1–2; the order and scope are in each doc's decision section.
+  - **Parity:** the float64 pool first, then option C with k = 4 against float32, explicit tie-set identity and fragile-margin reporting. Option F stays advisory.
+  - **Tactical:** all four proposals, including the scoring gate change.
+  - Gates, runtime and models are unchanged until those changes land.
+- October 25, 2026: former Next Tasks 1–3 are done as read-only local diagnostics. The repository changes are docs only, committed locally as `f904e68` on `edger-v2-accumulated` (not pushed). Evidence is in `X` = `~/edge_royale-runs/20261025-tactical-parity-warmup.noindex/` (`SHA256SUMS` `89dc327c…`, 376 files).
   - **Tactical** ([review](docs/EDGER_TACTICAL_REVIEW.md)). Troop-placement ties are structural.
     - 84 of the 86 fixture ties, and all 3,334 tied corpus troop rows, have identical all-zero 3×3 input patches.
     - The lowest-index tie-break picks own back-center, which teachers use in 0.9% of those rows. Every model matches the teacher on 1.5% of them, against about 62% elsewhere.
@@ -8,11 +12,11 @@
       - the card head has no lethal or cluster signal: no step at the 207-HP threshold, and the HP signal arrives only via globals 51/95;
       - opportunity states are 1–5% of rows, diluted by aggressive and defender, which never cast;
       - RL suppression: P(Fireball) is down 80–370× for r0/r1 and is no longer conditioned on opportunity.
-    - Live v1 casts lethal Fireball in 76% of corpus opportunities. Proposals await review.
+    - Live v1 casts lethal Fireball in 76% of corpus opportunities. The proposals were approved on October 25 and are not implemented.
   - **Parity** ([packet](docs/EDGER_PARITY_CONTRACT_REVIEW.md)).
     - All seven models agree with PyTorch on every masked argmax and tie set; only absolute placement error fails, with logits of 149–746.
     - The float64 mean pool cuts the worst error from 11 to 3 ULP against float32. It brings card and delay within `1e-5` and changes no decision (banks plus 70 full matches, 3,785 decisions).
-    - Recommended for review: land the pool fix, then `abs ≤ max(1e-5, 4·ulp32)` against float32, with explicit tie-set identity. `1e-5` is unchanged.
+    - Approved on October 25, not yet implemented: land the pool fix, then `abs ≤ max(1e-5, 4·ulp32)` against float32, with explicit tie-set identity. `1e-5` stays in force until that lands.
   - **Warm-up** ([browser confirmation](docs/EDGER_RUNTIME_REVIEW.md#browser-confirmation-of-the-warm-up--october-25-2026)), in headless Chromium with 15 fresh pages per condition:
     - with the warm-up, tick 1 costs 9.8 ms (v1) and 8.5 ms (r0), and 0 of 30 pages dropped a frame;
     - without it, tick 1 costs 13.6 and 13.7 ms, and 20 of 30 pages dropped one;
@@ -43,7 +47,7 @@
 - The repository now lives at `~/Developer/edge_royale`, outside iCloud Desktop & Documents. Reviewed audit copies use that path.
 - The accepted freeze review (October 8) and headed validation (122/122, 2,828.0 s) and dry run (8/8) stand unchanged. Those durations are validation, not cost evidence.
 - September 29 [confirmation](docs/EDGER_REPLICATION_REVIEW.md#confirmation-run--september-29-03450646-utc-13451646-aest) is complete on immutable plan `9e6b6da2…`: 9,600 games plus 336 identical repeats, no illegal attempts, stops or reruns, 2.96 h of 4.5 h. Every-tick minus learned gains are +0.158 [+0.128, +0.190] vs v1, +0.062 [+0.040, +0.082] vs aggressive and +0.097 [+0.073, +0.122] vs heuristic; four research rules hold. These trained-weight-specific results and the spent holdout clear no promotion gate. All eight replication exports remain non-promotable.
-- Live v1 remains `895d5541b5650e620db69ccfe999833c05f93abcae08374710d79d0dd913c3aa`; `main` is `0270d828686a3ef984b89c6043a46a1c306dc0e6`. On October 25 the accumulated work was committed as-is to the local branch `edger-v2-accumulated`. It has not been pushed and still needs the publication review (task 7). `campaigns/20260904-v2-recovery` remains failed and immutable.
+- Live v1 remains `895d5541b5650e620db69ccfe999833c05f93abcae08374710d79d0dd913c3aa`; `main` is `0270d828686a3ef984b89c6043a46a1c306dc0e6`. On October 25 the accumulated work was committed as-is to the local branch `edger-v2-accumulated` (`28311bc`), followed by the October 25 docs (`f904e68`). It has not been pushed and still needs the publication review (task 7). `campaigns/20260904-v2-recovery` remains failed and immutable.
 - The October 24 session was read-only against `A`/`M`. It wrote review evidence to the new `R`, including `R/speedup/`, and added the review doc and the doc updates. Its code change is limited to `src/ai/botRuntime.js`, `src/client/webGame.js`, `tests/bot-runtime.test.js` and the webGame pin in `scripts/edger-v2-runtime-cost-stage.mjs`. There was no gameplay-rule, policy-weight or controller change, frozen profiling run, cloud action, Git staging or commit.
 
 # Source of Truth
@@ -83,24 +87,38 @@
 - Tactical: v1 scores 0.451; two scorers accept distant back-center plays. Every v2 model picks Giant in both spell fixtures (Fireball probability ≤0.015); forced spells already use maximum-scoring cells.
   - The placement-tie cause is now established: a 3×3 receptive field, no coordinate or geometry channels, and the lowest-index tie-break. 47.9% of corpus troop rows are structurally tied.
   - Fireball causes are measured but not fixed.
-  - The representation, data/learning and scoring proposals are unreviewed. The RL suppression mechanism is inferred from outputs, not traced in training logs.
+  - The representation, data/learning and scoring proposals are approved (October 25) but not implemented. The RL suppression mechanism is inferred from outputs, not traced in training logs.
 - Parity: placement alone fails, at magnitudes of 149–746. Under every implementation all seven models fail the unchanged `1e-5` against both float32 and float64 PyTorch, while decisions agree everywhere.
   - The JS float32 mean pool is the main runtime deviation (fixed by V1 in scratch only); decimal-double weights matter only against float64.
-  - No tolerance, runtime or semantics change is approved. Any adopted ULP multiple must be re-measured on the reference host's PyTorch.
+  - The pool fix and option C (k = 4) are approved (October 25) but not implemented, so every model still fails the unchanged `1e-5`. The adopted ULP multiple must be re-measured on the reference host's PyTorch.
 - September 27 provenance: plan mtime 06:10:14Z predates launch 06:14:06Z; analysis was written 06:15:43–06:15:57Z, after training began and before evaluation at 07:35:39Z. Declared `frozen_at_utc: 06:15:00Z` and earlier analysis content remain unexplained. Confirmation used actual timestamps and pre-run analysis hashes; it does not repair predecessor provenance.
 - Historical league regression remains unattributed; equal-update experiment outstanding. Held-out imitation loss worsens in every RL arm (5.1–8.3 vs parent 3.566) despite better play; sampled rollout scores also mislead. Subset weights/derived manifest hash remain machine-specific.
 
 # Next Tasks
 
-1. Decide the [parity packet](docs/EDGER_PARITY_CONTRACT_REVIEW.md) with the owner.
-   - If approved, land the float64 mean pool in `src/ai/v2/policy.js` as its own change. It needs bank/match decision-identity tests, `npm test`, the bot-bench gate and a refreshed runtime-cost pin. V2 (`Math.fround` weights) is optional.
-   - Then decide the contract. The recommendation is `max(1e-5, 4·ulp32)` against float32 plus explicit tie-set identity and fragile-margin reporting.
-   - Do not relax `1e-5` or change semantics without that approval.
-2. Decide the [tactical proposals](docs/EDGER_TACTICAL_REVIEW.md#proposals--separate-review-none-implemented).
-   - Representation: geometry channels or the September 21 ablation, and spell-opportunity globals, as a bounded BC ablation with recomputed ln(k).
+1. Implement the approved [parity decision](docs/EDGER_PARITY_CONTRACT_REVIEW.md#decision--october-25-2026) (owner approval October 25; nothing has landed).
+   - First, the float64 mean pool in `meanPool`, `src/ai/v2/policy.js`, as its own change.
+     - Add a pool-precision test and bank/full-match decision-identity tests, then run `npm test` and the bot-bench gate. Live v1 runs `src/ai/mlPolicy.js`, so its bot-bench output should be byte-identical.
+     - Defer V2 (`Math.fround` weights).
+     - No runtime-cost hash pins this file; never touch the frozen stage.
+   - Then option C, k = 4, against float32: `abs ≤ max(1e-5, 4·ulp32(max(|js|, |ref|)))`.
+     - Change it in both `EDGER_V2_PARITY_TOLERANCE` (`scripts/edger-v2-evaluation-core.mjs`) and `PARITY_ABSOLUTE_TOLERANCE` (`scripts/edger-v2-training.py`).
+     - Add explicit tie-set identity and fragile-margin reporting.
+     - Tests must show `1e-5` unchanged below magnitude 32, V0 still rejected for learned r0 and fixed r0–r2, and the September 21 counterexamples still caught.
+     - Update `docs/EDGER_TRAINING.md`.
+   - Option F stays advisory. Re-measure k on the reference host before a campaign relies on it.
+   - Both are protected changes: they go into the task 7 review and need the task 8 fresh prefix.
+2. Implement the approved [tactical proposals](docs/EDGER_TACTICAL_REVIEW.md#proposals--approved-october-25-not-yet-implemented) after task 1, since new models must pass the new parity contract.
+   - Representation: geometry channels or the September 21 ablation, plus spell-opportunity globals.
+     - This is a new v2 observation schema, needing a re-derived cache and a bounded local BC ablation within the 50,000-parameter / 1 MB caps.
+     - Choose the variant by the structural-tie rate (47.9% now) and the recomputed ln(k).
    - Data/learning: teacher filtering, opportunity oversampling, a KL/entropy floor and an opportunity-capture diagnostic.
-   - Broader defense/punishment scoring plus a held-out, corpus-derived opportunity bank. This is a gate change; rebaseline the heuristic and v1.
-   - Do not lower floors or add handcrafted spell or placement overrides.
+   - Scoring, an approved gate change:
+     - intercept-aware defense and pressure-based punishment;
+     - blue-side mirrors and per-category variants;
+     - a held-out opportunity bank drawn fresh from test-split episodes.
+     - Rebaseline the heuristic and v1, and record the before and after scores.
+   - Do not lower floors, add handcrafted spell or placement overrides, or change the tie order.
 3. Optional: repeat the warm-up check headed at DPR 2 (it shows windows on the display). Mobile and 120 Hz stay with the separate cost measurement. The implemented `src/ai` speed-ups are protected runtime changes for the accumulated-diff review (task 7) and fresh scaling provenance. Do not add a forced-PASS shortcut under learned delay.
 4. Prepare the timing-only `c7g.4xlarge` packet from the validated harness, for separate approval. It needs exact launch/SSM/download/termination commands, a checksummed bundle, the current official price ceiling, ≤60-minute lifetime/storage bounds and verified cleanup. Cloud admission stays pending until the A$10/month account budget can accommodate it. Preserve existing-method p95 ≤5 ms.
 5. Attribute historical league regression locally: same parent, production recipe vs fresh on-policy loop, equal updates, paired development evaluation, at least two runs/arm.
@@ -115,7 +133,7 @@
 
 October 25, 2026. `X` is as above; `N` is the durable Node v20.20.2 (defined under October 8). Exact commands are in each doc's Reproduction section.
 
-- Repository changes are docs-only; `git diff --check` passes. `npm test`, smoke and bot-bench were not rerun, since no code changed (the October 24 runs stand).
+- Repository changes are docs-only, including the later approval record; `git diff --check` passes. `npm test`, smoke and bot-bench were not rerun, since no code changed (the October 24 runs stand).
 - Task 1 inputs:
   - the learned models match the confirmation checksums, and the fixed models reproduce the September 28 audit probabilities;
   - cache `aab1f8e8…` is verified, and all 160 episodes pass their manifest checksums;
