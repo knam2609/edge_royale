@@ -29,7 +29,7 @@ from torch.utils.data import DataLoader, Dataset
 MODEL_SCHEMA = "edger_policy_model_v2"
 CHECKPOINT_SCHEMA = "edger_v2_checkpoint_v1"
 ACTION_SCHEMA = "edger_autoregressive_action_v2"
-OBSERVATION_SCHEMA = "edger_oracle_observation_v2"
+OBSERVATION_SCHEMA = "edger_oracle_observation_v3"
 ARCHITECTURE = {
     "type": "autoregressive_masked_conv_actor",
     "board_channels": 16,
@@ -46,8 +46,8 @@ ARCHITECTURE = {
 }
 BOARD_HEIGHT = 32
 BOARD_WIDTH = 18
-BOARD_INPUT_CHANNELS = 24
-GLOBAL_FEATURES = 96
+BOARD_INPUT_CHANNELS = 31
+GLOBAL_FEATURES = 104
 CARD_ACTIONS = 9
 PLACEMENTS = BOARD_HEIGHT * BOARD_WIDTH
 DELAY_BINS = 200
@@ -379,6 +379,16 @@ def parquet_metadata(path: str | Path) -> dict[str, str]:
         key.decode("utf8"): value.decode("utf8")
         for key, value in (schema.metadata or {}).items()
     }
+
+
+def require_cache_observation_schema(metadata: dict[str, str], path: str | Path) -> None:
+    # Episodes keep their recording cohort; only the cache fixes the observation.
+    found = metadata.get("observation_schema_version")
+    if found != OBSERVATION_SCHEMA:
+        raise ValueError(
+            f"decision cache {path} has observation schema {found}, not "
+            f"{OBSERVATION_SCHEMA}; re-derive it from the episodes"
+        )
 
 
 def iter_parquet_rows(
@@ -756,6 +766,7 @@ def run_bc(args: argparse.Namespace) -> None:
     require_clean_git()
     seed_everything(args.seed)
     metadata = parquet_metadata(args.dataset)
+    require_cache_observation_schema(metadata, args.dataset)
     train_samples = count_parquet_rows(args.dataset, split="train")
     validation_samples = count_parquet_rows(args.dataset, split="validation")
     if not train_samples:
@@ -862,6 +873,7 @@ def run_offline(args: argparse.Namespace) -> None:
         parameter.requires_grad_(False)
 
     metadata = parquet_metadata(args.dataset)
+    require_cache_observation_schema(metadata, args.dataset)
     train_samples = count_parquet_rows(args.dataset, split="train")
     validation_samples = count_parquet_rows(args.dataset, split="validation")
     vocab = parent["opponent_stratum_vocabulary"]
@@ -1141,6 +1153,7 @@ def run_vtrace(args: argparse.Namespace) -> None:
     device = torch.device(args.device)
     parent, model = load_checkpoint(args.checkpoint, device)
     metadata = parquet_metadata(args.dataset)
+    require_cache_observation_schema(metadata, args.dataset)
     vocab = parent["opponent_stratum_vocabulary"]
     validation_samples = count_parquet_rows(args.dataset, split="validation")
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
@@ -1427,6 +1440,7 @@ def run_prepare(args: argparse.Namespace) -> None:
             arrow_schema = DECISION_CACHE_SCHEMA.with_metadata(
                 {
                     b"schema_version": DECISION_PARQUET_SCHEMA_VERSION.encode(),
+                    b"observation_schema_version": OBSERVATION_SCHEMA.encode(),
                     b"manifest_hash": args.manifest_hash.encode(),
                     b"scale": str(args.scale).encode(),
                     b"compression": b"zstd",
@@ -1488,6 +1502,7 @@ def run_prepare(args: argparse.Namespace) -> None:
         "manifest_hash": args.manifest_hash,
         "scale": args.scale,
         "parquet_schema_version": DECISION_PARQUET_SCHEMA_VERSION,
+        "observation_schema_version": OBSERVATION_SCHEMA,
         "parquet_schema_sha256": parquet_schema_sha256(persisted_schema),
         "logical_content_sha256": logical_content.hexdigest(),
         "compression": "zstd",
@@ -1508,6 +1523,7 @@ def run_validate_cache(args: argparse.Namespace) -> None:
     metadata = parquet_metadata(dataset)
     expected_metadata = {
         "schema_version": DECISION_PARQUET_SCHEMA_VERSION,
+        "observation_schema_version": OBSERVATION_SCHEMA,
         "manifest_hash": args.manifest_hash,
         "scale": "1.0",
         "compression": "zstd",

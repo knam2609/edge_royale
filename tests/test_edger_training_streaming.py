@@ -56,8 +56,8 @@ def decision_row(index: int, split: str) -> dict[str, object]:
         "tick": index + 1,
         "actor": "red",
         "opponent_stratum": "edger_heuristic",
-        "board": [0.0] * (32 * 18 * 24),
-        "global": [0.0] * 96,
+        "board": [0.0] * (32 * 18 * training.BOARD_INPUT_CHANNELS),
+        "global": [0.0] * training.GLOBAL_FEATURES,
         "legal_masks": {
             "card": [1] * 9,
             "placement": [1] * (32 * 18),
@@ -215,6 +215,17 @@ class StreamingTrainingTest(TrainingFixture):
         with self.assertRaises(subprocess.CalledProcessError) as rejected:
             self.validate_cache(output, "0" * 64)
         self.assertIn("schema checksum mismatch", rejected.exception.stderr)
+
+    def test_cache_records_and_requires_the_observation_schema(self) -> None:
+        rows = [decision_row(index, "train") for index in range(3)]
+        output = self.root / "observation.parquet"
+        report = json.loads(self.prepare(rows, output).read_text())
+        self.assertEqual(report["observation_schema_version"], training.OBSERVATION_SCHEMA)
+        metadata = training.parquet_metadata(output)
+        training.require_cache_observation_schema(metadata, output)
+        for stale in ({}, {"observation_schema_version": "edger_oracle_observation_v2"}):
+            with self.assertRaisesRegex(ValueError, "re-derive"):
+                training.require_cache_observation_schema(stale, output)
 
     def test_logical_hash_accepts_lossless_numeric_round_trip_only(self) -> None:
         rows = [recovery_decision_row(index) for index in range(257)]

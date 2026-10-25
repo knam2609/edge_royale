@@ -25,7 +25,7 @@ An immutable episode contains:
 - exact 18×32 Royale arena descriptor
 - all six initial tower entities
 - initial hands and deck queues
-- rules, simulator, replay, observation, action, and reward versions
+- rules, simulator, replay, observation, action, and reward versions (the observation version is the one in force when episodes were first recorded; see below)
 - blue/red policy and checkpoint IDs
 - complete accepted action stream and sparse decision stream
 - 1–200 tick next-decision delays
@@ -74,7 +74,7 @@ Long waits are represented by deterministic `PASS` decisions at most every 200 t
 
 ### `edger_dataset_manifest_v1`
 
-Manifests are immutable lists of object URIs and compressed checksums for one compatibility cohort. Whole games are split by `SHA-256 episode ID mod 100`:
+Manifests are immutable lists of object URIs and compressed checksums for one compatibility cohort. Episodes hold replays and decisions, never observations, so the cohort pins `edger_oracle_observation_v2`, the schema in force when the corpus was recorded (`EDGER_EPISODE_OBSERVATION_SCHEMA_VERSION`). Each cache derives observations afresh with the current builder and records that schema (`observation_schema_version` in the Parquet metadata and build report); BC, offline and V-trace refuse a cache built for another observation schema. The October 25, 2026 move to `edger_oracle_observation_v3` therefore re-derives caches but leaves existing episodes, ids and manifest hashes valid. Whole games are split by `SHA-256 episode ID mod 100`:
 
 - 0–79: train
 - 80–89: validation
@@ -96,8 +96,9 @@ Schema: `edger_policy_model_v2`
 
 Observation:
 
-- `32×18×24` relative-side board
-- 96 global features
+- `32×18×31` relative-side board: 24 entity and pending-effect channels, plus 7 static geometry channels in the actor's canonical frame (normalized row and column, own half, enemy half, unpathable river, bridge, lane)
+- 104 global features: 96 state summaries, plus 8 spell-opportunity inputs (for each enemy tower, whether its HP is at or below Fireball and Arrows tower damage; the most enemy troops one Fireball or Arrows cast could hit now, by the engine's impact rule at every cell centre). These are inputs, not overrides.
+- schema `edger_oracle_observation_v3` (October 25, 2026; [tactical review](EDGER_TACTICAL_REVIEW.md) proposals 1–2)
 - full oracle elixir, hands, queues, phase, timing, tower/pocket state, motion, targeting, cooldown, and pending-effect state
 - blue observations rotate 180 degrees so the acting side has one canonical orientation
 
@@ -111,7 +112,7 @@ Actor:
 - conditioned 1–200 tick delay head
 - stable production order: PASS, fixed deck, row-major `(y,x)`, ascending delay
 
-The exported actor has 36,402 parameters and must stay under 50,000 parameters and 1 MB. The opponent-stratum embedding and value head exist only in PyTorch checkpoints. V2 inference never calls the handcrafted prior.
+The exported actor has 37,922 parameters (36,402 under the v2 observation) and must stay under 50,000 parameters and 1 MB. The opponent-stratum embedding and value head exist only in PyTorch checkpoints. V2 inference never calls the handcrafted prior.
 
 Export writes each weight as the shortest decimal that reloads as the identical
 trained float32, and refuses to emit an actor whose weights do not reload

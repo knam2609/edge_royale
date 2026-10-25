@@ -7,8 +7,10 @@ exact troop-placement ties found by the September 28
 
 It is read-only. No gate, floor, scorer, fixture, model, observation or runtime
 changed, and nothing here selects a model or clears a gate. The owner approved
-the [proposals](#proposals--approved-october-25-not-yet-implemented) on
-October 25; none is implemented yet.
+the [proposals](#proposals--approved-october-25) on
+October 25. Proposals 1–2 were implemented and ablated later (see
+[below](#proposals-12-observation-v3-and-bc-ablation--october-2526-2026));
+those changes are outside this read-only investigation.
 
 - `X` = `~/edge_royale-runs/20261025-tactical-parity-warmup.noindex/`. Scripts and outputs are in `X/tactical/`; models are in `X/models/`; the corpus subset is in `X/corpus/`.
 
@@ -139,11 +141,13 @@ All seven models pick the teacher's cell on **1.5%** of structural rows, against
 60.6–62.7% of the other troop rows. Edger v2's back-center deployments are a
 tie-break artifact that the network cannot express a preference against.
 
-## Proposals — approved October 25, not yet implemented
+## Proposals — approved October 25
 
 **Owner decision, October 25, 2026.** All four proposals are approved as
-written, including the scoring gate change in proposal 4. **None is implemented
-yet.** Each lands as its own change, with its own tests and fresh provenance.
+written, including the scoring gate change in proposal 4. Proposals 1 and 2 are
+implemented as observation schema v3 and committed locally as a checkpoint. After the
+[BC ablation](#proposals-12-observation-v3-and-bc-ablation--october-2526-2026) the owner chose a bounded local RL
+comparison (October 26) before the schema is final. Proposals 3 and 4 are not implemented. Each lands as its own change, with its own tests and fresh provenance.
 None lowers a floor or adds a handcrafted spell or placement override. The
 approval does not cover pushing, cloud actions or promotion.
 
@@ -176,6 +180,60 @@ Notes for implementation:
    - **Corpus-derived bank.** Add a held-out bank of real states from test-split episodes, which training never reads, labelled by the deterministic opportunity checks above. Score capture rate. The 160-episode subset alone has 92 lethal and 423 cluster rows, but those are training and validation rows, so the bank must be drawn fresh.
    - Rebaseline the heuristic and v1 under any new scorer. Floors are not lowered.
 
+## Proposals 1–2: observation v3 and BC ablation — October 25–26, 2026
+
+**Status: committed locally on `edger-v2-accumulated` (October 26) as a
+checkpoint; the schema is not final.** The approved selection criterion and
+BC-stage play disagree. On October 26 the owner chose option 3 below: a bounded
+local RL comparison from the v2 and v3 BC parents decides between v3, spell
+globals only and v2. Until it reports, nothing should build on v3 (no campaign
+provenance, no promotion).
+Live v1 is unaffected. Evidence is in `V` = `~/edge_royale-runs/20261025-observation-v3.noindex/`
+(`summary.md`, `teacher-placement.txt`, `README.md`, `SHA256SUMS`).
+
+**What changed** (`src/ai/v2/observation.js`, schema `edger_oracle_observation_v3`):
+- Board `32×18×31`. Channels 24–30 are static geometry in the actor's canonical frame: normalized row and column, own half, enemy half, unpathable river, bridge, and lane (−1 left, +1 right). Both sides see identical geometry.
+- Globals 96–103 are spell opportunities, inputs only: per enemy tower, HP ≤ Fireball and ≤ Arrows tower damage, and the most enemy troops one Fireball or Arrows cast could hit now. Hits use the engine's impact rule (troop centre within the spell radius) at every cell centre, which is stricter than the fixture scorers' radius-plus-entity-radius check.
+- The actor grows from 36,402 to 37,922 parameters (797,830 bytes exported), within both caps.
+- Episodes hold replays, never observations, so the episode compatibility cohort stays pinned to `edger_oracle_observation_v2` (`EDGER_EPISODE_OBSERVATION_SCHEMA_VERSION`). Existing episodes, ids and manifest hashes stay valid. Caches record `observation_schema_version`, and BC, offline and V-trace refuse a cache built for another schema.
+- No tie order, floor, scorer, fixture or gate changed. Existing v2 models do not load under v3.
+
+**Ablation.** The frozen September 21 160-episode subset, re-derived four ways
+from one local manifest (`089274c8…`): the v2 observation, full v3, geometry
+only (`v3g`) and spell globals only (`v3s`). The v3 cache equals the v2 cache
+on channels 0–23 and globals 0–95 in all 9,343 rows. Each arm ran the identical
+6-epoch BC recipe with seeds 20260718–20260720. Each model then got held-out
+imitation checks, the evaluator preflight, and side-paired learned-cadence
+games: 48 pairs against the heuristic and 16 pairs each against aggressive and
+defender, all on development seeds.
+
+- **Structural ties and ln(k).** v3 has 0 structurally tied troop rows and an ln(k) bound of 0 in both splits; the v2 cache has 48.8% (train) and 44.7% (validation), with ln(k) 1.32 and 1.22 per non-PASS row. On this criterion geometry is the best possible.
+- **Imitation and tactics.** Geometry lowers validation placement loss from 1.53–1.56 to 1.26–1.31 and raises the tactical aggregate from 0.36–0.39 to 0.45–0.60. Spell globals alone change neither.
+- **Fireball.** Spell globals barely move it under BC. P(Fireball) in lethal states rises from 0.05–0.09 to 0.09–0.14, and Across the six spell-global models, Fireball is the argmax once in 108 lethal model-rows (18 validation lethal rows each). Teachers cast in only 17% of validation lethal states, so imitation cannot make Fireball the argmax there; this needs proposal 3.
+- **Play.** Geometry costs about 0.3 points against the heuristic. Mean points per arm across seeds: v2 0.632, v3s 0.576, v3 0.333, v3g 0.323. Every geometry model (0.25–0.48) scores below every non-geometry model (0.55–0.73), a complete separation with chance odds of 1 in 924. Against aggressive the drop is smaller and noisier (0.71 vs 0.56 mean); defender is near 1.0 for every arm. All 12 models pass the new parity contract (worst 0.29 of tolerance), with zero illegal attempts.
+
+**Why geometry loses games.** The geometry models place 79–88% of troops on the
+front row (y = 14.5) and almost none on the back rows. The v2 models put
+45–52% on back-center (index 99) or the other back rows: that is the
+lowest-index tie-break, which no strong teacher uses. Live v1 places 90% of its
+corpus troops on the front row and the heuristic 93%; only random uses the back
+rows (20%). So the geometry models imitate the strongest teachers faithfully,
+while the v2 models' accidental back-row play beats imperfect imitation of
+front-row play against the heuristic. Two inferences follow, neither
+measured: any tie-free variant, including the September 21 coordinate
+ablation, should learn the same front-row target, and teacher filtering
+(proposal 3) does not change that target.
+
+**Options for the owner** (option 3 chosen, October 26):
+1. Land v3 as approved and accept the BC-stage regression. The policy can now express a placement preference, so RL may rediscover back-row play where it pays. That is unmeasured, and the next parent starts weaker.
+2. Land spell globals only, with no geometry channels. This keeps the v2 level of BC play but also keeps the structural ties, against the approved criterion, and the spell globals showed no measurable BC benefit on their own.
+3. Hold both and first run a bounded local RL comparison from the v2 and v3 BC parents. That is a larger experiment than the approved BC ablation.
+
+The PyTorch held-out argmax overstates structural matches for the tied-board arms (v2 and v3s: 0.05–0.39),
+because floating-point noise breaks exact ties differently from runtime.
+Runtime's lowest-index rule matches the teacher on 11 of 663 validation
+structural rows (1.7%), in line with the 1.5% above.
+
 ## Limits
 
 - The corpus is a 160-episode subset, not the production corpus.
@@ -194,4 +252,21 @@ cd "$X/tactical"
 $N probe-fixtures.mjs fixtures.json $MODELS
 $N probe-corpus.mjs "$X/corpus/subset-manifest.json" "$X/corpus/objects" corpus-rows.jsonl $MODELS
 python3 -I aggregate-corpus.py corpus-rows.jsonl corpus-summary.json
+```
+
+Observation v3 ablation (`V/README.md` describes every file). The caches were
+built with each mirror's `scripts/edger-dataset.mjs --manifest "$V/manifest.json"`;
+that exact command line was not saved, but the build reports were.
+
+```bash
+V=~/edge_royale-runs/20261025-observation-v3.noindex
+export PATH=$HOME/edge_royale-runs/20260929T0346Z-cadence-confirmation/node-v20.20.2/bin:$PATH
+cd "$V"
+python3 -I structural.py v2/subset-decisions.parquet 24 > structural-v2.json
+python3 -I structural.py v3/subset-decisions.parquet 31 v2/subset-decisions.parquet > structural-v3.json
+bc/run.sh            # v2 and v3 BC; eval-bc.py, export, js-eval.mjs and games.mjs per model as in bc/run-arms-resume.sh
+bc/run-arms.sh       # v3g and v3s BC
+bc/run-arms-resume.sh
+python3 -I teacher-placement.py "$X/tactical/corpus-rows.jsonl" > teacher-placement.txt
+python3 -I summarize.py > summary.md
 ```

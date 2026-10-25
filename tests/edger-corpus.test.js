@@ -6,6 +6,8 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 
 import {
+  EDGER_COMPATIBILITY_COHORT,
+  EDGER_EPISODE_OBSERVATION_SCHEMA_VERSION,
   buildDatasetManifest,
   createTrainingEpisode,
   deriveDecisionSequence,
@@ -26,6 +28,13 @@ import {
   cloneProductionInitialCardState,
   createProductionEngine,
 } from "../src/sim/productionMatch.js";
+import {
+  EDGER_V2_BOARD_CHANNELS,
+  EDGER_V2_BOARD_HEIGHT,
+  EDGER_V2_BOARD_WIDTH,
+  EDGER_V2_GLOBAL_FEATURES,
+  EDGER_V2_OBSERVATION_SCHEMA_VERSION,
+} from "../src/ai/v2/observation.js";
 
 function makeCompletePassiveEpisode({
   seed = 7201,
@@ -134,6 +143,24 @@ test("incompatible schemas are rejected before entering a manifest", () => {
     () => validateTrainingEpisode(incompatible),
     /incompatible observation_schema_version/,
   );
+});
+
+test("episodes keep the v2 recording cohort while caches derive the current observation", () => {
+  // Exact pre-v3 cohort: existing episodes, ids and manifest hashes rely on it.
+  assert.equal(
+    EDGER_COMPATIBILITY_COHORT,
+    "edge_royale_rules_2026_07_18|edge_royale_simulator_v1|1.1|edger_oracle_observation_v2|edger_autoregressive_action_v2",
+  );
+  assert.equal(EDGER_EPISODE_OBSERVATION_SCHEMA_VERSION, "edger_oracle_observation_v2");
+  assert.equal(EDGER_V2_OBSERVATION_SCHEMA_VERSION, "edger_oracle_observation_v3");
+  const episode = makeCompletePassiveEpisode({ seed: 7205 });
+  assert.equal(episode.compatibility.observation_schema_version, "edger_oracle_observation_v2");
+  const sample = deriveDecisionSequence(episode).samples[0];
+  assert.equal(
+    sample.board.length,
+    EDGER_V2_BOARD_HEIGHT * EDGER_V2_BOARD_WIDTH * EDGER_V2_BOARD_CHANNELS,
+  );
+  assert.equal(sample.global.length, EDGER_V2_GLOBAL_FEATURES);
 });
 
 test("decision derivation uses sparse delays and excludes unknown human probabilities from V-trace", () => {

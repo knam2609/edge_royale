@@ -131,8 +131,10 @@ test("diagnostic adapter is browser-safe, separate from the live client and uses
   }
 });
 
+// The v3 observation's extra inputs shift the seeded weight draw, so the
+// fixture seeds were re-chosen (11 -> 12, 17 -> 19) to keep the coverage below.
 test("adapter matches the frozen reference and production selector for both controllers and actors", () => {
-  const model = randomModel(11, { playBias: 1.5 });
+  const model = randomModel(12, { playBias: 1.5 });
   const seen = { compared: 0, plays: 0, passes: 0, delays: new Set(), placements: new Set() };
   for (const engine of walkStates(model, 240)) {
     for (const actor of ACTORS) {
@@ -326,7 +328,7 @@ test("state rules classify forced PASS, elective, spell targets, busy combat, po
 });
 
 test("full matches reproduce reference scheduling, counts and hashes with the timing hook off and on", () => {
-  const model = randomModel(17, { playBias: 1.5 });
+  const model = randomModel(19, { playBias: 1.5 });
   const conditions = [
     [LEARNED, "blue"],
     [LEARNED, "red"],

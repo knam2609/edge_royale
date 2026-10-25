@@ -7,7 +7,6 @@ import { gunzipSync, gzipSync } from "node:zlib";
 import {
   EDGER_V2_ACTION_SPACE_VERSION,
   EDGER_V2_DELAY_BINS,
-  EDGER_V2_OBSERVATION_SCHEMA_VERSION,
   buildEdgerV2LegalMasks,
   buildEdgerV2Observation,
   encodeEdgerV2Action,
@@ -28,11 +27,18 @@ export const EDGER_TRAINING_EPISODE_SCHEMA_VERSION = "edger_training_episode_v1"
 export const EDGER_DECISION_SEQUENCE_SCHEMA_VERSION = "edger_decision_sequence_v1";
 export const EDGER_DATASET_MANIFEST_SCHEMA_VERSION = "edger_dataset_manifest_v1";
 export const EDGER_REWARD_VERSION = "edger_potential_reward_v1";
+// Episodes hold replays and decisions, never observations: every cache derives
+// observations afresh with the current builder. The episode cohort therefore
+// stays pinned to the observation schema in force when episodes were first
+// recorded, so a cache-time observation change (v3, October 25, 2026) leaves
+// existing episodes, ids and manifest hashes valid. Caches and models carry
+// the current observation schema instead.
+export const EDGER_EPISODE_OBSERVATION_SCHEMA_VERSION = "edger_oracle_observation_v2";
 export const EDGER_COMPATIBILITY_COHORT = [
   EDGER_RULES_VERSION,
   EDGER_SIMULATOR_VERSION,
   REPLAY_SCHEMA_VERSION,
-  EDGER_V2_OBSERVATION_SCHEMA_VERSION,
+  EDGER_EPISODE_OBSERVATION_SCHEMA_VERSION,
   EDGER_V2_ACTION_SPACE_VERSION,
 ].join("|");
 export const DEFAULT_CORPUS_STORE = "artifacts/edger-training/corpus";
@@ -236,7 +242,7 @@ export function createTrainingEpisode({
       rules_version: EDGER_RULES_VERSION,
       simulator_version: EDGER_SIMULATOR_VERSION,
       replay_schema_version: REPLAY_SCHEMA_VERSION,
-      observation_schema_version: EDGER_V2_OBSERVATION_SCHEMA_VERSION,
+      observation_schema_version: EDGER_EPISODE_OBSERVATION_SCHEMA_VERSION,
       action_space_version: EDGER_V2_ACTION_SPACE_VERSION,
       reward_version: EDGER_REWARD_VERSION,
     },
@@ -277,7 +283,7 @@ function assertCompatibility(episode) {
     rules_version: EDGER_RULES_VERSION,
     simulator_version: EDGER_SIMULATOR_VERSION,
     replay_schema_version: REPLAY_SCHEMA_VERSION,
-    observation_schema_version: EDGER_V2_OBSERVATION_SCHEMA_VERSION,
+    observation_schema_version: EDGER_EPISODE_OBSERVATION_SCHEMA_VERSION,
     action_space_version: EDGER_V2_ACTION_SPACE_VERSION,
     reward_version: EDGER_REWARD_VERSION,
   };

@@ -1,13 +1,16 @@
 import { DEFAULT_DECK, getCard } from "../../sim/cards.js";
 import { MATCH_CONFIG, getMatchPhase } from "../../sim/config.js";
-import { getTowerStats } from "../../sim/stats.js";
+import { createRoyaleArena, isRiverTile } from "../../sim/map.js";
+import { getSpellStats, getTowerStats } from "../../sim/stats.js";
 
-export const EDGER_V2_OBSERVATION_SCHEMA_VERSION = "edger_oracle_observation_v2";
+// v3 (October 25, 2026) adds static geometry channels 24-30 and spell
+// opportunity globals 96-103; see docs/EDGER_TACTICAL_REVIEW.md proposals 1-2.
+export const EDGER_V2_OBSERVATION_SCHEMA_VERSION = "edger_oracle_observation_v3";
 export const EDGER_V2_ACTION_SPACE_VERSION = "edger_autoregressive_action_v2";
 export const EDGER_V2_BOARD_HEIGHT = 32;
 export const EDGER_V2_BOARD_WIDTH = 18;
-export const EDGER_V2_BOARD_CHANNELS = 24;
-export const EDGER_V2_GLOBAL_FEATURES = 96;
+export const EDGER_V2_BOARD_CHANNELS = 31;
+export const EDGER_V2_GLOBAL_FEATURES = 104;
 export const EDGER_V2_CARD_ACTIONS = Object.freeze(["PASS", ...DEFAULT_DECK]);
 export const EDGER_V2_DELAY_BINS = 200;
 
@@ -48,6 +51,38 @@ function canonicalVector(actor, x, y) {
   }
   return { x, y };
 }
+
+const GEOMETRY_CHANNEL = 24;
+const GEOMETRY_CHANNELS = 7;
+const FIREBALL = getSpellStats("fireball");
+const ARROWS = getSpellStats("arrows");
+
+// Static geometry in the actor's canonical frame, where the actor's own side
+// is the low rows. The arena is symmetric under the blue 180-degree rotation,
+// so both sides see identical geometry: normalized row and column, own half,
+// enemy half, unpathable river, bridge, and lane (-1 left, +1 right).
+const STATIC_GEOMETRY = (() => {
+  const arena = createRoyaleArena();
+  const geometry = new Float32Array(
+    EDGER_V2_BOARD_HEIGHT * EDGER_V2_BOARD_WIDTH * GEOMETRY_CHANNELS,
+  );
+  for (let row = 0; row < EDGER_V2_BOARD_HEIGHT; row += 1) {
+    for (let column = 0; column < EDGER_V2_BOARD_WIDTH; column += 1) {
+      const x = column + 0.5;
+      const y = row + 0.5;
+      const inRiverBand = y >= arena.river.minY && y <= arena.river.maxY;
+      const offset = (row * EDGER_V2_BOARD_WIDTH + column) * GEOMETRY_CHANNELS;
+      geometry[offset] = y / EDGER_V2_BOARD_HEIGHT;
+      geometry[offset + 1] = x / EDGER_V2_BOARD_WIDTH;
+      geometry[offset + 2] = y < arena.river.minY ? 1 : 0;
+      geometry[offset + 3] = y > arena.river.maxY ? 1 : 0;
+      geometry[offset + 4] = isRiverTile(arena, x, y) ? 1 : 0;
+      geometry[offset + 5] = inRiverBand && !isRiverTile(arena, x, y) ? 1 : 0;
+      geometry[offset + 6] = x < EDGER_V2_BOARD_WIDTH / 2 ? -1 : 1;
+    }
+  }
+  return geometry;
+})();
 
 function boardOffset(row, column, channel) {
   return ((row * EDGER_V2_BOARD_WIDTH + column) * EDGER_V2_BOARD_CHANNELS) + channel;
@@ -166,6 +201,34 @@ function towerFeature(entity) {
   return getTowerHpRatio(entity);
 }
 
+function spellLethal(entity, spell) {
+  return entity && entity.hp > 0 && entity.hp <= spell.tower_damage ? 1 : 0;
+}
+
+// The most enemy troops one cast could hit now: the engine's impact rule
+// (troop center within the spell radius) at every cell center, independent of
+// whether the spell is in hand or affordable, which are separate inputs.
+function bestSpellTroopHits(troops, spell) {
+  const radiusSquared = spell.radius_tiles * spell.radius_tiles;
+  let best = 0;
+  for (let row = 0; row < EDGER_V2_BOARD_HEIGHT && best < troops.length; row += 1) {
+    const y = row + 0.5;
+    for (let column = 0; column < EDGER_V2_BOARD_WIDTH; column += 1) {
+      const x = column + 0.5;
+      let hits = 0;
+      for (const troop of troops) {
+        const dx = troop.x - x;
+        const dy = troop.y - y;
+        if (dx * dx + dy * dy <= radiusSquared) {
+          hits += 1;
+        }
+      }
+      best = Math.max(best, hits);
+    }
+  }
+  return best;
+}
+
 function buildGlobalFeatures(engine, actor) {
   const state = engine.state;
   const enemy = otherTeam(actor);
@@ -271,6 +334,14 @@ function buildGlobalFeatures(engine, actor) {
     15000,
   );
 
+  // Spell opportunities (v3): inputs only; the policy still decides.
+  [enemyLeft, enemyRight, enemyKing].forEach((tower, index) => {
+    features[96 + index] = spellLethal(tower, FIREBALL);
+    features[99 + index] = spellLethal(tower, ARROWS);
+  });
+  features[102] = safeRatio(bestSpellTroopHits(enemyTroops, FIREBALL), 8);
+  features[103] = safeRatio(bestSpellTroopHits(enemyTroops, ARROWS), 8);
+
   return features;
 }
 
@@ -289,6 +360,12 @@ export function buildEdgerV2Observation({ engine, actor = "red" }) {
   // Stacked occupants remain bounded without changing deterministic ordering.
   for (let i = 0; i < board.length; i += 1) {
     board[i] = clamp(board[i], -1, 1);
+  }
+  for (let cell = 0; cell < EDGER_V2_BOARD_HEIGHT * EDGER_V2_BOARD_WIDTH; cell += 1) {
+    board.set(
+      STATIC_GEOMETRY.subarray(cell * GEOMETRY_CHANNELS, (cell + 1) * GEOMETRY_CHANNELS),
+      cell * EDGER_V2_BOARD_CHANNELS + GEOMETRY_CHANNEL,
+    );
   }
 
   return {
