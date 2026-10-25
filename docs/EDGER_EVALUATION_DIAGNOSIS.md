@@ -1067,7 +1067,8 @@ stays unchanged. Options for explicit review:
 
 Any runtime or gate change needs its own approval, tests and new provenance.
 *(October 25: these options are measured on all seven models in the
-[parity-contract review packet](EDGER_PARITY_CONTRACT_REVIEW.md).)*
+[parity-contract review packet](EDGER_PARITY_CONTRACT_REVIEW.md). The float64
+mean pool landed the same day; the `1e-5` tolerance is unchanged.)*
 
 ## Exact next cloud plan — not authorized or dispatch-ready
 

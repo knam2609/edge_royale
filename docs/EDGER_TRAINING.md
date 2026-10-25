@@ -123,7 +123,10 @@ both stay inside the 1 MB cap. Other candidates must still satisfy the byte gate
 PyTorch dense weights are transposed into input-major generated-JS arrays. Golden fixtures require maximum logit error at or below `1e-5` and identical masked argmax.
 
 The runtime stores activations as float32 and accumulates dot products in
-JavaScript numbers. PyTorch can use different summation orders; exact agreement
+JavaScript numbers. The board mean pool also sums in float64 and rounds once to
+float32 (since October 25, 2026); a float32 running sum over 576 cells was the
+main JS-side deviation ([parity packet](EDGER_PARITY_CONTRACT_REVIEW.md)).
+PyTorch can use different summation orders; exact agreement
 is not guaranteed ([PyTorch numerical accuracy](https://docs.pytorch.org/docs/2.14/notes/numerical_accuracy.html)).
 Float32 spacing is neither a minimum error nor a bound on accumulated error.
 Large logits can match exactly, and small logits can still disagree. There is

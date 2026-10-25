@@ -1,9 +1,13 @@
 # Current State
 
-- October 25, 2026 (later): the owner **approved** both recommendations below, and **neither is implemented**. Implementation is Next Tasks 1–2; the order and scope are in each doc's decision section.
-  - **Parity:** the float64 pool first, then option C with k = 4 against float32, explicit tie-set identity and fragile-margin reporting. Option F stays advisory.
+- October 25, 2026 (latest): parity step 1, the **float64 mean pool, has landed** in `meanPool`, `src/ai/v2/policy.js` ([record](docs/EDGER_PARITY_CONTRACT_REVIEW.md#step-1-landed--october-25-2026)). It is committed locally on `edger-v2-accumulated` as its own change (not pushed).
+  - It is bit-identical to scratch V1 on all seven parity banks (468 fixtures), and all 70 full matches (3,785 decisions) are identical to the float32 pool. Evidence is in `L` = `~/edge_royale-runs/20261025-float64-pool.noindex/`.
+  - New tests pin the pool arithmetic, the golden hash (`87c3a171…`) and a seeded model's bank and full-match decisions.
+  - The `1e-5` tolerance, gate code and tie order are unchanged, so every model still fails parity until option C lands (Next Task 1). Live v1 (`src/ai/mlPolicy.js`) is unaffected.
+- October 25, 2026 (later): the owner **approved** both recommendations below. Only the pool fix above is implemented; the order and scope are in each doc's decision section.
+  - **Parity:** the float64 pool first (done), then option C with k = 4 against float32, explicit tie-set identity and fragile-margin reporting. Option F stays advisory.
   - **Tactical:** all four proposals, including the scoring gate change.
-  - Gates, runtime and models are unchanged until those changes land.
+  - Gates and models are unchanged until those changes land.
 - October 25, 2026: former Next Tasks 1–3 are done as read-only local diagnostics. The repository changes are docs only, committed locally as `f904e68` on `edger-v2-accumulated` (not pushed). Evidence is in `X` = `~/edge_royale-runs/20261025-tactical-parity-warmup.noindex/` (`SHA256SUMS` `89dc327c…`, 376 files).
   - **Tactical** ([review](docs/EDGER_TACTICAL_REVIEW.md)). Troop-placement ties are structural.
     - 84 of the 86 fixture ties, and all 3,334 tied corpus troop rows, have identical all-zero 3×3 input patches.
@@ -16,7 +20,7 @@
   - **Parity** ([packet](docs/EDGER_PARITY_CONTRACT_REVIEW.md)).
     - All seven models agree with PyTorch on every masked argmax and tie set; only absolute placement error fails, with logits of 149–746.
     - The float64 mean pool cuts the worst error from 11 to 3 ULP against float32. It brings card and delay within `1e-5` and changes no decision (banks plus 70 full matches, 3,785 decisions).
-    - Approved on October 25, not yet implemented: land the pool fix, then `abs ≤ max(1e-5, 4·ulp32)` against float32, with explicit tie-set identity. `1e-5` stays in force until that lands.
+    - Approved on October 25: land the pool fix (landed, above), then `abs ≤ max(1e-5, 4·ulp32)` against float32, with explicit tie-set identity (not yet implemented). `1e-5` stays in force until that lands.
   - **Warm-up** ([browser confirmation](docs/EDGER_RUNTIME_REVIEW.md#browser-confirmation-of-the-warm-up--october-25-2026)), in headless Chromium with 15 fresh pages per condition:
     - with the warm-up, tick 1 costs 9.8 ms (v1) and 8.5 ms (r0), and 0 of 30 pages dropped a frame;
     - without it, tick 1 costs 13.6 and 13.7 ms, and 20 of 30 pages dropped one;
@@ -53,6 +57,7 @@
 # Source of Truth
 
 - Product/workflow: `AGENTS.md`, `README.md`, `docs/BOT_LEVELS.md`. Training: `docs/EDGER_TRAINING.md`. Roadmap: `docs/IMPLEMENTATION_PLAN.md`, `docs/SPRINT_BACKLOG.md`.
+- Float64 pool landing (October 25): `L` holds `landed-check.mjs`/`.json`/`.log`, the seeded-model `probe.mjs` outputs from `a3e01e5` and the new code, `golden.mjs` and the bot-bench output.
 - [Tactical review](docs/EDGER_TACTICAL_REVIEW.md) and [parity-contract packet](docs/EDGER_PARITY_CONTRACT_REVIEW.md) (October 25), plus the warm-up browser confirmation in the runtime review. Evidence, scripts and checksums are in `X` (see its `README.md`). Byte copies of the September 27/28 audit and isolation scripts are in `X/prior/`. The ignored `artifacts/edger-training/experiments/` now lives only in the iCloud archive `~/Documents/edge_royale-training-archive/experiments/`, which holds dataless files; copy them out before reading.
 - [Runtime review](docs/EDGER_RUNTIME_REVIEW.md) (October 24): the decision, the cold-start attribution, optimization proposals and reproduction. `R` = `~/edge_royale-runs/20261024-runtime-review.noindex/` holds `spotcheck.py`, `check.mjs`, the summary rerun, their outputs, the speed-up timing scripts and logs (`speedup/`) and `SHA256SUMS`.
 - Latest [local runtime-cost results](docs/EDGER_RUNTIME_COST_RESULTS.md). Session records, launcher, watcher, summary script, `measurement-summary.json`/`measurement-tables.md` and checksums are in `A` (above). `A/SHA256SUMS` (`3edc3ebb…`) covers 23 files; `A/SHA256SUMS-measurement` (`7d8e67a6…`) covers all 6,117 raw output files in `M/measurement/` plus `M/out/measurement.log`.
@@ -89,19 +94,17 @@
   - Fireball causes are measured but not fixed.
   - The representation, data/learning and scoring proposals are approved (October 25) but not implemented. The RL suppression mechanism is inferred from outputs, not traced in training logs.
 - Parity: placement alone fails, at magnitudes of 149–746. Under every implementation all seven models fail the unchanged `1e-5` against both float32 and float64 PyTorch, while decisions agree everywhere.
-  - The JS float32 mean pool is the main runtime deviation (fixed by V1 in scratch only); decimal-double weights matter only against float64.
-  - The pool fix and option C (k = 4) are approved (October 25) but not implemented, so every model still fails the unchanged `1e-5`. The adopted ULP multiple must be re-measured on the reference host's PyTorch.
+  - The JS float32 mean pool was the main runtime deviation; the float64 pool landed on October 25 (worst 3 ULP against float32). Decimal-double weights matter only against float64.
+  - Option C (k = 4) is approved (October 25) but not implemented, so every model still fails the unchanged `1e-5`. The adopted ULP multiple must be re-measured on the reference host's PyTorch.
+  - The pool change's runtime cost is not re-measured; the October 17 costs describe the pre-change runtime.
 - September 27 provenance: plan mtime 06:10:14Z predates launch 06:14:06Z; analysis was written 06:15:43–06:15:57Z, after training began and before evaluation at 07:35:39Z. Declared `frozen_at_utc: 06:15:00Z` and earlier analysis content remain unexplained. Confirmation used actual timestamps and pre-run analysis hashes; it does not repair predecessor provenance.
 - Historical league regression remains unattributed; equal-update experiment outstanding. Held-out imitation loss worsens in every RL arm (5.1–8.3 vs parent 3.566) despite better play; sampled rollout scores also mislead. Subset weights/derived manifest hash remain machine-specific.
 
 # Next Tasks
 
-1. Implement the approved [parity decision](docs/EDGER_PARITY_CONTRACT_REVIEW.md#decision--october-25-2026) (owner approval October 25; nothing has landed).
-   - First, the float64 mean pool in `meanPool`, `src/ai/v2/policy.js`, as its own change.
-     - Add a pool-precision test and bank/full-match decision-identity tests, then run `npm test` and the bot-bench gate. Live v1 runs `src/ai/mlPolicy.js`, so its bot-bench output should be byte-identical.
-     - Defer V2 (`Math.fround` weights).
-     - No runtime-cost hash pins this file; never touch the frozen stage.
-   - Then option C, k = 4, against float32: `abs ≤ max(1e-5, 4·ulp32(max(|js|, |ref|)))`.
+1. Finish the approved [parity decision](docs/EDGER_PARITY_CONTRACT_REVIEW.md#decision--october-25-2026) (owner approval October 25).
+   - The float64 mean pool landed on October 25, committed locally as its own change. V2 (`Math.fround` weights) stays deferred.
+   - Next, option C, k = 4, against float32: `abs ≤ max(1e-5, 4·ulp32(max(|js|, |ref|)))`.
      - Change it in both `EDGER_V2_PARITY_TOLERANCE` (`scripts/edger-v2-evaluation-core.mjs`) and `PARITY_ABSOLUTE_TOLERANCE` (`scripts/edger-v2-training.py`).
      - Add explicit tie-set identity and fragile-margin reporting.
      - Tests must show `1e-5` unchanged below magnitude 32, V0 still rejected for learned r0 and fixed r0–r2, and the September 21 counterexamples still caught.
@@ -130,6 +133,13 @@
 11. Standardize browser smoke: iCloud refetches can exceed its 120 s watchdog while a byte-identical outside-iCloud copy passes in about 8 s; its watchdog lacks group/KILL cleanup. Use verified outside-iCloud freeze gates and retained assertion diagnostics to investigate a recurrence. The original October 4 193/196 cause remains unconfirmed. Repository smoke and full-suite runs from `~/Developer/edge_royale` (outside iCloud) passed once on October 24; keep watching for a recurrence.
 
 # Validation
+
+October 25, 2026 (latest), float64 pool, from `~/Developer/edge_royale`. `L`, `X` and `N` are as defined in this file.
+- `npm test` passed 218/218 in 344 s (system Node v25.2.1). It ran alongside the two checks below, so its duration is not comparable.
+- `npm run --silent bot:bench -- --opponents random,aggressive,defender --rounds 30 --seed 20260630 --max-ticks 6040 --min-win-rate 0.6` passed: random 1.000, aggressive 0.833, defender 1.000. The output is `cmp`-identical to `R/speedup/bench-after.out` (October 24).
+- `$N landed-check.mjs landed-check.json 10 <name>=$X/models/<name>.json …` (seven models) in `L` reports `PROBLEMS: none`. `shasum -a 256 -c SHA256SUMS` in `X` passed 376/376 beforehand.
+- `$N --test tests/edger-v2-policy.test.js` on a `git archive` copy of `a3e01e5` fails exactly the pool and golden tests; the decision-identity test passes there too.
+- `L/SHA256SUMS` (`adc7b251…`) covers 10 files. `git diff --check` passes. `npm run smoke:browser` was not run: no client code changed, and live v1 does not use this file.
 
 October 25, 2026. `X` is as above; `N` is the durable Node v20.20.2 (defined under October 8). Exact commands are in each doc's Reproduction section.
 

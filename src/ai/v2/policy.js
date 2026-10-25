@@ -307,15 +307,18 @@ function runConv(input, layer) {
 }
 
 function meanPool(spatial, channels) {
-  const pooled = new Float32Array(channels);
+  // Accumulate in float64 and round once to float32. A float32 running sum
+  // over 576 cells was the main deviation from PyTorch's pooled mean.
+  const sums = new Float64Array(channels);
   const cells = EDGER_V2_BOARD_HEIGHT * EDGER_V2_BOARD_WIDTH;
   for (let cell = 0; cell < cells; cell += 1) {
     for (let channel = 0; channel < channels; channel += 1) {
-      pooled[channel] += spatial[cell * channels + channel];
+      sums[channel] += spatial[cell * channels + channel];
     }
   }
+  const pooled = new Float32Array(channels);
   for (let channel = 0; channel < channels; channel += 1) {
-    pooled[channel] /= cells;
+    pooled[channel] = sums[channel] / cells;
   }
   return pooled;
 }

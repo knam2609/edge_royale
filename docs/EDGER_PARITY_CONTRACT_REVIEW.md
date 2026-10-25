@@ -4,10 +4,11 @@ This prepares Next Task 2, a reviewed decision on the PyTorch/JS parity
 contract. It measures each candidate contract and each isolated runtime fix on
 all seven local v2 models.
 
-**Nothing has changed yet.** The `1e-5` tolerance, the gate code, the runtime
-and the tie semantics are unchanged. On October 25 the owner approved the
+On October 25 the owner approved the
 [recommendation](#recommendation-for-review); the
 [decision](#decision--october-25-2026) sets out what lands and in what order.
+**Step 1, the float64 mean pool, has [landed](#step-1-landed--october-25-2026).**
+The `1e-5` tolerance, the gate code and the tie semantics are unchanged.
 Each step still needs its own tests and fresh provenance. The September 27
 [isolation](EDGER_EVALUATION_DIAGNOSIS.md#parity-failure-isolation--september-27)
 is the background.
@@ -110,10 +111,10 @@ coordinate over `1e-5`, and the number of fixtures over `1e-5`.
 
 ## Decision — October 25, 2026
 
-The owner approved recommendations 1–3 as written. **Nothing is implemented
-yet:** `1e-5`, the gate code and the runtime stay as they are until each step
-lands. The approval does not cover pushing, cloud actions, promotion or any
-other gate change. Implement in this order:
+The owner approved recommendations 1–3 as written. Step 1 has landed (below);
+`1e-5` and the gate code stay as they are until step 2 lands. The approval does
+not cover pushing, cloud actions, promotion or any other gate change.
+Implement in this order:
 
 1. **Float64 mean pool (V1)** in `meanPool`, `src/ai/v2/policy.js`, as its own change.
    - Add tests that the pool equals float64 accumulation rounded once, and that bank and full-match decisions are unchanged.
@@ -134,6 +135,35 @@ other gate change. Implement in this order:
 Both code changes touch protected paths. They join the accumulated-diff review
 and need a fresh campaign prefix. The recovery guard is not bypassed.
 
+### Step 1 landed — October 25, 2026
+
+`meanPool` in `src/ai/v2/policy.js` now sums each channel in a `Float64Array`
+and rounds the mean once to float32, exactly as scratch V1 did. V2 is deferred;
+the tolerance, gate code and tie order are unchanged.
+
+**Tests** (`tests/edger-v2-policy.test.js`):
+- The pool equals a float64 sum rounded once, through identity convolutions and fusion. The same input also distinguishes the old float32 running sum.
+- The sparse-convolution golden hash is re-pinned (`a397521e…` → `87c3a171…`); the scratch V1 copy gives the same hash.
+- For a seeded model, the parity bank (70 fixtures, all nine card indices) and one full learned-cadence match against the heuristic must equal decisions captured from the float32 pool at `a3e01e5`.
+- Mutation control: on a copy of `a3e01e5`, the pool and golden tests fail and the decision test passes.
+
+**Real-model check** (`L` = `~/edge_royale-runs/20261025-float64-pool.noindex/`,
+`landed-check.mjs`, read-only against `X`), with the landed `policy.js`
+(`e67cfad5…`):
+- All seven parity banks keep the same fixture ids (55–83 fixtures, 468 in all), and every head's logits are bit-identical to the scratch V1 records. 1,308 head-fixtures differ from V0, so the change is exercised.
+- All 70 full matches of [Decision preservation](#decision-preservation) are identical to the scratch V0 copy, with 3,785 red decisions and the same final state hashes.
+
+**Gates:** `npm test` passed 218/218. The bot-bench gate passed, and its output
+is byte-identical to October 24 (random 1.000, aggressive 0.833, defender
+1.000). `L/SHA256SUMS` covers the evidence.
+
+The parity numbers for V1 in [Results](#results) therefore describe the
+shipped runtime. Every model still fails the unchanged `1e-5`, as expected
+until step 2. Live v1 runs `src/ai/mlPolicy.js` and is unaffected. The
+October 17 runtime costs describe the pre-change runtime. The pool still does
+576×16 additions per encode, now into a `Float64Array`; its cost is not
+re-measured.
+
 ## Decision preservation
 
 `X/parity/decisions-js.mjs` plays ten full learned-cadence matches per model
@@ -151,7 +181,7 @@ gate after the change lands.
 
 - Seven local, non-promotable models and one bank schedule.
 - PyTorch 2.11.0 CPU on an M1 (Python 3.11). The reference host's PyTorch/BLAS accumulation order may differ, so any adopted k must be re-measured there.
-- The variants are scratch copies; nothing in `src/ai` changed.
+- The measured variants are scratch copies. Only V1 has since landed in `src/ai`; the tables above describe the scratch runs.
 
 ## Reproduction
 
