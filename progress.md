@@ -1,12 +1,29 @@
 # Current State
 
+- October 25, 2026: former Next Tasks 1–3 are done as read-only local diagnostics. The repository changes are docs only, uncommitted on `edger-v2-accumulated`. Evidence is in `X` = `~/edge_royale-runs/20261025-tactical-parity-warmup.noindex/` (`SHA256SUMS` `89dc327c…`, 376 files).
+  - **Tactical** ([review](docs/EDGER_TACTICAL_REVIEW.md)). Troop-placement ties are structural.
+    - 84 of the 86 fixture ties, and all 3,334 tied corpus troop rows, have identical all-zero 3×3 input patches.
+    - The lowest-index tie-break picks own back-center, which teachers use in 0.9% of those rows. Every model matches the teacher on 1.5% of them, against about 62% elsewhere.
+    - Fireball has three measured causes:
+      - the card head has no lethal or cluster signal: no step at the 207-HP threshold, and the HP signal arrives only via globals 51/95;
+      - opportunity states are 1–5% of rows, diluted by aggressive and defender, which never cast;
+      - RL suppression: P(Fireball) is down 80–370× for r0/r1 and is no longer conditioned on opportunity.
+    - Live v1 casts lethal Fireball in 76% of corpus opportunities. Proposals await review.
+  - **Parity** ([packet](docs/EDGER_PARITY_CONTRACT_REVIEW.md)).
+    - All seven models agree with PyTorch on every masked argmax and tie set; only absolute placement error fails, with logits of 149–746.
+    - The float64 mean pool cuts the worst error from 11 to 3 ULP against float32. It brings card and delay within `1e-5` and changes no decision (banks plus 70 full matches, 3,785 decisions).
+    - Recommended for review: land the pool fix, then `abs ≤ max(1e-5, 4·ulp32)` against float32, with explicit tie-set identity. `1e-5` is unchanged.
+  - **Warm-up** ([browser confirmation](docs/EDGER_RUNTIME_REVIEW.md#browser-confirmation-of-the-warm-up--october-25-2026)), in headless Chromium with 15 fresh pages per condition:
+    - with the warm-up, tick 1 costs 9.8 ms (v1) and 8.5 ms (r0), and 0 of 30 pages dropped a frame;
+    - without it, tick 1 costs 13.6 and 13.7 ms, and 20 of 30 pages dropped one;
+    - the warm-up adds about 8–11 ms before the first frame at load.
 - October 24, 2026 (later): review proposals 1 and 2 are [implemented](docs/EDGER_RUNTIME_REVIEW.md#implementation-of-proposals-1-and-2--october-24-2026), and neither changes a decision.
   - Legal-action sort keys are now built once per enumeration (`src/ai/botRuntime.js`).
   - The new `warmUpBotDecision` makes one throwaway decision on a disposable engine with its own RNG. `src/client/webGame.js` calls it once at page load.
   - Node 20, ad-hoc: enumeration over a full match is 70% faster (2,413.6 → 731.2 ms), with an identical order/state fingerprint. The median first live decision drops from 20.2 to 5.9 ms for v1 and from 23.5 to 4.4 ms for r0, with identical decisions. The warm-up costs about 23 ms at load.
   - Validation: `npm test` passes 216/216 and smoke passes. The bot-bench gate passes, with output byte-identical to the original code.
   - The runtime-cost harness pin for `src/client/webGame.js` is updated (`ca29cf42…` → `1143352c…`); every guarded substitution block is unchanged.
-  - Live v1 benefits now. Whether the browser frame drop at match start is fixed still needs a fresh-page browser measurement.
+  - Live v1 benefits now. The October 25 headless check confirms the match-start frame drop is gone (above).
 - October 24, 2026: the explicit [runtime review](docs/EDGER_RUNTIME_REVIEW.md) of the October 17 results is **done**.
   - Verification: both checksum lists re-verified (23/23 and 6,117/6,117). The summary reproduces byte for byte. An independent recount from raw records (177,000 complete-path samples, 15 existing-method records, all 28 rendered matches) found no problems.
   - Decision: for desktop-class hosts at 60 Hz, the complete-path and warm frame costs are **accepted** for both controllers. The cold-start frame drop is a **known, non-blocking** defect. Mobile, reference-host, 120 Hz and sustained-thermal costs are **unmeasured and not accepted**. The existing p95 ≤5 ms gate is unchanged; no controller or checkpoint was chosen, and no promotion gate is cleared.
@@ -32,6 +49,7 @@
 # Source of Truth
 
 - Product/workflow: `AGENTS.md`, `README.md`, `docs/BOT_LEVELS.md`. Training: `docs/EDGER_TRAINING.md`. Roadmap: `docs/IMPLEMENTATION_PLAN.md`, `docs/SPRINT_BACKLOG.md`.
+- [Tactical review](docs/EDGER_TACTICAL_REVIEW.md) and [parity-contract packet](docs/EDGER_PARITY_CONTRACT_REVIEW.md) (October 25), plus the warm-up browser confirmation in the runtime review. Evidence, scripts and checksums are in `X` (see its `README.md`). Byte copies of the September 27/28 audit and isolation scripts are in `X/prior/`. The ignored `artifacts/edger-training/experiments/` now lives only in the iCloud archive `~/Documents/edge_royale-training-archive/experiments/`, which holds dataless files; copy them out before reading.
 - [Runtime review](docs/EDGER_RUNTIME_REVIEW.md) (October 24): the decision, the cold-start attribution, optimization proposals and reproduction. `R` = `~/edge_royale-runs/20261024-runtime-review.noindex/` holds `spotcheck.py`, `check.mjs`, the summary rerun, their outputs, the speed-up timing scripts and logs (`speedup/`) and `SHA256SUMS`.
 - Latest [local runtime-cost results](docs/EDGER_RUNTIME_COST_RESULTS.md). Session records, launcher, watcher, summary script, `measurement-summary.json`/`measurement-tables.md` and checksums are in `A` (above). `A/SHA256SUMS` (`3edc3ebb…`) covers 23 files; `A/SHA256SUMS-measurement` (`7d8e67a6…`) covers all 6,117 raw output files in `M/measurement/` plus `M/out/measurement.log`.
 - [Freeze review](docs/EDGER_FREEZE_REVIEW.md). Review scripts/results: `~/edge_royale-runs/20261008-runtime-cost-freeze-review.noindex/` (`Q`), including `audit.py`/`.json`, `freeze-check.mjs`/`freeze-input-check.json`, focused-test log, synthetic controls, host/Spotlight observations and `SHA256SUMS`.
@@ -55,23 +73,35 @@
 # Known Gaps
 
 - Runtime acceptance covers desktop-class hosts at 60 Hz only. It rests on one local fanless M1 run on one development seed, with thermal state unrecorded. Phones, the reference host, 120 Hz displays (8.3 ms frames; warm v2 peaks are 7–13 ms and v1 peaks 16–20 ms) and sustained thermal load are unmeasured. Portrait usability is a product priority, so a mobile cost claim needs its own measurement.
-- The cold first v2 decision dropped one frame at match start in 18 of 24 matches. The October 24 warm-up removes most of the first-decision cost in Node (above), but no browser measurement shows that the frame drop is gone. The harness never ran a second match in the same page.
+- The cold first v2 decision dropped one frame at match start in 18 of 24 October 17 matches. The warm-up removes it in headless Chromium (0 of 30 fresh pages, October 25). Headed DPR 2, 120 Hz and mobile were not re-measured, and that check used a scratch r0 module substitution. The frozen harness never ran a second match in the same page.
 - Catch-up never fired in real time (zero multi-tick frames), so its overshoot path is exercised only by the synthetic jump validation. Failure paths remain unit/synthetic controls.
 - Browser decision times exceed the Node complete path (for example every-tick forced PASS p95 about 2.4 ms against 0.83 ms); no cross-build equivalence is claimed.
 - The legal-action sort comparator was about 53% of sampled Node allocation in the October 17 traces. It is fixed (enumeration is 70% faster in Node), but GC/allocation and browser cost have not been re-traced.
 - The October 4 193/196 supervisor failures remain unexplained and did not reproduce with the same files evicted. Accepted assertion diagnostics now preserve evidence for a recurrence; iCloud eviction is plausible, unconfirmed. Keep freeze full-suite gates on a verified outside-iCloud copy and record where they ran (latest gate: 213/213 at `~/edge_royale-runs/20261006-runtime-cost-measurement-repair.noindex/test-copy`). On October 24 the first repository runs from `~/Developer/edge_royale` passed: `npm test` 216/216 in 309 s (Node v25.2.1) and smoke in 4 s.
 - Confirmation covers three checkpoints of one parent, lr/budget, roughly 80% v1 training opponents and local hardware. Intervals cover evaluation seeds, not future training runs. Aggressive C1 r1 is +0.018 [−0.013, +0.050]; trained-over-parent at learned cadence is inconsistent (r0 −0.050 [−0.095, −0.005], r1 +0.048, r2 +0.007). Fixed-trained/intermediate cadences were excluded; training-cadence superiority was not reconfirmed. Replication controls had two runs and secondary development opponents 100 pairs.
 - Reference-host cost is unknown. Browser equivalence covers the bank, 12 conditions, the two v1 baselines and two predeclared real-time cases on one development seed. Headed full validation (October 7) passed at DPR 2 under kiosk/per-page fullscreen; rendered measurement matches are checked against Node only as they run. Independent review accepts correctness, repairs and freeze `75dd33fe…`; a fresh passing host admission remains required. The existing method reports only p95/max per invocation. Chromium CPU totals are lower bounds when an observed process exits between `ps` samples (flagged). Display monitoring and its `ps` sampling add about 50 ms of worker work per real-time poll (recorded; up to 75 ms per check on October 17); brief focus excursions entirely between polls cannot be detected. Two-state development checks of the complete path were observed before the freeze. High-resolution isolated diagnostics do not establish cross-build timing equivalence or mobile performance. Trained every-tick models make 3,300–3,900 decisions/game versus 64–150 at learned cadence. Six-worker means (enumeration excluded) are 1.8–2.1 ms/decision and 6.3–8.0 s/game; these are not latency certification or comparable with static local p95 <1 ms. Production v2 makes ten mask builds (18 legal-list passes); the diagnostic makes two (two PASS / three play passes). The browser drains at 20 ticks/s without a lag clamp or per-frame tick limit; catch-up bursts remain intentional. Runtime contract still uses learned delay.
-- Tactical: v1 scores 0.451; two scorers accept distant back-center plays. Every v2 model picks Giant in both spell fixtures (Fireball probability ≤0.015); forced spells already use maximum-scoring cells. In 86/105 forced troop plays all legal placement logits tie, producing `(9.5, 5.5)` by stable lowest-index tie-breaking; cause unresolved.
-- Parity: placement alone fails at large magnitudes; parent float64 evaluation exceeds `1e-5` on 45/56 fixtures. JS float32 pooling and decimal-double dense weights are separate real differences. No tolerance/semantics change is approved.
+- Tactical: v1 scores 0.451; two scorers accept distant back-center plays. Every v2 model picks Giant in both spell fixtures (Fireball probability ≤0.015); forced spells already use maximum-scoring cells.
+  - The placement-tie cause is now established: a 3×3 receptive field, no coordinate or geometry channels, and the lowest-index tie-break. 47.9% of corpus troop rows are structurally tied.
+  - Fireball causes are measured but not fixed.
+  - The representation, data/learning and scoring proposals are unreviewed. The RL suppression mechanism is inferred from outputs, not traced in training logs.
+- Parity: placement alone fails, at magnitudes of 149–746. Under every implementation all seven models fail the unchanged `1e-5` against both float32 and float64 PyTorch, while decisions agree everywhere.
+  - The JS float32 mean pool is the main runtime deviation (fixed by V1 in scratch only); decimal-double weights matter only against float64.
+  - No tolerance, runtime or semantics change is approved. Any adopted ULP multiple must be re-measured on the reference host's PyTorch.
 - September 27 provenance: plan mtime 06:10:14Z predates launch 06:14:06Z; analysis was written 06:15:43–06:15:57Z, after training began and before evaluation at 07:35:39Z. Declared `frozen_at_utc: 06:15:00Z` and earlier analysis content remain unexplained. Confirmation used actual timestamps and pre-run analysis hashes; it does not repair predecessor provenance.
 - Historical league regression remains unattributed; equal-update experiment outstanding. Held-out imitation loss worsens in every RL arm (5.1–8.3 vs parent 3.566) despite better play; sampled rollout scores also mislead. Subset weights/derived manifest hash remain machine-specific.
 
 # Next Tasks
 
-1. Investigate tactical card/placement failures (next under the plan, now that cost is accepted): Fireball logits/masks/corpus/teacher frequencies and exact troop-placement ties. Propose broader defense/punishment scoring separately; do not lower floors because v1 fails or add handcrafted spell overrides.
-2. Prepare parity-contract review (relative/ULP/probability sensitivity, exact legal argmax/ties), isolating pooling and weight-precision fixes. Do not relax `1e-5` or change semantics without review.
-3. Confirm the warm-up in the browser. Measure tick 1 and frame intervals at match start in a fresh page, live v1 and a v2 model, before claiming the frame drop is fixed. Keep it a bounded local check; the frozen stage/measurement must not be rerun or edited. A newly generated diagnostic page now warms live v1 at load. A v2 condition also needs its driver's model warmed, which is a harness change requiring a freshly validated successor. The implemented `src/ai` speed-ups are protected runtime changes, so they go into the accumulated-diff review (task 7) and fresh scaling provenance. Do not add a forced-PASS shortcut under learned delay.
+1. Decide the [parity packet](docs/EDGER_PARITY_CONTRACT_REVIEW.md) with the owner.
+   - If approved, land the float64 mean pool in `src/ai/v2/policy.js` as its own change. It needs bank/match decision-identity tests, `npm test`, the bot-bench gate and a refreshed runtime-cost pin. V2 (`Math.fround` weights) is optional.
+   - Then decide the contract. The recommendation is `max(1e-5, 4·ulp32)` against float32 plus explicit tie-set identity and fragile-margin reporting.
+   - Do not relax `1e-5` or change semantics without that approval.
+2. Decide the [tactical proposals](docs/EDGER_TACTICAL_REVIEW.md#proposals--separate-review-none-implemented).
+   - Representation: geometry channels or the September 21 ablation, and spell-opportunity globals, as a bounded BC ablation with recomputed ln(k).
+   - Data/learning: teacher filtering, opportunity oversampling, a KL/entropy floor and an opportunity-capture diagnostic.
+   - Broader defense/punishment scoring plus a held-out, corpus-derived opportunity bank. This is a gate change; rebaseline the heuristic and v1.
+   - Do not lower floors or add handcrafted spell or placement overrides.
+3. Optional: repeat the warm-up check headed at DPR 2 (it shows windows on the display). Mobile and 120 Hz stay with the separate cost measurement. The implemented `src/ai` speed-ups are protected runtime changes for the accumulated-diff review (task 7) and fresh scaling provenance. Do not add a forced-PASS shortcut under learned delay.
 4. Prepare the timing-only `c7g.4xlarge` packet from the validated harness, for separate approval. It needs exact launch/SSM/download/termination commands, a checksummed bundle, the current official price ceiling, ≤60-minute lifetime/storage bounds and verified cleanup. Cloud admission stays pending until the A$10/month account budget can accommodate it. Preserve existing-method p95 ≤5 ms.
 5. Attribute historical league regression locally: same parent, production recipe vs fresh on-policy loop, equal updates, paired development evaluation, at least two runs/arm.
 6. Re-scope September 21 BC-control/architecture-ablation plans; do not judge on held-out cross-entropy alone.
@@ -82,6 +112,20 @@
 11. Standardize browser smoke: iCloud refetches can exceed its 120 s watchdog while a byte-identical outside-iCloud copy passes in about 8 s; its watchdog lacks group/KILL cleanup. Use verified outside-iCloud freeze gates and retained assertion diagnostics to investigate a recurrence. The original October 4 193/196 cause remains unconfirmed. Repository smoke and full-suite runs from `~/Developer/edge_royale` (outside iCloud) passed once on October 24; keep watching for a recurrence.
 
 # Validation
+
+October 25, 2026. `X` is as above; `N` is the durable Node v20.20.2 (defined under October 8). Exact commands are in each doc's Reproduction section.
+
+- Repository changes are docs-only; `git diff --check` passes. `npm test`, smoke and bot-bench were not rerun, since no code changed (the October 24 runs stand).
+- Task 1 inputs:
+  - the learned models match the confirmation checksums, and the fixed models reproduce the September 28 audit probabilities;
+  - cache `aab1f8e8…` is verified, and all 160 episodes pass their manifest checksums;
+  - the replay reproduces 9,343/9,343 rows, sample weights and policy labels, and 210 Fireball / 701 Arrows / 1,478 PASS choices.
+- Task 2:
+  - the scratch V0 copy reproduces the shipped runtime bit for bit on every fixture;
+  - the parent reproduces the September 27 result (47/56, `9.155e-05`);
+  - real `edger-v2-training.py parity` ran with Python 3.11 / PyTorch 2.11.0.
+- Task 3: `$N measure-warmup.mjs sites headless-15.json 15` covered 60 fresh pages with 0 page errors. `v1-warm` is byte-identical to the repository (`webGame.js` `1143352c…`).
+- `shasum -a 256 -c SHA256SUMS` in `X` passes 376/376. The frozen stage, freeze `75dd33fe…` and `A`/`M`/`R` were not touched.
 
 October 24, 2026. `A`, `M` and `R` are as above; `N` is the durable Node v20.20.2 defined under October 8 below. Exact commands are in the [review reproduction](docs/EDGER_RUNTIME_REVIEW.md#reproduction).
 

@@ -972,7 +972,10 @@ already target maximum-scoring cells in both spell fixtures, so the spell
 weakness is card choice (Fireball probability ≤0.015), not targeting. And in
 86 of 105 forced troop plays all legal placement logits are exactly equal, so
 the back-center `(9.5, 5.5)` placement comes from lowest-index tie-breaking
-rather than a model preference. The cause is not established.
+rather than a model preference. *(October 25: the cause is now established.
+84 of the 86 ties have identical all-zero 3×3 input patches, and the
+corpus-level Fireball causes are measured; see the
+[tactical review](EDGER_TACTICAL_REVIEW.md).)*
 
 Read-only audit of the five preflight fixtures (`SCENARIO_FIXTURES` in
 `scripts/edger-evaluation-core.mjs`, now exported without behaviour change).
@@ -1063,6 +1066,8 @@ stays unchanged. Options for explicit review:
 - float64 mean pooling and `Math.fround` weight loading in the runtime.
 
 Any runtime or gate change needs its own approval, tests and new provenance.
+*(October 25: these options are measured on all seven models in the
+[parity-contract review packet](EDGER_PARITY_CONTRACT_REVIEW.md).)*
 
 ## Exact next cloud plan — not authorized or dispatch-ready
 

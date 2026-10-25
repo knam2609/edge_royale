@@ -113,7 +113,52 @@ implemented, and proposal 4 stays rejected. Neither change alters any decision.
   - `npm test` passes 216/216 (309 s; system Node v25.2.1, run from `~/Developer/edge_royale`). The first run, before the pin update, failed the four pin-guarded stage/freeze tests, as the guard intends.
   - `npm run smoke:browser` passes (4 s).
   - `npm run bot:bench -- --opponents random,aggressive,defender --rounds 30 --seed 20260630 --max-ticks 6040 --min-win-rate 0.6` passes: random 1.000 (26-0, 4 draws), aggressive 0.833 (15-3, 12 draws), defender 1.000 (23-0, 7 draws). Its output is byte-identical to the same command on a scratch copy with the original sort.
-- **Not yet shown:** the browser tick-1 frame drop is fixed only if a fresh-page browser measurement says so. These Node numbers do not establish it.
+- **Not yet shown:** the browser tick-1 frame drop is fixed only if a fresh-page browser measurement says so. These Node numbers do not establish it. *(October 25: shown in headless Chromium; see the next section.)*
+
+## Browser confirmation of the warm-up — October 25, 2026
+
+This is a bounded local check, not a frozen measurement. The frozen stage,
+freeze `75dd33fe…` and the October 17 evidence were not used or touched.
+
+**Method.**
+- `X` = `~/edge_royale-runs/20261025-tactical-parity-warmup.noindex/`. The script is `X/browser/measure-warmup.mjs`, run with the pinned Node `N`, Playwright 1.58.2 and Chrome Headless Shell 1208.
+- Four scratch copies of the real client (`index.html` plus `src/`) were served by `scripts/dev-server.mjs`:
+  - `v1-warm`: byte-identical to the repository, `webGame.js` `1143352c…`;
+  - `v1-cold`: the same with the warm-up call removed (`a7be0d8b…`);
+  - `r0-warm` and `r0-cold`: as above, but with the generated policy module replaced by the r0 learned-trained v2 model (`dfc76358…`), so the live client runs v2 at learned cadence through its own `selectBotDecision` path.
+- Each run used a fresh browser context and page: 430×932 at DPR 2. It waited 1.5 s after load, clicked Start, and wrapped `requestAnimationFrame` to record every callback for 3 s. The four conditions were interleaved, with the order rotated each round, for 15 rounds (60 pages, no page errors).
+- The frame that runs tick 1 is found by replaying the client's lag accumulator from the recorded rAF timestamps. It contains the bot's first decision. There is no harness opponent driver: the blue side is the idle human.
+
+**Results** (60 Hz rAF pacing; median callback 0.9–1.1 ms):
+
+| Condition | Tick-1 callback p50 (min–max) | Next interval p50 (max) | Dropped frame at tick 1 | Longest interval, first 120 frames |
+|---|---|---|---|---|
+| v1, warm-up on | 9.8 ms (9.4–10.4) | 16.7 ms (18.6) | **0/15** | ≤18.7 ms |
+| v1, warm-up off | 13.6 ms (13.2–14.1) | 33.3 ms (35.4) | 8/15 | 35.4 ms |
+| r0, warm-up on | 8.5 ms (7.7–9.1) | 16.6 ms (16.7) | **0/15** | ≤18.8 ms |
+| r0, warm-up off | 13.7 ms (13.1–15.6) | 33.3 ms (33.5) | 12/15 | 33.5 ms |
+
+- With the warm-up on, none of 30 fresh pages missed a refresh at match start. Without it, 20 of 30 did.
+- The warm-up moves about 8–11 ms of work to page load: the first frame lands at p50 64 ms after navigation with the warm-up, against 53–56 ms without it.
+- The remaining 8–10 ms at tick 1 is warm work (decision, engine step and render), still well inside one 16.7 ms frame.
+
+**Reading.** In headless Chromium on this host, the load-time warm-up removes
+the match-start frame drop for both live v1 and a v2 model. The known,
+non-blocking defect is therefore fixed on desktop at 60 Hz, as far as this
+check reaches.
+
+**Limits.**
+- Headless compositor pacing is not the headed DPR 2 kiosk path of October 17, and no headed run was repeated.
+- One local M1, one client seed (the profile's first match), and a scratch module substitution for r0; no shipped configuration runs v2.
+- 120 Hz, mobile and the reference host remain unmeasured.
+
+**Reproduction.**
+
+```bash
+X=~/edge_royale-runs/20261025-tactical-parity-warmup.noindex
+N=$HOME/edge_royale-runs/20261006-runtime-cost-successor.noindex/out/bin/node
+cd "$X/browser" && $N measure-warmup.mjs sites headless-15.json 15
+```
 
 ## Side check: sort-order locale dependence
 
