@@ -363,7 +363,14 @@ function externalGate(filePath, label, expectedGitCommit) {
   return { ...gate, report: path.resolve(filePath) };
 }
 
+// Legal logits must satisfy |js - pytorch| <= max(1e-5, 4 * ulp32(magnitude))
+// against PyTorch float32 (option C, approved October 25, 2026). Below
+// magnitude 32 the bound is exactly 1e-5; above it, 4 ULP. Masked coordinates
+// keep the absolute 1e-5. See docs/EDGER_PARITY_CONTRACT_REVIEW.md.
 export const EDGER_V2_PARITY_TOLERANCE = 1e-5;
+export const EDGER_V2_PARITY_ULP_MULTIPLE = 4;
+const EDGER_V2_PARITY_TOLERANCE_RULE =
+  "legal: |js - pytorch| <= max(1e-5, 4 * ulp32(max(|js|, |pytorch|))); masked: <= 1e-5";
 // Mid-match states, not just the opening position: the September campaign's
 // parity failure only appeared once activations had grown during a match.
 export const EDGER_V2_PARITY_SEEDS = Object.freeze([20260718, 20260719, 20260720]);
@@ -378,6 +385,14 @@ export function float32Ulp(magnitude) {
   view.setFloat32(0, value);
   const exponent = (view.getUint32(0) >>> 23) & 0xff;
   return exponent === 0 ? 2 ** -149 : 2 ** (exponent - 127 - 23);
+}
+
+export function edgerV2ParityTolerance(jsValue, pytorchValue) {
+  const magnitude = Math.max(Math.abs(jsValue), Math.abs(pytorchValue));
+  return Math.max(
+    EDGER_V2_PARITY_TOLERANCE,
+    EDGER_V2_PARITY_ULP_MULTIPLE * float32Ulp(magnitude),
+  );
 }
 
 function parityFixturesFor(model, engine, stateId) {
@@ -493,6 +508,217 @@ function maskedArgmaxOf(values, mask) {
   return bestIndex;
 }
 
+function legalTop(values, mask) {
+  let best = -Infinity;
+  for (let index = 0; index < values.length; index += 1) {
+    if (mask[index] && values[index] > best) {
+      best = values[index];
+    }
+  }
+  const ties = [];
+  let runnerUp = -Infinity;
+  for (let index = 0; index < values.length; index += 1) {
+    if (!mask[index]) {
+      continue;
+    }
+    if (values[index] === best) {
+      ties.push(index);
+    } else if (values[index] > runnerUp) {
+      runnerUp = values[index];
+    }
+  }
+  return { ties, gap: best - runnerUp };
+}
+
+// Compares a parity bank's JS logits with PyTorch's output for the same
+// fixtures. Separated from checkCandidateParity so the contract can be checked
+// against recorded logits without a PyTorch process.
+export function compareCandidateParity(fixtures, pytorchFixtures) {
+  const heads = {};
+  for (const head of ["card", "placement", "delay"]) {
+    heads[head] = {
+      maximum_logit_difference: 0,
+      maximum_legal_logit_magnitude: 0,
+      maximum_ulp_error: 0,
+    };
+  }
+  let maximumDifference = 0;
+  let maximumMagnitude = 0;
+  let argmaxAgreement = true;
+  let tieSetAgreement = true;
+  let toleranceExceedances = 0;
+  let nonFinite = 0;
+  const fixtureReports = [];
+  const fragileMargins = [];
+  let openingArgmax = null;
+  let worstAbsoluteError = null;
+  let worstToleranceError = null;
+
+  for (let index = 0; index < fixtures.length; index += 1) {
+    const { id, stateId, payload, masks, js } = fixtures[index];
+    const pytorch = pytorchFixtures[index];
+    if (pytorch.id !== id) {
+      return fail("PyTorch parity returned fixtures out of order", {
+        expected_fixture: id,
+        received_fixture: pytorch.id ?? null,
+      });
+    }
+    let fixtureDifference = 0;
+    let fixtureMagnitude = 0;
+    let fixtureUlpError = 0;
+    let fixtureExceedances = 0;
+    const fixtureTieSetAgreement = {};
+    const fixtureFragileHeads = [];
+    for (const head of ["card", "placement", "delay"]) {
+      const jsValues = Array.from(js[head]);
+      if (!Array.isArray(pytorch[head]) || pytorch[head].length !== jsValues.length) {
+        return fail(`PyTorch ${head} logit shape mismatch`, { fixture: id });
+      }
+      let headLegalDifference = 0;
+      for (let position = 0; position < jsValues.length; position += 1) {
+        const jsValue = jsValues[position];
+        const pytorchValue = pytorch[head][position];
+        if (!Number.isFinite(jsValue) || !Number.isFinite(pytorchValue)) {
+          nonFinite += 1;
+          continue;
+        }
+        const difference = Math.abs(jsValue - pytorchValue);
+        fixtureDifference = Math.max(fixtureDifference, difference);
+        heads[head].maximum_logit_difference = Math.max(
+          heads[head].maximum_logit_difference,
+          difference,
+        );
+        const legal = Boolean(masks[head][position]);
+        const tolerance = legal
+          ? edgerV2ParityTolerance(jsValue, pytorchValue)
+          : EDGER_V2_PARITY_TOLERANCE;
+        if (difference > tolerance) {
+          fixtureExceedances += 1;
+        }
+        if (worstToleranceError === null || difference / tolerance > worstToleranceError.tolerance_ratio) {
+          worstToleranceError = {
+            fixture: id, head, index: position, legal,
+            js_value: jsValue, pytorch_value: pytorchValue,
+            absolute_difference: difference, tolerance, tolerance_ratio: difference / tolerance,
+          };
+        }
+        if (legal) {
+          headLegalDifference = Math.max(headLegalDifference, difference);
+          const magnitude = Math.max(Math.abs(jsValue), Math.abs(pytorchValue));
+          const ulp = float32Ulp(magnitude);
+          const ulpError = difference / ulp;
+          fixtureUlpError = Math.max(fixtureUlpError, ulpError);
+          heads[head].maximum_ulp_error = Math.max(heads[head].maximum_ulp_error, ulpError);
+          if (worstAbsoluteError === null || difference > worstAbsoluteError.absolute_difference) {
+            worstAbsoluteError = {
+              fixture: id, head, index: position,
+              js_value: jsValue, pytorch_value: pytorchValue,
+              absolute_difference: difference, float32_ulp: ulp, ulp_error: ulpError,
+            };
+          }
+          fixtureMagnitude = Math.max(fixtureMagnitude, magnitude);
+          heads[head].maximum_legal_logit_magnitude = Math.max(
+            heads[head].maximum_legal_logit_magnitude,
+            magnitude,
+          );
+        }
+      }
+      const jsTop = legalTop(jsValues, masks[head]);
+      const pytorchTop = legalTop(pytorch[head], masks[head]);
+      fixtureTieSetAgreement[head] =
+        jsTop.ties.length === pytorchTop.ties.length &&
+        jsTop.ties.every((position, rank) => position === pytorchTop.ties[rank]);
+      // A top choice whose PyTorch margin over the next distinct legal logit is
+      // within twice the measured error could flip under a different
+      // accumulation order. It does not fail the gate; it needs review.
+      if (Number.isFinite(pytorchTop.gap) && pytorchTop.gap <= 2 * headLegalDifference) {
+        fixtureFragileHeads.push(head);
+        fragileMargins.push({
+          fixture: id, head, pytorch_margin: pytorchTop.gap, maximum_legal_difference: headLegalDifference,
+        });
+      }
+    }
+    const jsArgmax = {
+      card: maskedArgmaxOf(js.card, masks.card),
+      placement: maskedArgmaxOf(js.placement, masks.placement),
+      delay: maskedArgmaxOf(js.delay, masks.delay),
+    };
+    const pytorchArgmax = {
+      card: pytorch.card_argmax,
+      placement: pytorch.placement_argmax,
+      delay: pytorch.delay_argmax,
+    };
+    const fixtureAgreement =
+      jsArgmax.card === pytorchArgmax.card &&
+      jsArgmax.placement === pytorchArgmax.placement &&
+      jsArgmax.delay === pytorchArgmax.delay;
+    const fixtureTieAgreement = Object.values(fixtureTieSetAgreement).every(Boolean);
+    argmaxAgreement = argmaxAgreement && fixtureAgreement;
+    tieSetAgreement = tieSetAgreement && fixtureTieAgreement;
+    toleranceExceedances += fixtureExceedances;
+    maximumDifference = Math.max(maximumDifference, fixtureDifference);
+    maximumMagnitude = Math.max(maximumMagnitude, fixtureMagnitude);
+    if (openingArgmax === null) {
+      openingArgmax = { js: jsArgmax, pytorch: pytorchArgmax };
+    }
+    fixtureReports.push({
+      id,
+      state_id: stateId,
+      forced_card_index: payload.forced_card_index,
+      forced_placement_index: payload.forced_placement_index,
+      maximum_logit_difference: fixtureDifference,
+      maximum_legal_logit_magnitude: fixtureMagnitude,
+      maximum_ulp_error: fixtureUlpError,
+      tolerance_exceedances: fixtureExceedances,
+      argmax_agreement: fixtureAgreement,
+      tie_set_agreement: fixtureTieAgreement,
+      fragile_margin_heads: fixtureFragileHeads,
+    });
+  }
+
+  const ulp = float32Ulp(maximumMagnitude);
+  // ULP spacing describes scale, not an error bound or a root cause. Two
+  // implementations can agree exactly at large magnitudes, or accumulate
+  // substantial error at small magnitudes. Only measured parity gates pass.
+  const details = {
+    maximum_logit_difference: maximumDifference,
+    maximum_legal_logit_magnitude: maximumMagnitude,
+    float32_ulp: ulp,
+    maximum_ulp_error: Math.max(...Object.values(heads).map((head) => head.maximum_ulp_error)),
+    worst_absolute_error: worstAbsoluteError,
+    tolerance: EDGER_V2_PARITY_TOLERANCE,
+    ulp_tolerance_multiple: EDGER_V2_PARITY_ULP_MULTIPLE,
+    tolerance_rule: EDGER_V2_PARITY_TOLERANCE_RULE,
+    tolerance_exceedances: toleranceExceedances,
+    worst_tolerance_error: worstToleranceError,
+    heads,
+    fixture_count: fixtures.length,
+    state_count: new Set(fixtures.map((fixture) => fixture.stateId)).size,
+    card_indices_covered: [...new Set(fixtures.map((fixture) => fixture.payload.forced_card_index))].sort((a, b) => a - b),
+    fixtures: fixtureReports,
+    argmax_agreement: argmaxAgreement,
+    tie_set_agreement: tieSetAgreement,
+    fragile_margin_count: fragileMargins.length,
+    fragile_margins: fragileMargins,
+    review_required: fragileMargins.length > 0,
+    js_argmax: openingArgmax.js,
+    pytorch_argmax: openingArgmax.pytorch,
+  };
+  if (nonFinite > 0) {
+    return fail("non-finite parity logits", { ...details, non_finite_logits: nonFinite });
+  }
+  if (!argmaxAgreement) {
+    return fail("PyTorch/generated-JS argmax disagreement", details);
+  }
+  if (!tieSetAgreement) {
+    return fail("PyTorch/generated-JS tie-set disagreement", details);
+  }
+  if (toleranceExceedances > 0) {
+    return fail("PyTorch/generated-JS parity exceeded tolerance", details);
+  }
+  return pass(details);
+}
+
 export function checkCandidateParity(modelPath, model) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "edger-v2-eval-parity-"));
   try {
@@ -519,136 +745,7 @@ export function checkCandidateParity(modelPath, model) {
     if (!Array.isArray(pytorchFixtures) || pytorchFixtures.length !== fixtures.length) {
       return fail("PyTorch parity returned the wrong fixture count");
     }
-
-    const heads = {};
-    for (const head of ["card", "placement", "delay"]) {
-      heads[head] = {
-        maximum_logit_difference: 0,
-        maximum_legal_logit_magnitude: 0,
-        maximum_ulp_error: 0,
-      };
-    }
-    let maximumDifference = 0;
-    let maximumMagnitude = 0;
-    let argmaxAgreement = true;
-    let nonFinite = 0;
-    const fixtureReports = [];
-    let openingArgmax = null;
-    let worstAbsoluteError = null;
-
-    for (let index = 0; index < fixtures.length; index += 1) {
-      const { id, stateId, payload, masks, js } = fixtures[index];
-      const pytorch = pytorchFixtures[index];
-      if (pytorch.id !== id) {
-        return fail("PyTorch parity returned fixtures out of order", {
-          expected_fixture: id,
-          received_fixture: pytorch.id ?? null,
-        });
-      }
-      let fixtureDifference = 0;
-      let fixtureMagnitude = 0;
-      let fixtureUlpError = 0;
-      for (const head of ["card", "placement", "delay"]) {
-        const jsValues = Array.from(js[head]);
-        if (!Array.isArray(pytorch[head]) || pytorch[head].length !== jsValues.length) {
-          return fail(`PyTorch ${head} logit shape mismatch`, { fixture: id });
-        }
-        for (let position = 0; position < jsValues.length; position += 1) {
-          const jsValue = jsValues[position];
-          const pytorchValue = pytorch[head][position];
-          if (!Number.isFinite(jsValue) || !Number.isFinite(pytorchValue)) {
-            nonFinite += 1;
-            continue;
-          }
-          const difference = Math.abs(jsValue - pytorchValue);
-          fixtureDifference = Math.max(fixtureDifference, difference);
-          heads[head].maximum_logit_difference = Math.max(
-            heads[head].maximum_logit_difference,
-            difference,
-          );
-          if (masks[head][position]) {
-            const magnitude = Math.max(Math.abs(jsValue), Math.abs(pytorchValue));
-            const ulp = float32Ulp(magnitude);
-            const ulpError = difference / ulp;
-            fixtureUlpError = Math.max(fixtureUlpError, ulpError);
-            heads[head].maximum_ulp_error = Math.max(heads[head].maximum_ulp_error, ulpError);
-            if (worstAbsoluteError === null || difference > worstAbsoluteError.absolute_difference) {
-              worstAbsoluteError = {
-                fixture: id, head, index: position,
-                js_value: jsValue, pytorch_value: pytorchValue,
-                absolute_difference: difference, float32_ulp: ulp, ulp_error: ulpError,
-              };
-            }
-            fixtureMagnitude = Math.max(fixtureMagnitude, magnitude);
-            heads[head].maximum_legal_logit_magnitude = Math.max(
-              heads[head].maximum_legal_logit_magnitude,
-              magnitude,
-            );
-          }
-        }
-      }
-      const jsArgmax = {
-        card: maskedArgmaxOf(js.card, masks.card),
-        placement: maskedArgmaxOf(js.placement, masks.placement),
-        delay: maskedArgmaxOf(js.delay, masks.delay),
-      };
-      const pytorchArgmax = {
-        card: pytorch.card_argmax,
-        placement: pytorch.placement_argmax,
-        delay: pytorch.delay_argmax,
-      };
-      const fixtureAgreement =
-        jsArgmax.card === pytorchArgmax.card &&
-        jsArgmax.placement === pytorchArgmax.placement &&
-        jsArgmax.delay === pytorchArgmax.delay;
-      argmaxAgreement = argmaxAgreement && fixtureAgreement;
-      maximumDifference = Math.max(maximumDifference, fixtureDifference);
-      maximumMagnitude = Math.max(maximumMagnitude, fixtureMagnitude);
-      if (openingArgmax === null) {
-        openingArgmax = { js: jsArgmax, pytorch: pytorchArgmax };
-      }
-      fixtureReports.push({
-        id,
-        state_id: stateId,
-        forced_card_index: payload.forced_card_index,
-        forced_placement_index: payload.forced_placement_index,
-        maximum_logit_difference: fixtureDifference,
-        maximum_legal_logit_magnitude: fixtureMagnitude,
-        maximum_ulp_error: fixtureUlpError,
-        argmax_agreement: fixtureAgreement,
-      });
-    }
-
-    const ulp = float32Ulp(maximumMagnitude);
-    // ULP spacing describes scale, not an error bound or a root cause. Two
-    // implementations can agree exactly at large magnitudes, or accumulate
-    // substantial error at small magnitudes. Only measured parity gates pass.
-    const details = {
-      maximum_logit_difference: maximumDifference,
-      maximum_legal_logit_magnitude: maximumMagnitude,
-      float32_ulp: ulp,
-      maximum_ulp_error: Math.max(...Object.values(heads).map((head) => head.maximum_ulp_error)),
-      worst_absolute_error: worstAbsoluteError,
-      tolerance: EDGER_V2_PARITY_TOLERANCE,
-      heads,
-      fixture_count: fixtures.length,
-      state_count: new Set(fixtures.map((fixture) => fixture.stateId)).size,
-      card_indices_covered: [...new Set(fixtures.map((fixture) => fixture.payload.forced_card_index))].sort((a, b) => a - b),
-      fixtures: fixtureReports,
-      argmax_agreement: argmaxAgreement,
-      js_argmax: openingArgmax.js,
-      pytorch_argmax: openingArgmax.pytorch,
-    };
-    if (nonFinite > 0) {
-      return fail("non-finite parity logits", { ...details, non_finite_logits: nonFinite });
-    }
-    if (maximumDifference <= EDGER_V2_PARITY_TOLERANCE && argmaxAgreement) {
-      return pass(details);
-    }
-    if (!argmaxAgreement) {
-      return fail("PyTorch/generated-JS argmax disagreement", details);
-    }
-    return fail("PyTorch/generated-JS parity exceeded tolerance", details);
+    return compareCandidateParity(fixtures, pytorchFixtures);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

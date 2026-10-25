@@ -57,6 +57,9 @@ ADVANTAGE_TEMPERATURE = 0.25
 ADVANTAGE_WEIGHT_MIN = 0.1
 ADVANTAGE_WEIGHT_MAX = 20.0
 PARQUET_ROW_GROUP_SIZE = 256
+# The absolute floor of the parity contract. The gate itself is in
+# scripts/edger-v2-evaluation-core.mjs and also allows 4 float32 ULP above
+# magnitude 32; this constant only feeds the advisory warning below.
 PARITY_ABSOLUTE_TOLERANCE = 1e-5
 # A two-roundoff estimate for a diagnostic warning, not a parity guarantee or
 # an impossibility threshold. Only measured PyTorch/JS parity can establish

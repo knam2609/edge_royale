@@ -7,9 +7,11 @@ all seven local v2 models.
 On October 25 the owner approved the
 [recommendation](#recommendation-for-review); the
 [decision](#decision--october-25-2026) sets out what lands and in what order.
-**Step 1, the float64 mean pool, has [landed](#step-1-landed--october-25-2026).**
-The `1e-5` tolerance, the gate code and the tie semantics are unchanged.
-Each step still needs its own tests and fresh provenance. The September 27
+**Both steps have landed:** the float64 mean pool
+([step 1](#step-1-landed--october-25-2026)) and the hybrid tolerance with
+explicit tie-set identity ([step 2](#step-2-landed--october-25-2026)). The
+first-index tie order is unchanged. Both need fresh provenance before a
+campaign. The September 27
 [isolation](EDGER_EVALUATION_DIAGNOSIS.md#parity-failure-isolation--september-27)
 is the background.
 
@@ -17,7 +19,9 @@ is the background.
 
 ## Current contract
 
-`checkCandidateParity` (`scripts/edger-v2-evaluation-core.mjs`):
+As measured by this packet; [step 2](#step-2-landed--october-25-2026) replaced
+rule 1 and made tie sets explicit. `checkCandidateParity`
+(`scripts/edger-v2-evaluation-core.mjs`):
 - **Bank.** The opening plus six mid-match states for each of three seeds, played by the candidate against the heuristic. Each state yields PASS plus every legal card branch.
 - **Rule 1.** Every coordinate of the card, placement and delay logits must be within `1e-5` absolute of PyTorch float32 CPU (`edger-v2-training.py parity`). Masked coordinates are equal by construction.
 - **Rule 2.** The masked argmax of each head must be identical, with the first index winning ties.
@@ -111,10 +115,9 @@ coordinate over `1e-5`, and the number of fixtures over `1e-5`.
 
 ## Decision — October 25, 2026
 
-The owner approved recommendations 1–3 as written. Step 1 has landed (below);
-`1e-5` and the gate code stay as they are until step 2 lands. The approval does
-not cover pushing, cloud actions, promotion or any other gate change.
-Implement in this order:
+The owner approved recommendations 1–3 as written. Steps 1 and 2 have landed
+(below). The approval does not cover pushing, cloud actions, promotion or any
+other gate change. Implement in this order:
 
 1. **Float64 mean pool (V1)** in `meanPool`, `src/ai/v2/policy.js`, as its own change.
    - Add tests that the pool equals float64 accumulation rounded once, and that bank and full-match decisions are unchanged.
@@ -158,11 +161,60 @@ is byte-identical to October 24 (random 1.000, aggressive 0.833, defender
 1.000). `L/SHA256SUMS` covers the evidence.
 
 The parity numbers for V1 in [Results](#results) therefore describe the
-shipped runtime. Every model still fails the unchanged `1e-5`, as expected
-until step 2. Live v1 runs `src/ai/mlPolicy.js` and is unaffected. The
+shipped runtime. Every model still failed the old `1e-5`; step 2 resolves
+that. Live v1 runs `src/ai/mlPolicy.js` and is unaffected. The
 October 17 runtime costs describe the pre-change runtime. The pool still does
 576×16 additions per encode, now into a `Float64Array`; its cost is not
 re-measured.
+
+### Step 2 landed — October 25, 2026
+
+`compareCandidateParity` (`scripts/edger-v2-evaluation-core.mjs`) now holds
+the comparison; `checkCandidateParity` builds the bank, runs PyTorch and calls
+it. The contract:
+- **Legal coordinates:** `|js − pytorch| ≤ max(1e-5, 4·ulp32(max(|js|, |pytorch|)))` (`edgerV2ParityTolerance`, `EDGER_V2_PARITY_ULP_MULTIPLE = 4`). Masked coordinates keep `1e-5`.
+- **Decisions:** identical masked argmax and, now explicitly, identical legal tie sets. The first-index tie order is unchanged.
+- **Fragile margins** are reported, not failed. A head is fragile when PyTorch's margin from its top value to the next distinct legal value is within twice that head's measured legal error. Unlike the packet's metric, ties are not skipped: the margin from a tied top set to the next value counts. Any non-zero `fragile_margin_count` sets `review_required`.
+- **Reports** add `ulp_tolerance_multiple`, `tolerance_rule`, `tolerance_exceedances`, `worst_tolerance_error`, `tie_set_agreement` and per-fixture equivalents. `tolerance` stays `1e-5`, the absolute floor, and the report schema names are unchanged.
+- `PARITY_ABSOLUTE_TOLERANCE` in `scripts/edger-v2-training.py` runs no parity check; it only derives the advisory logit-scale warning (`83.886`, option F). It therefore stays `1e-5`, with a comment pointing to the gate. The decision's "both checks" assumed a second check that does not exist.
+
+**Tests** (`tests/edger-v2-parity.test.js`):
+- The tolerance is exactly `1e-5` for magnitudes from 0 to just below 32, and 4 ULP at 32, 500 and 1024.
+- Without PyTorch: 5 ULP at magnitude 16 passes and 6 ULP fails (the floor); an identical argmax with a different tie set fails; fragile margins are reported without failing.
+- With PyTorch, on a runtime and reference that differ only in the PASS bias at 1024: 4 ULP passes, although it exceeds `1e-5`, and 5 ULP fails with an identical argmax.
+- The September 21 counterexamples still behave as required. The PASS bias of 1024 with zero error passes, and the card-embedding discrepancy of 1,000 fails.
+- The dense ×4096 test and the old amplified-fusion test both have about 3 ULP of real PyTorch/JS error at magnitude 1,000. The fusion test is replaced by the injected-error tests above. The ×4096 test now asserts only a consistent verdict, because its outcome depends on the host's PyTorch accumulation order (it passes on this M1).
+- Mutation controls (`L/mutations.log`) are each caught: an absolute-only tolerance, k = 5, a dropped tie-set check and disabled fragile reporting.
+
+**Real-model check** (`L/contract-check.mjs`, read-only against `X`): the new
+comparison on the packet's recorded logits against PyTorch float32.
+
+| Model | V0 (float32 pool) | V1 (shipped) |
+|---|---|---|
+| Parent | pass (0.75) | pass (0.75) |
+| Learned r0 | **fail**, 5 fixtures (1.50) | pass (0.75) |
+| Learned r1 | pass (0.57) | pass (0.50) |
+| Learned r2 | pass (0.75) | pass (0.50) |
+| Fixed r0 | **fail**, 39 fixtures (2.25) | pass (0.50) |
+| Fixed r1 | **fail**, 20 fixtures (2.25) | pass (0.50) |
+| Fixed r2 | **fail**, 17 fixtures (1.75) | pass (0.75) |
+
+Cells show the verdict, the fixtures over tolerance and, in brackets, the worst
+error as a fraction of its tolerance. V0 is rejected for exactly the four
+models that need more than 4 ULP. Every argmax and tie set agrees, and the
+fragile-margin count is zero everywhere.
+
+**End-to-end gate** (`npm run edger:parity:v2 -- --model "$X/models/<model>.json" --out "$L/gate/<model>.json"`):
+fresh banks, the shipped runtime and real PyTorch pass for all seven models,
+with a worst ratio of 0.50–0.75 (at most 3 ULP), identical tie sets and no
+review flag (`L/gate/summary.txt`).
+
+**Gates:** `npm test` passed 223/223, and the Python logit-scale tests passed
+2/2. No runtime code changed after step 1, so bot-bench and smoke were not
+rerun.
+
+The k = 4 margin rests on one M1 with PyTorch 2.11.0. Re-measure it on the
+reference host before a campaign relies on it.
 
 ## Decision preservation
 
@@ -181,7 +233,7 @@ gate after the change lands.
 
 - Seven local, non-promotable models and one bank schedule.
 - PyTorch 2.11.0 CPU on an M1 (Python 3.11). The reference host's PyTorch/BLAS accumulation order may differ, so any adopted k must be re-measured there.
-- The measured variants are scratch copies. Only V1 has since landed in `src/ai`; the tables above describe the scratch runs.
+- The measured variants are scratch copies. Only V1 has since landed in `src/ai`; the Results tables describe the scratch runs.
 
 ## Reproduction
 

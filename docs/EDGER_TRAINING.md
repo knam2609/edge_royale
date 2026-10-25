@@ -120,7 +120,7 @@ than significant digits, so it altered 53.5% of a real BC actor's weights, worst
 case `1.29e-3` relative on `conv1`. The measured BC export grew about 3%, while the league export became smaller;
 both stay inside the 1 MB cap. Other candidates must still satisfy the byte gate.
 
-PyTorch dense weights are transposed into input-major generated-JS arrays. Golden fixtures require maximum logit error at or below `1e-5` and identical masked argmax.
+PyTorch dense weights are transposed into input-major generated-JS arrays. Golden fixtures require maximum logit error at or below `1e-5` and identical masked argmax; the candidate parity gate uses the hybrid tolerance below.
 
 The runtime stores activations as float32 and accumulates dot products in
 JavaScript numbers. The board mean pool also sums in float64 and rounds once to
@@ -131,9 +131,13 @@ is not guaranteed ([PyTorch numerical accuracy](https://docs.pytorch.org/docs/2.
 Float32 spacing is neither a minimum error nor a bound on accumulated error.
 Large logits can match exactly, and small logits can still disagree. There is
 no proven `83.886` cutoff for parity. Logit scale is a useful warning for local
-experiments; the unchanged measured `1e-5` error and identical masked argmax
-remain the actual gate. ULP diagnostics alone do not prove runtime fidelity or
-candidate ill-conditioning.
+experiments, not a gate. The gate (since October 25, 2026, [option C](EDGER_PARITY_CONTRACT_REVIEW.md#decision--october-25-2026))
+requires every legal logit to satisfy `|js - pytorch| <= max(1e-5, 4 * ulp32(max(|js|, |pytorch|)))`
+against PyTorch float32, masked logits to stay within `1e-5`, and identical
+masked argmax and legal tie sets. Below magnitude 32 that is exactly `1e-5`.
+The 4-ULP multiple was measured on one M1 with PyTorch 2.11.0 and must be
+re-measured on the reference host before a campaign relies on it. ULP
+diagnostics alone do not prove runtime fidelity or candidate ill-conditioning.
 
 ## 4. Learning
 
@@ -449,13 +453,18 @@ three targets so its unchanged 0.70 floor is achievable. Parity checks the
 opening position plus mid-match states the candidate itself reaches. At each
 state it tests PASS and every legal card, comparing legal placement logits and
 conditioning delay on that card's JS-selected legal placement; PyTorch must
-independently agree on masked argmax. Reports include state/branch coverage,
-per-head errors and magnitudes, and the worst absolute error with its own
-coordinate's values and ULP spacing. Malformed/non-finite outputs are rejected.
-Failure reasons report measured errors or argmax disagreement without inferring
-a root cause from logit scale. The
-absolute `1e-5`, identical argmax, quality, safety, and `p95 ≤ 5 ms` thresholds
-are unchanged.
+independently agree on masked argmax and on the exact legal tie set. Reports
+include state/branch coverage, per-head errors and magnitudes, the worst
+absolute error with its own coordinate's values and ULP spacing, the tolerance
+rule, the count and worst ratio of coordinates over tolerance, and fragile
+margins: a head whose PyTorch margin over the next distinct legal logit is
+within twice the measured error. Fragile margins do not fail the gate; a
+non-zero `fragile_margin_count` sets `review_required` and must be reviewed
+before promotion. Malformed/non-finite outputs are rejected. Failure reasons
+report measured errors, argmax or tie-set disagreement without inferring a root
+cause from logit scale. The parity tolerance changed to the hybrid rule above on
+October 25, 2026; the identical-argmax, quality, safety, and `p95 ≤ 5 ms`
+thresholds are unchanged.
 
 Failure reports are retained under `failed-stages/<stage>/<attempt>/`, separate
 from passed `stages/` artifacts. See [the September diagnosis](EDGER_EVALUATION_DIAGNOSIS.md)

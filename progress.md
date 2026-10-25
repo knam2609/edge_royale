@@ -1,11 +1,16 @@
 # Current State
 
-- October 25, 2026 (latest): parity step 1, the **float64 mean pool, has landed** in `meanPool`, `src/ai/v2/policy.js` ([record](docs/EDGER_PARITY_CONTRACT_REVIEW.md#step-1-landed--october-25-2026)). It is committed locally on `edger-v2-accumulated` as its own change (not pushed).
-  - It is bit-identical to scratch V1 on all seven parity banks (468 fixtures), and all 70 full matches (3,785 decisions) are identical to the float32 pool. Evidence is in `L` = `~/edge_royale-runs/20261025-float64-pool.noindex/`.
-  - New tests pin the pool arithmetic, the golden hash (`87c3a171…`) and a seeded model's bank and full-match decisions.
-  - The `1e-5` tolerance, gate code and tie order are unchanged, so every model still fails parity until option C lands (Next Task 1). Live v1 (`src/ai/mlPolicy.js`) is unaffected.
-- October 25, 2026 (later): the owner **approved** both recommendations below. Only the pool fix above is implemented; the order and scope are in each doc's decision section.
-  - **Parity:** the float64 pool first (done), then option C with k = 4 against float32, explicit tie-set identity and fragile-margin reporting. Option F stays advisory.
+- October 25, 2026 (latest): the approved **parity decision is implemented**. Evidence is in `L` = `~/edge_royale-runs/20261025-float64-pool.noindex/`.
+  - **Step 1, the float64 mean pool** ([record](docs/EDGER_PARITY_CONTRACT_REVIEW.md#step-1-landed--october-25-2026)), in `meanPool`, `src/ai/v2/policy.js`. It is committed locally as `83fa42e` on `edger-v2-accumulated` (not pushed).
+    - It is bit-identical to scratch V1 on all seven parity banks (468 fixtures), and all 70 full matches (3,785 decisions) are identical to the float32 pool.
+    - Tests pin the pool arithmetic, the golden hash (`87c3a171…`) and a seeded model's bank and full-match decisions.
+  - **Step 2, option C** ([record](docs/EDGER_PARITY_CONTRACT_REVIEW.md#step-2-landed--october-25-2026)), in `scripts/edger-v2-evaluation-core.mjs`. It is committed locally on `edger-v2-accumulated` as its own change, after `83fa42e` (not pushed).
+    - Legal logits must satisfy `|js − pytorch| ≤ max(1e-5, 4·ulp32)` against float32, masked logits keep `1e-5`, and identical tie sets are now required. Fragile margins are reported and set `review_required`; they do not fail the gate.
+    - `compareCandidateParity` is now a separate export. `PARITY_ABSOLUTE_TOLERANCE` in `scripts/edger-v2-training.py` has no parity check (it only feeds the advisory warning), so it stays `1e-5`, with a comment.
+    - On the recorded logits, V0 is rejected for exactly learned r0 and fixed r0–r2, and V1 passes 7/7. End to end (fresh banks, real PyTorch), the shipped runtime passes 7/7, worst 0.75 of tolerance (3 ULP), with identical tie sets and zero fragile margins.
+  - Live v1 (`src/ai/mlPolicy.js`) is unaffected. k = 4 rests on one M1 with PyTorch 2.11.0; re-measure on the reference host before a campaign relies on it.
+- October 25, 2026 (later): the owner **approved** both recommendations below. The parity decision is implemented (above); the tactical proposals are not. The order and scope are in each doc's decision section.
+  - **Parity:** the float64 pool first, then option C with k = 4 against float32, explicit tie-set identity and fragile-margin reporting. Option F stays advisory.
   - **Tactical:** all four proposals, including the scoring gate change.
   - Gates and models are unchanged until those changes land.
 - October 25, 2026: former Next Tasks 1–3 are done as read-only local diagnostics. The repository changes are docs only, committed locally as `f904e68` on `edger-v2-accumulated` (not pushed). Evidence is in `X` = `~/edge_royale-runs/20261025-tactical-parity-warmup.noindex/` (`SHA256SUMS` `89dc327c…`, 376 files).
@@ -20,7 +25,7 @@
   - **Parity** ([packet](docs/EDGER_PARITY_CONTRACT_REVIEW.md)).
     - All seven models agree with PyTorch on every masked argmax and tie set; only absolute placement error fails, with logits of 149–746.
     - The float64 mean pool cuts the worst error from 11 to 3 ULP against float32. It brings card and delay within `1e-5` and changes no decision (banks plus 70 full matches, 3,785 decisions).
-    - Approved on October 25: land the pool fix (landed, above), then `abs ≤ max(1e-5, 4·ulp32)` against float32, with explicit tie-set identity (not yet implemented). `1e-5` stays in force until that lands.
+    - Approved on October 25: land the pool fix, then `abs ≤ max(1e-5, 4·ulp32)` against float32, with explicit tie-set identity. Both landed the same day (above).
   - **Warm-up** ([browser confirmation](docs/EDGER_RUNTIME_REVIEW.md#browser-confirmation-of-the-warm-up--october-25-2026)), in headless Chromium with 15 fresh pages per condition:
     - with the warm-up, tick 1 costs 9.8 ms (v1) and 8.5 ms (r0), and 0 of 30 pages dropped a frame;
     - without it, tick 1 costs 13.6 and 13.7 ms, and 20 of 30 pages dropped one;
@@ -51,13 +56,13 @@
 - The repository now lives at `~/Developer/edge_royale`, outside iCloud Desktop & Documents. Reviewed audit copies use that path.
 - The accepted freeze review (October 8) and headed validation (122/122, 2,828.0 s) and dry run (8/8) stand unchanged. Those durations are validation, not cost evidence.
 - September 29 [confirmation](docs/EDGER_REPLICATION_REVIEW.md#confirmation-run--september-29-03450646-utc-13451646-aest) is complete on immutable plan `9e6b6da2…`: 9,600 games plus 336 identical repeats, no illegal attempts, stops or reruns, 2.96 h of 4.5 h. Every-tick minus learned gains are +0.158 [+0.128, +0.190] vs v1, +0.062 [+0.040, +0.082] vs aggressive and +0.097 [+0.073, +0.122] vs heuristic; four research rules hold. These trained-weight-specific results and the spent holdout clear no promotion gate. All eight replication exports remain non-promotable.
-- Live v1 remains `895d5541b5650e620db69ccfe999833c05f93abcae08374710d79d0dd913c3aa`; `main` is `0270d828686a3ef984b89c6043a46a1c306dc0e6`. On October 25 the accumulated work was committed as-is to the local branch `edger-v2-accumulated` (`28311bc`), followed by the October 25 docs (`f904e68`). It has not been pushed and still needs the publication review (task 7). `campaigns/20260904-v2-recovery` remains failed and immutable.
+- Live v1 remains `895d5541b5650e620db69ccfe999833c05f93abcae08374710d79d0dd913c3aa`; `main` is `0270d828686a3ef984b89c6043a46a1c306dc0e6`. On October 25 the accumulated work was committed as-is to the local branch `edger-v2-accumulated` (`28311bc`), followed by the October 25 docs (`f904e68`). It has not been pushed and still needs the publication review (task 6). `campaigns/20260904-v2-recovery` remains failed and immutable.
 - The October 24 session was read-only against `A`/`M`. It wrote review evidence to the new `R`, including `R/speedup/`, and added the review doc and the doc updates. Its code change is limited to `src/ai/botRuntime.js`, `src/client/webGame.js`, `tests/bot-runtime.test.js` and the webGame pin in `scripts/edger-v2-runtime-cost-stage.mjs`. There was no gameplay-rule, policy-weight or controller change, frozen profiling run, cloud action, Git staging or commit.
 
 # Source of Truth
 
 - Product/workflow: `AGENTS.md`, `README.md`, `docs/BOT_LEVELS.md`. Training: `docs/EDGER_TRAINING.md`. Roadmap: `docs/IMPLEMENTATION_PLAN.md`, `docs/SPRINT_BACKLOG.md`.
-- Float64 pool landing (October 25): `L` holds `landed-check.mjs`/`.json`/`.log`, the seeded-model `probe.mjs` outputs from `a3e01e5` and the new code, `golden.mjs` and the bot-bench output.
+- Parity implementation (October 25): `L` holds, for step 1, `landed-check.mjs`/`.json`/`.log`, the seeded-model `probe.mjs` outputs from `a3e01e5` and the new code, `golden.mjs` and the bot-bench output; for step 2, `contract-check.mjs`/`.json`/`.log`, the end-to-end gate reports in `gate/` and `mutations.log`.
 - [Tactical review](docs/EDGER_TACTICAL_REVIEW.md) and [parity-contract packet](docs/EDGER_PARITY_CONTRACT_REVIEW.md) (October 25), plus the warm-up browser confirmation in the runtime review. Evidence, scripts and checksums are in `X` (see its `README.md`). Byte copies of the September 27/28 audit and isolation scripts are in `X/prior/`. The ignored `artifacts/edger-training/experiments/` now lives only in the iCloud archive `~/Documents/edge_royale-training-archive/experiments/`, which holds dataless files; copy them out before reading.
 - [Runtime review](docs/EDGER_RUNTIME_REVIEW.md) (October 24): the decision, the cold-start attribution, optimization proposals and reproduction. `R` = `~/edge_royale-runs/20261024-runtime-review.noindex/` holds `spotcheck.py`, `check.mjs`, the summary rerun, their outputs, the speed-up timing scripts and logs (`speedup/`) and `SHA256SUMS`.
 - Latest [local runtime-cost results](docs/EDGER_RUNTIME_COST_RESULTS.md). Session records, launcher, watcher, summary script, `measurement-summary.json`/`measurement-tables.md` and checksums are in `A` (above). `A/SHA256SUMS` (`3edc3ebb…`) covers 23 files; `A/SHA256SUMS-measurement` (`7d8e67a6…`) covers all 6,117 raw output files in `M/measurement/` plus `M/out/measurement.log`.
@@ -93,25 +98,17 @@
   - The placement-tie cause is now established: a 3×3 receptive field, no coordinate or geometry channels, and the lowest-index tie-break. 47.9% of corpus troop rows are structurally tied.
   - Fireball causes are measured but not fixed.
   - The representation, data/learning and scoring proposals are approved (October 25) but not implemented. The RL suppression mechanism is inferred from outputs, not traced in training logs.
-- Parity: placement alone fails, at magnitudes of 149–746. Under every implementation all seven models fail the unchanged `1e-5` against both float32 and float64 PyTorch, while decisions agree everywhere.
-  - The JS float32 mean pool was the main runtime deviation; the float64 pool landed on October 25 (worst 3 ULP against float32). Decimal-double weights matter only against float64.
-  - Option C (k = 4) is approved (October 25) but not implemented, so every model still fails the unchanged `1e-5`. The adopted ULP multiple must be re-measured on the reference host's PyTorch.
+- Parity: under the old `1e-5`, all seven models failed on placement alone (magnitudes 149–746) while decisions agreed everywhere. Under the October 25 contract the shipped runtime passes 7/7 locally with one ULP of headroom (worst 3 of 4 ULP).
+  - That headroom is measured only on one M1 with PyTorch 2.11.0. The reference host's PyTorch/BLAS accumulation order may need a different k; re-measure before a campaign relies on it.
+  - Decimal-double weights (V2, deferred) matter only against a float64 reference. Option F (bounding logit scale in training) stays an advisory warning.
+  - Fragile-margin review has no automated enforcement: `review_required` is a report flag, and promotion is already manual.
   - The pool change's runtime cost is not re-measured; the October 17 costs describe the pre-change runtime.
 - September 27 provenance: plan mtime 06:10:14Z predates launch 06:14:06Z; analysis was written 06:15:43–06:15:57Z, after training began and before evaluation at 07:35:39Z. Declared `frozen_at_utc: 06:15:00Z` and earlier analysis content remain unexplained. Confirmation used actual timestamps and pre-run analysis hashes; it does not repair predecessor provenance.
 - Historical league regression remains unattributed; equal-update experiment outstanding. Held-out imitation loss worsens in every RL arm (5.1–8.3 vs parent 3.566) despite better play; sampled rollout scores also mislead. Subset weights/derived manifest hash remain machine-specific.
 
 # Next Tasks
 
-1. Finish the approved [parity decision](docs/EDGER_PARITY_CONTRACT_REVIEW.md#decision--october-25-2026) (owner approval October 25).
-   - The float64 mean pool landed on October 25, committed locally as its own change. V2 (`Math.fround` weights) stays deferred.
-   - Next, option C, k = 4, against float32: `abs ≤ max(1e-5, 4·ulp32(max(|js|, |ref|)))`.
-     - Change it in both `EDGER_V2_PARITY_TOLERANCE` (`scripts/edger-v2-evaluation-core.mjs`) and `PARITY_ABSOLUTE_TOLERANCE` (`scripts/edger-v2-training.py`).
-     - Add explicit tie-set identity and fragile-margin reporting.
-     - Tests must show `1e-5` unchanged below magnitude 32, V0 still rejected for learned r0 and fixed r0–r2, and the September 21 counterexamples still caught.
-     - Update `docs/EDGER_TRAINING.md`.
-   - Option F stays advisory. Re-measure k on the reference host before a campaign relies on it.
-   - Both are protected changes: they go into the task 7 review and need the task 8 fresh prefix.
-2. Implement the approved [tactical proposals](docs/EDGER_TACTICAL_REVIEW.md#proposals--approved-october-25-not-yet-implemented) after task 1, since new models must pass the new parity contract.
+1. Implement the approved [tactical proposals](docs/EDGER_TACTICAL_REVIEW.md#proposals--approved-october-25-not-yet-implemented). New models must pass the new parity contract, which the current models now do locally.
    - Representation: geometry channels or the September 21 ablation, plus spell-opportunity globals.
      - This is a new v2 observation schema, needing a re-derived cache and a bounded local BC ablation within the 50,000-parameter / 1 MB caps.
      - Choose the variant by the structural-tie rate (47.9% now) and the recomputed ln(k).
@@ -122,24 +119,30 @@
      - a held-out opportunity bank drawn fresh from test-split episodes.
      - Rebaseline the heuristic and v1, and record the before and after scores.
    - Do not lower floors, add handcrafted spell or placement overrides, or change the tie order.
-3. Optional: repeat the warm-up check headed at DPR 2 (it shows windows on the display). Mobile and 120 Hz stay with the separate cost measurement. The implemented `src/ai` speed-ups are protected runtime changes for the accumulated-diff review (task 7) and fresh scaling provenance. Do not add a forced-PASS shortcut under learned delay.
-4. Prepare the timing-only `c7g.4xlarge` packet from the validated harness, for separate approval. It needs exact launch/SSM/download/termination commands, a checksummed bundle, the current official price ceiling, ≤60-minute lifetime/storage bounds and verified cleanup. Cloud admission stays pending until the A$10/month account budget can accommodate it. Preserve existing-method p95 ≤5 ms.
-5. Attribute historical league regression locally: same parent, production recipe vs fresh on-policy loop, equal updates, paired development evaluation, at least two runs/arm.
-6. Re-scope September 21 BC-control/architecture-ablation plans; do not judge on held-out cross-entropy alone.
-7. Review the entire accumulated learner/export/runtime/evaluator/doc/diagnostic diff (local branch `edger-v2-accumulated` against `main`) before publication; obtain explicit push/PR approval and record full SHA/manifest hashes.
-8. Prepare fresh BC/scaling provenance and a new immutable campaign prefix. Never resume/retarget failed recovery or bypass its protected-runtime guard.
-9. After local prerequisites/review, seek approval for a bounded reference-host campaign pilot, then separately production learning/full evaluation. Preserve smoke/production isolation, gates and cleanup; timing-only profiling is separate.
-10. Consider manual promotion only with a matching passed full-evaluation marker and separate approval; open an unmerged review PR, preserving live v1 until accepted.
-11. Standardize browser smoke: iCloud refetches can exceed its 120 s watchdog while a byte-identical outside-iCloud copy passes in about 8 s; its watchdog lacks group/KILL cleanup. Use verified outside-iCloud freeze gates and retained assertion diagnostics to investigate a recurrence. The original October 4 193/196 cause remains unconfirmed. Repository smoke and full-suite runs from `~/Developer/edge_royale` (outside iCloud) passed once on October 24; keep watching for a recurrence.
+2. Optional: repeat the warm-up check headed at DPR 2 (it shows windows on the display). Mobile and 120 Hz stay with the separate cost measurement. The implemented `src/ai` speed-ups are protected runtime changes for the accumulated-diff review (task 6) and fresh scaling provenance. Do not add a forced-PASS shortcut under learned delay.
+3. Prepare the timing-only `c7g.4xlarge` packet from the validated harness, for separate approval. It needs exact launch/SSM/download/termination commands, a checksummed bundle, the current official price ceiling, ≤60-minute lifetime/storage bounds and verified cleanup. Cloud admission stays pending until the A$10/month account budget can accommodate it. Preserve existing-method p95 ≤5 ms.
+4. Attribute historical league regression locally: same parent, production recipe vs fresh on-policy loop, equal updates, paired development evaluation, at least two runs/arm.
+5. Re-scope September 21 BC-control/architecture-ablation plans; do not judge on held-out cross-entropy alone.
+6. Review the entire accumulated learner/export/runtime/evaluator/doc/diagnostic diff (local branch `edger-v2-accumulated` against `main`, including both protected parity commits) before publication; obtain explicit push/PR approval and record full SHA/manifest hashes.
+7. Prepare fresh BC/scaling provenance and a new immutable campaign prefix. Never resume/retarget failed recovery or bypass its protected-runtime guard.
+8. After local prerequisites/review, seek approval for a bounded reference-host campaign pilot, then separately production learning/full evaluation. The pilot must first re-measure the parity ULP multiple (k = 4) on the reference host's PyTorch. Preserve smoke/production isolation, gates and cleanup; timing-only profiling is separate.
+9. Consider manual promotion only with a matching passed full-evaluation marker and separate approval; open an unmerged review PR, preserving live v1 until accepted.
+10. Standardize browser smoke: iCloud refetches can exceed its 120 s watchdog while a byte-identical outside-iCloud copy passes in about 8 s; its watchdog lacks group/KILL cleanup. Use verified outside-iCloud freeze gates and retained assertion diagnostics to investigate a recurrence. The original October 4 193/196 cause remains unconfirmed. Repository smoke and full-suite runs from `~/Developer/edge_royale` (outside iCloud) passed once on October 24; keep watching for a recurrence.
 
 # Validation
+
+October 25, 2026 (latest), option C, from `~/Developer/edge_royale`. Exact commands are in the [step 2 record](docs/EDGER_PARITY_CONTRACT_REVIEW.md#step-2-landed--october-25-2026).
+- `npm test` passed 223/223 in 296 s (system Node v25.2.1). `node --test tests/edger-v2-parity.test.js` passed 14/14.
+- `/usr/local/bin/python3 -m unittest tests.test_edger_training_streaming -k logit_scale` passed 2/2 (PyTorch 2.11.0).
+- In `L`: `node contract-check.mjs contract-check.json <seven models>` matches the packet. `npm run edger:parity:v2` passes all seven models (`gate/summary.txt`). `mutations.log` shows that all four mutations are caught.
+- `L/SHA256SUMS` (`8a8dfcb7…`) now covers 30 files, including the step 1 evidence below. `git diff --check` passes. Bot-bench and smoke were not rerun: no runtime or client code changed after the step 1 run below.
 
 October 25, 2026 (latest), float64 pool, from `~/Developer/edge_royale`. `L`, `X` and `N` are as defined in this file.
 - `npm test` passed 218/218 in 344 s (system Node v25.2.1). It ran alongside the two checks below, so its duration is not comparable.
 - `npm run --silent bot:bench -- --opponents random,aggressive,defender --rounds 30 --seed 20260630 --max-ticks 6040 --min-win-rate 0.6` passed: random 1.000, aggressive 0.833, defender 1.000. The output is `cmp`-identical to `R/speedup/bench-after.out` (October 24).
 - `$N landed-check.mjs landed-check.json 10 <name>=$X/models/<name>.json …` (seven models) in `L` reports `PROBLEMS: none`. `shasum -a 256 -c SHA256SUMS` in `X` passed 376/376 beforehand.
 - `$N --test tests/edger-v2-policy.test.js` on a `git archive` copy of `a3e01e5` fails exactly the pool and golden tests; the decision-identity test passes there too.
-- `L/SHA256SUMS` (`adc7b251…`) covers 10 files. `git diff --check` passes. `npm run smoke:browser` was not run: no client code changed, and live v1 does not use this file.
+- `L/SHA256SUMS` covered 10 files at that point (superseded above). `git diff --check` passes. `npm run smoke:browser` was not run: no client code changed, and live v1 does not use this file.
 
 October 25, 2026. `X` is as above; `N` is the durable Node v20.20.2 (defined under October 8). Exact commands are in each doc's Reproduction section.
 

@@ -16,8 +16,12 @@ import {
 } from "../src/ai/v2/policy.js";
 import { createProductionEngine } from "../src/sim/productionMatch.js";
 import {
+  EDGER_V2_PARITY_TOLERANCE,
+  EDGER_V2_PARITY_ULP_MULTIPLE,
   buildCandidateParityFixtures,
   checkCandidateParity,
+  compareCandidateParity,
+  edgerV2ParityTolerance,
   float32Ulp,
 } from "../scripts/edger-v2-evaluation-core.mjs";
 import { spawnNativePython } from "../scripts/python-runtime.mjs";
@@ -191,26 +195,43 @@ test("dense nonzero v2 weights retain the strict absolute parity tolerance", { t
   }
 });
 
-test("matching argmax does not excuse large absolute logit error", { timeout: 30_000 }, () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "edger-v2-parity-reject-"));
+// The runtime and reference differ only in the PASS bias, so every PASS logit
+// differs by exactly `ulps` float32 ULP at magnitude 1024 in both runtimes.
+function checkPassBiasOffset(ulps) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "edger-v2-parity-offset-"));
   try {
-    const model = createEdgerV2BootstrapModel();
-    model.weights.conv3.bias[0] = 0.1;
-    model.weights.fusion.weights[0] = 10_000;
-    model.weights.card_head.weights[0] = 1;
-    const modelPath = path.join(root, "amplified.json");
-    fs.writeFileSync(modelPath, JSON.stringify(model));
-    const parity = checkCandidateParity(modelPath, model);
-    assert.equal(parity.argmax_agreement, true);
-    assert.ok(parity.maximum_logit_difference > 1e-5);
-    assert.equal(parity.passed, false);
-    const worst = parity.worst_absolute_error;
-    assert.equal(worst.absolute_difference, parity.maximum_logit_difference);
-    assert.equal(worst.ulp_error, worst.absolute_difference / worst.float32_ulp);
-    assert.match(parity.reason, /exceeded tolerance/);
+    const runtime = createEdgerV2BootstrapModel();
+    runtime.weights.card_head.bias[0] = 1024;
+    const reference = structuredClone(runtime);
+    reference.weights.card_head.bias[0] = 1024 + ulps * float32Ulp(1024);
+    const modelPath = path.join(root, "reference.json");
+    fs.writeFileSync(modelPath, JSON.stringify(reference));
+    return checkCandidateParity(modelPath, runtime);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+}
+
+test("matching argmax does not excuse a logit error beyond 4 float32 ULP", { timeout: 30_000 }, () => {
+  const parity = checkPassBiasOffset(5);
+  assert.equal(parity.argmax_agreement, true);
+  assert.equal(parity.tie_set_agreement, true);
+  assert.equal(parity.passed, false);
+  assert.match(parity.reason, /exceeded tolerance/);
+  const worst = parity.worst_absolute_error;
+  assert.equal(worst.absolute_difference, parity.maximum_logit_difference);
+  assert.equal(worst.ulp_error, 5);
+  assert.equal(parity.worst_tolerance_error.tolerance_ratio, 5 / 4);
+});
+
+test("a 4 float32 ULP error above magnitude 32 passes although it exceeds 1e-5", { timeout: 30_000 }, () => {
+  const parity = checkPassBiasOffset(4);
+  assert.equal(parity.passed, true, JSON.stringify(parity.reason ?? null));
+  assert.equal(parity.maximum_logit_difference, 4 * float32Ulp(1024));
+  assert.ok(parity.maximum_logit_difference > 1e-5);
+  assert.equal(parity.worst_tolerance_error.tolerance_ratio, 1);
+  assert.equal(parity.tolerance, 1e-5);
+  assert.equal(parity.ulp_tolerance_multiple, 4);
 });
 
 test("parity covers mid-match states, not only the opening position", () => {
@@ -246,7 +267,75 @@ test("float32 ULP is the exact spacing at the measured logit magnitude", () => {
   assert.equal(float32Ulp(0), 2 ** -149);
 });
 
-test("amplified heads still fail the unchanged absolute tolerance", {
+test("parity tolerance is exactly 1e-5 below magnitude 32 and 4 float32 ULP above", () => {
+  assert.equal(EDGER_V2_PARITY_TOLERANCE, 1e-5);
+  assert.equal(EDGER_V2_PARITY_ULP_MULTIPLE, 4);
+  for (const magnitude of [0, 1e-3, 0.5, 1, 16, 32 - 2 ** -19]) {
+    assert.equal(edgerV2ParityTolerance(magnitude, 0), 1e-5);
+    assert.equal(edgerV2ParityTolerance(0, -magnitude), 1e-5);
+  }
+  assert.equal(edgerV2ParityTolerance(32, 31.99), 4 * 2 ** -18);
+  assert.equal(edgerV2ParityTolerance(-500, 499.99), 4 * 2 ** -15);
+  assert.equal(edgerV2ParityTolerance(1024, 1024), 4 * 2 ** -13);
+});
+
+function compareSynthetic(heads) {
+  const fixture = {
+    id: "synthetic",
+    stateId: "synthetic",
+    payload: { forced_card_index: 0, forced_placement_index: 0 },
+    masks: {},
+    js: {},
+  };
+  const pytorch = { id: "synthetic" };
+  for (const head of ["card", "placement", "delay"]) {
+    const [jsValues, pytorchValues] = heads[head] ?? [[1, 0], [1, 0]];
+    fixture.masks[head] = new Uint8Array(jsValues.length).fill(1);
+    fixture.js[head] = Float32Array.from(jsValues);
+    pytorch[head] = Array.from(Float32Array.from(pytorchValues));
+    pytorch[`${head}_argmax`] = pytorch[head].indexOf(Math.max(...pytorch[head]));
+  }
+  return compareCandidateParity([fixture], [pytorch]);
+}
+
+test("parity holds the 1e-5 floor below magnitude 32", () => {
+  const ulp = float32Ulp(16);
+  const within = compareSynthetic({ card: [[16, 0], [16 + 5 * ulp, 0]] });
+  assert.equal(within.passed, true);
+  const beyond = compareSynthetic({ card: [[16, 0], [16 + 6 * ulp, 0]] });
+  assert.equal(beyond.passed, false);
+  assert.match(beyond.reason, /exceeded tolerance/);
+  assert.equal(beyond.worst_tolerance_error.tolerance, 1e-5);
+});
+
+test("parity requires identical legal tie sets, not only the same argmax", () => {
+  const ulp = float32Ulp(5);
+  const parity = compareSynthetic({ placement: [[5, 5, 1], [5, 5 - ulp, 1]] });
+  assert.equal(parity.argmax_agreement, true);
+  assert.equal(parity.tolerance_exceedances, 0);
+  assert.equal(parity.tie_set_agreement, false);
+  assert.equal(parity.passed, false);
+  assert.match(parity.reason, /tie-set disagreement/);
+  assert.equal(compareSynthetic({ placement: [[5, 5, 1], [5, 5, 1]] }).passed, true);
+});
+
+test("parity reports fragile margins for review without failing", () => {
+  const ulp = float32Ulp(1.5);
+  // The PyTorch margin (2 ULP) is within twice the measured error (6 ULP).
+  const fragile = compareSynthetic({ card: [[2, 2 - 8 * ulp], [2 - 6 * ulp, 2 - 8 * ulp]] });
+  assert.equal(fragile.passed, true);
+  assert.equal(fragile.fragile_margin_count, 1);
+  assert.equal(fragile.review_required, true);
+  assert.deepEqual(fragile.fragile_margins[0], {
+    fixture: "synthetic", head: "card", pytorch_margin: 2 * ulp, maximum_legal_difference: 6 * ulp,
+  });
+  assert.deepEqual(fragile.fixtures[0].fragile_margin_heads, ["card"]);
+  const robust = compareSynthetic({ card: [[2, 1], [2 - 6 * ulp, 1]] });
+  assert.equal(robust.fragile_margin_count, 0);
+  assert.equal(robust.review_required, false);
+});
+
+test("amplified heads are judged by the hybrid tolerance, not by magnitude", {
   timeout: 60_000,
 }, () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "edger-v2-parity-scale-"));
@@ -256,10 +345,12 @@ test("amplified heads still fail the unchanged absolute tolerance", {
     fs.writeFileSync(modelPath, JSON.stringify(model));
     const parity = checkCandidateParity(modelPath, model);
 
-    assert.equal(parity.passed, false);
     assert.equal(parity.argmax_agreement, true);
     assert.ok(parity.maximum_logit_difference > 1e-5);
-    assert.match(parity.reason, /exceeded tolerance/);
+    // The verdict depends on the host's PyTorch accumulation order (3 ULP and
+    // a pass on the October 2026 M1), so only its consistency is asserted.
+    assert.equal(parity.passed, parity.tolerance_exceedances === 0);
+    assert.equal(parity.passed, parity.worst_tolerance_error.tolerance_ratio <= 1);
     assert.equal(Object.hasOwn(parity, "absolute_tolerance_feasible"), false);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -276,6 +367,7 @@ test("large exactly matching logits pass without a magnitude-based rejection", {
     const parity = checkCandidateParity(modelPath, model);
     assert.equal(parity.maximum_legal_logit_magnitude, 1024);
     assert.equal(parity.maximum_logit_difference, 0);
+    assert.equal(parity.tolerance_exceedances, 0);
     assert.equal(parity.passed, true);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -298,6 +390,7 @@ test("parity rejects a discrepancy confined to a non-PASS card embedding", { tim
     // fixture bank returned passed=true and zero error for this exact pair.
     const parity = checkCandidateParity(modelPath, runtime);
     assert.equal(parity.passed, false);
+    assert.ok(parity.tolerance_exceedances > 0);
     assert.equal(parity.heads.placement.maximum_logit_difference, 1000);
     assert.equal(parity.heads.delay.maximum_logit_difference, 1000);
     assert.ok(parity.fixtures.filter((fixture) => fixture.forced_card_index === 0)
