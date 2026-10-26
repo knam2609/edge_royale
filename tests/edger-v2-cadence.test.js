@@ -53,7 +53,9 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 // Deterministic non-trivial actor: seeded weights make card, placement and
 // delay choices vary across states without relying on ignored artifacts.
-function randomModel(seed = 7, scale = 0.35) {
+// The v4 observation's spell globals shift the seeded weight draw, so the
+// default seed moved from 7 (only PASS in the first 400 states) to 8.
+function randomModel(seed = 8, scale = 0.35) {
   const model = createEdgerV2BootstrapModel({ modelId: `cadence-test-${seed}` });
   const rng = createRng(seed);
   const fill = (values) => {

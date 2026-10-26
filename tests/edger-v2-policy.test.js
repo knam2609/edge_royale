@@ -64,37 +64,7 @@ test("v2 side canonicalization rotates a symmetric state identically", () => {
   assert.deepEqual(red.global, blue.global);
 });
 
-test("v3 static geometry marks the canonical arena identically for both sides", () => {
-  const engine = createProductionEngine({ seed: 7104 });
-  const views = ["red", "blue"].map((actor) => buildEdgerV2Observation({ engine, actor }).board);
-  const geometry = (board, row, column) => Array.from(board.slice(
-    (row * EDGER_V2_BOARD_WIDTH + column) * EDGER_V2_BOARD_CHANNELS + 24,
-    (row * EDGER_V2_BOARD_WIDTH + column + 1) * EDGER_V2_BOARD_CHANNELS,
-  ));
-  // [row, column, own half, enemy half, river, bridge, lane]
-  const expected = [
-    [0, 0, [0.5 / 32, 0.5 / 18, 1, 0, 0, 0, -1]],
-    [15, 3, [15.5 / 32, 3.5 / 18, 0, 0, 0, 1, -1]],
-    [16, 8, [16.5 / 32, 8.5 / 18, 0, 0, 1, 0, -1]],
-    [16, 14, [16.5 / 32, 14.5 / 18, 0, 0, 0, 1, 1]],
-    [20, 12, [20.5 / 32, 12.5 / 18, 0, 1, 0, 0, 1]],
-  ];
-  for (const board of views) {
-    for (const [row, column, values] of expected) {
-      assert.deepEqual(geometry(board, row, column), values.map(Math.fround), `cell ${row},${column}`);
-    }
-  }
-  let bridges = 0;
-  let river = 0;
-  for (let cell = 0; cell < EDGER_V2_BOARD_HEIGHT * EDGER_V2_BOARD_WIDTH; cell += 1) {
-    river += views[0][cell * EDGER_V2_BOARD_CHANNELS + 28];
-    bridges += views[0][cell * EDGER_V2_BOARD_CHANNELS + 29];
-  }
-  assert.equal(bridges, 12);
-  assert.equal(river, 24);
-});
-
-test("v3 spell globals flag lethal towers and count the best enemy-troop hits", () => {
+test("spell globals flag lethal towers and count the best enemy-troop hits", () => {
   const engine = createProductionEngine({ seed: 7105 });
   const blueTowers = engine.state.entities.filter(
     (entity) => entity.entity_type === "tower" && entity.team === "blue",
@@ -277,8 +247,8 @@ test("sparse-input convolution preserves the original dense-runtime golden logit
   }
   // The pre-optimization implementation at 0270d828 gave a397521e… on the v2
   // observation. Re-pinned for the float64 mean pool (87c3a171…) and for the
-  // v3 observation, where a copy without the zero-product skip gives this hash.
-  assert.equal(hash.digest("hex"), "d78bde327110d8e04adcffd9c25122e34bdacfd4a76efd436d1bd90a27231ebf");
+  // v4 observation, where a copy without the zero-product skip gives this hash.
+  assert.equal(hash.digest("hex"), "87ab23d550dbd2796e2604bbed9fb64e60576a4e61665c8f3ff1d7dfcbb3ee21");
 });
 
 test("a seeded model's bank and full-match decisions stay pinned", () => {
@@ -289,7 +259,7 @@ test("a seeded model's bank and full-match decisions stay pinned", () => {
     fixture.js.selected.placement_index,
     fixture.js.selected.delay_index,
   ]);
-  assert.equal(bank.length, 71);
+  assert.equal(bank.length, 73);
   assert.equal(new Set(bank.map(([, cardIndex]) => cardIndex)).size, 9);
   const match = runEdgerV2CadenceMatch({
     seed: 20261025,
@@ -301,18 +271,18 @@ test("a seeded model's bank and full-match decisions stay pinned", () => {
   });
   const stream = match.rows.map((row) =>
     [row.tick, row.card_index, row.placement_index, row.delay_index]);
-  assert.equal(match.stats.successful_deployments, 16);
+  assert.equal(match.stats.successful_deployments, 22);
   // The float64 mean pool left the v2-observation decisions captured at
-  // a3e01e5 unchanged. Re-captured for the v3 observation, which changes the
+  // a3e01e5 unchanged. Re-captured for the v4 observation, which changes the
   // model's inputs.
   assert.equal(
     createHash("sha256").update(JSON.stringify(bank)).digest("hex"),
-    "2f46c91857b366bda756ff96aa7ca43ccf5233555009e74aa7e1966450a43a93",
+    "9ec0a3bd6dd9f8b426b023d430d72630e35d5dcd26027fa4e9ebe0644e4a98f0",
   );
   assert.equal(
     createHash("sha256").update(JSON.stringify(stream)).digest("hex"),
-    "b2c289078a20a39c648cc5f7f967758fe05b3ffee538ea0e0bb42cbbe3ab4292",
+    "1b9b00f32360d22cd9e6fec7dd2e6ddb7134fe7d99d3aeef0b7c9f76cbbf36c7",
   );
-  assert.equal(match.action_stream_hash, "94df07ff138e01ef8e146ce2c06596887cb37cd494895e79d99d897b2036f238");
-  assert.equal(match.final_state_hash, "665120c4");
+  assert.equal(match.action_stream_hash, "442e2ddc82005d1c1ec6cb12963ac1601b6655848c9a56ec30c7104ce9276da8");
+  assert.equal(match.final_state_hash, "5945a9e8");
 });

@@ -29,7 +29,7 @@ from torch.utils.data import DataLoader, Dataset
 MODEL_SCHEMA = "edger_policy_model_v2"
 CHECKPOINT_SCHEMA = "edger_v2_checkpoint_v1"
 ACTION_SCHEMA = "edger_autoregressive_action_v2"
-OBSERVATION_SCHEMA = "edger_oracle_observation_v3"
+OBSERVATION_SCHEMA = "edger_oracle_observation_v4"
 ARCHITECTURE = {
     "type": "autoregressive_masked_conv_actor",
     "board_channels": 16,
@@ -46,7 +46,7 @@ ARCHITECTURE = {
 }
 BOARD_HEIGHT = 32
 BOARD_WIDTH = 18
-BOARD_INPUT_CHANNELS = 31
+BOARD_INPUT_CHANNELS = 24
 GLOBAL_FEATURES = 104
 CARD_ACTIONS = 9
 PLACEMENTS = BOARD_HEIGHT * BOARD_WIDTH

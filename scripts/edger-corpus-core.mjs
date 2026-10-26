@@ -30,7 +30,7 @@ export const EDGER_REWARD_VERSION = "edger_potential_reward_v1";
 // Episodes hold replays and decisions, never observations: every cache derives
 // observations afresh with the current builder. The episode cohort therefore
 // stays pinned to the observation schema in force when episodes were first
-// recorded, so a cache-time observation change (v3, October 25, 2026) leaves
+// recorded, so a cache-time observation change (v4, October 26, 2026) leaves
 // existing episodes, ids and manifest hashes valid. Caches and models carry
 // the current observation schema instead.
 export const EDGER_EPISODE_OBSERVATION_SCHEMA_VERSION = "edger_oracle_observation_v2";

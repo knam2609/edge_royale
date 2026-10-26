@@ -19,11 +19,11 @@ The live browser opponent still imports the promoted `edger_policy_model_v1` art
 
 V2 uses:
 
-- a relative-side `32×18×31` board (24 entity/effect channels plus 7 static geometry channels) and 104 full-oracle global features (96 plus 8 spell-opportunity inputs), observation schema `edger_oracle_observation_v3`
+- a relative-side `32×18×24` board (24 entity/effect channels) and 104 full-oracle global features (96 plus 8 spell-opportunity inputs), observation schema `edger_oracle_observation_v4`
 - masked autoregressive card, row-major placement, and 1–200 tick delay heads
 - deterministic argmax and stable ties in production
 - no handcrafted heuristic prior
-- 37,922 exported actor parameters, below the 50,000 parameter and 1 MB limits
+- 36,914 exported actor parameters, below the 50,000 parameter and 1 MB limits
 
 The frozen handcrafted oracle remains `edger_heuristic` (alias `heuristic`) for corpus teaching, league opposition, and evaluation only.
 

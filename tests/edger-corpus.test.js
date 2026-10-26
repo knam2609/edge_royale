@@ -146,13 +146,15 @@ test("incompatible schemas are rejected before entering a manifest", () => {
 });
 
 test("episodes keep the v2 recording cohort while caches derive the current observation", () => {
-  // Exact pre-v3 cohort: existing episodes, ids and manifest hashes rely on it.
+  // Exact pre-v4 cohort: existing episodes, ids and manifest hashes rely on it.
   assert.equal(
     EDGER_COMPATIBILITY_COHORT,
     "edge_royale_rules_2026_07_18|edge_royale_simulator_v1|1.1|edger_oracle_observation_v2|edger_autoregressive_action_v2",
   );
   assert.equal(EDGER_EPISODE_OBSERVATION_SCHEMA_VERSION, "edger_oracle_observation_v2");
-  assert.equal(EDGER_V2_OBSERVATION_SCHEMA_VERSION, "edger_oracle_observation_v3");
+  assert.equal(EDGER_V2_OBSERVATION_SCHEMA_VERSION, "edger_oracle_observation_v4");
+  assert.equal(EDGER_V2_BOARD_CHANNELS, 24);
+  assert.equal(EDGER_V2_GLOBAL_FEATURES, 104);
   const episode = makeCompletePassiveEpisode({ seed: 7205 });
   assert.equal(episode.compatibility.observation_schema_version, "edger_oracle_observation_v2");
   const sample = deriveDecisionSequence(episode).samples[0];

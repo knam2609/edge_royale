@@ -74,7 +74,7 @@ Long waits are represented by deterministic `PASS` decisions at most every 200 t
 
 ### `edger_dataset_manifest_v1`
 
-Manifests are immutable lists of object URIs and compressed checksums for one compatibility cohort. Episodes hold replays and decisions, never observations, so the cohort pins `edger_oracle_observation_v2`, the schema in force when the corpus was recorded (`EDGER_EPISODE_OBSERVATION_SCHEMA_VERSION`). Each cache derives observations afresh with the current builder and records that schema (`observation_schema_version` in the Parquet metadata and build report); BC, offline and V-trace refuse a cache built for another observation schema. The October 25, 2026 move to `edger_oracle_observation_v3` therefore re-derives caches but leaves existing episodes, ids and manifest hashes valid. Whole games are split by `SHA-256 episode ID mod 100`:
+Manifests are immutable lists of object URIs and compressed checksums for one compatibility cohort. Episodes hold replays and decisions, never observations, so the cohort pins `edger_oracle_observation_v2`, the schema in force when the corpus was recorded (`EDGER_EPISODE_OBSERVATION_SCHEMA_VERSION`). Each cache derives observations afresh with the current builder and records that schema (`observation_schema_version` in the Parquet metadata and build report); BC, offline and V-trace refuse a cache built for another observation schema. The October 2026 moves to `edger_oracle_observation_v3` and then `edger_oracle_observation_v4` therefore re-derive caches but leave existing episodes, ids and manifest hashes valid. Whole games are split by `SHA-256 episode ID mod 100`:
 
 - 0–79: train
 - 80–89: validation
@@ -96,23 +96,23 @@ Schema: `edger_policy_model_v2`
 
 Observation:
 
-- `32×18×31` relative-side board: 24 entity and pending-effect channels, plus 7 static geometry channels in the actor's canonical frame (normalized row and column, own half, enemy half, unpathable river, bridge, lane)
+- `32×18×24` relative-side board: 24 entity and pending-effect channels
 - 104 global features: 96 state summaries, plus 8 spell-opportunity inputs (for each enemy tower, whether its HP is at or below Fireball and Arrows tower damage; the most enemy troops one Fireball or Arrows cast could hit now, by the engine's impact rule at every cell centre). These are inputs, not overrides.
-- schema `edger_oracle_observation_v3` (October 25, 2026; [tactical review](EDGER_TACTICAL_REVIEW.md) proposals 1–2)
+- schema `edger_oracle_observation_v4` (October 26, 2026; [tactical review](EDGER_TACTICAL_REVIEW.md#spell-globals-only-v4--october-26-2026) proposals 1–2). The October 25 v3 also had 7 static geometry board channels; the owner dropped them after the [RL comparison](EDGER_TACTICAL_REVIEW.md#rl-comparison--october-26-2026).
 - full oracle elixir, hands, queues, phase, timing, tower/pocket state, motion, targeting, cooldown, and pending-effect state
 - blue observations rotate 180 degrees so the acting side has one canonical orientation
 
 Actor:
 
 - one same-padded 16-channel `3×3` convolution and two 16-channel `1×1` convolutions
-- `96→64` global encoder
+- `104→64` global encoder
 - 64-wide fused state
 - masked `PASS`/fixed-card head
 - conditioned row-major `18×32` placement head
 - conditioned 1–200 tick delay head
 - stable production order: PASS, fixed deck, row-major `(y,x)`, ascending delay
 
-The exported actor has 37,922 parameters (36,402 under the v2 observation) and must stay under 50,000 parameters and 1 MB. The opponent-stratum embedding and value head exist only in PyTorch checkpoints. V2 inference never calls the handcrafted prior.
+The exported actor has 36,914 parameters (36,402 under the v2 observation) and must stay under 50,000 parameters and 1 MB. The opponent-stratum embedding and value head exist only in PyTorch checkpoints. V2 inference never calls the handcrafted prior.
 
 Export writes each weight as the shortest decimal that reloads as the identical
 trained float32, and refuses to emit an actor whose weights do not reload

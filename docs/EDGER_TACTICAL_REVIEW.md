@@ -8,7 +8,7 @@ exact troop-placement ties found by the September 28
 It is read-only. No gate, floor, scorer, fixture, model, observation or runtime
 changed, and nothing here selects a model or clears a gate. The owner approved
 the [proposals](#proposals--approved-october-25) on
-October 25. Proposals 1–2 were implemented and ablated later (see
+October 25. Proposals 1–2 were implemented, ablated and compared under RL later (see
 [below](#proposals-12-observation-v3-and-bc-ablation--october-2526-2026));
 those changes are outside this read-only investigation.
 
@@ -144,10 +144,12 @@ tie-break artifact that the network cannot express a preference against.
 ## Proposals — approved October 25
 
 **Owner decision, October 25, 2026.** All four proposals are approved as
-written, including the scoring gate change in proposal 4. Proposals 1 and 2 are
+written, including the scoring gate change in proposal 4. Proposals 1 and 2 were
 implemented as observation schema v3 and committed locally as a checkpoint. After the
 [BC ablation](#proposals-12-observation-v3-and-bc-ablation--october-2526-2026) the owner chose a bounded local RL
-comparison (October 26) before the schema is final. Proposals 3 and 4 are not implemented. Each lands as its own change, with its own tests and fresh provenance.
+comparison (October 26). It [reported](#rl-comparison--october-26-2026) inconclusive by its frozen rule,
+and the owner then chose spell globals only: proposal 2 lands as
+[observation schema v4](#spell-globals-only-v4--october-26-2026), and proposal 1's geometry is dropped. Proposals 3 and 4 are not implemented. Each lands as its own change, with its own tests and fresh provenance.
 None lowers a floor or adds a handcrafted spell or placement override. The
 approval does not cover pushing, cloud actions or promotion.
 
@@ -182,16 +184,17 @@ Notes for implementation:
 
 ## Proposals 1–2: observation v3 and BC ablation — October 25–26, 2026
 
-**Status: committed locally on `edger-v2-accumulated` (October 26) as a
-checkpoint; the schema is not final.** The approved selection criterion and
-BC-stage play disagree. On October 26 the owner chose option 3 below: a bounded
-local RL comparison from the v2 and v3 BC parents decides between v3, spell
-globals only and v2. Until it reports, nothing should build on v3 (no campaign
-provenance, no promotion).
+**Status (October 26): spell globals only, as [observation schema v4](#spell-globals-only-v4--october-26-2026).**
+v3 below was committed locally as a checkpoint (`e8cf6b9`). The approved
+selection criterion and BC-stage play disagreed, so the owner first chose
+option 3 below, a bounded local RL comparison. After the
+[comparison](#rl-comparison--october-26-2026) the owner chose its option 1:
+keep the eight spell globals and drop the geometry channels. Proposal 1's
+criterion is therefore not met; the structural ties remain.
 Live v1 is unaffected. Evidence is in `V` = `~/edge_royale-runs/20261025-observation-v3.noindex/`
 (`summary.md`, `teacher-placement.txt`, `README.md`, `SHA256SUMS`).
 
-**What changed** (`src/ai/v2/observation.js`, schema `edger_oracle_observation_v3`):
+**What changed in v3** (`src/ai/v2/observation.js`, schema `edger_oracle_observation_v3`, superseded by [v4](#spell-globals-only-v4--october-26-2026)):
 - Board `32×18×31`. Channels 24–30 are static geometry in the actor's canonical frame: normalized row and column, own half, enemy half, unpathable river, bridge, and lane (−1 left, +1 right). Both sides see identical geometry.
 - Globals 96–103 are spell opportunities, inputs only: per enemy tower, HP ≤ Fireball and ≤ Arrows tower damage, and the most enemy troops one Fireball or Arrows cast could hit now. Hits use the engine's impact rule (troop centre within the spell radius) at every cell centre, which is stricter than the fixture scorers' radius-plus-entity-radius check.
 - The actor grows from 36,402 to 37,922 parameters (797,830 bytes exported), within both caps.
@@ -234,10 +237,99 @@ because floating-point noise breaks exact ties differently from runtime.
 Runtime's lowest-index rule matches the teacher on 11 of 663 validation
 structural rows (1.7%), in line with the 1.5% above.
 
+### RL comparison — October 26, 2026
+
+**Result: inconclusive by the frozen rule; the owner chose option 1 below.** Evidence is in
+`W` = `~/edge_royale-runs/20261026-observation-rl-comparison.noindex/`
+(`plan.md`, `FROZEN.txt`, `analysis.md`, `posthoc.md`, `README.md`,
+`SHA256SUMS` over 3,814 files).
+
+**Method**, frozen in `W/plan.md` before launch:
+- Parents: the v2, v3 and spell-only (`v3s`) BC models from the ablation above, one run per BC seed (r0–r2 = 20260718–20260720). Geometry-only was not carried forward. Each arm ran from its schema's code mirror.
+- Recipe: the September 26–27 learned/full arm, unchanged: `train-arm --cadence learned --iterations 6 --pairs-per-iteration 32 --learning-rate 0.001 --loss-mode full`. That is 384 fresh on-policy games per arm with production V-trace, against 78–81% live v1 and otherwise the heuristic.
+- Evaluation: all 9 parents and 9 children, deterministic, learned cadence, on identical development seeds and sides: 200 pairs against live v1 and 100 pairs each against the heuristic and aggressive. Live v1 replaced defender, which scored near 1.0 for every BC arm. A model's primary score is the equal-weight mean over the three opponents.
+- Label rule:
+  - `v3 recovers` if the run-averaged primary D3 = child v3 − child v2 is ≥ −0.02.
+  - `v3 still worse` if D3 is below that and negative in every run. Then recommend spell globals only if Ds = child v3s − child v2 is ≥ −0.02, else v2.
+  - `inconclusive` otherwise.
+
+**Run.** UTC October 25, 15:32–17:07 (1 h 35 min of the 8 h cap).
+- All 9 arms completed six iterations, and all 54 evaluations exited 0.
+- Every evaluation had zero illegal attempts, passed its repeat checks, and used the same seeds as every other model.
+- Every child passes parity (worst 0.381 of tolerance).
+
+Primary scores:
+
+| Schema | Parents r0 / r1 / r2 | Children r0 / r1 / r2 | Mean RL gain |
+|---|---|---|---|
+| v2 | 0.541 / 0.652 / 0.517 | 0.677 / 0.815 / 0.494 | +0.092 |
+| v3 | 0.299 / 0.474 / 0.384 | 0.617 / 0.537 / 0.505 | +0.167 |
+| v3s | 0.557 / 0.642 / 0.557 | 0.832 / 0.822 / 0.795 | +0.231 |
+
+Intervals below are 95% bootstraps over evaluation seeds.
+- **D3 = −0.109 [−0.138, −0.080] run-averaged; per run −0.061, −0.278, +0.011.**
+  - r2 is a tie ([−0.037, +0.059]), not a v3 win, but it alone makes the label inconclusive.
+  - RL narrowed the BC gap (parent v3 − parent v2 = −0.184) without closing it.
+- **Ds = +0.154 [+0.131, +0.178] run-averaged; per run +0.155, +0.007, +0.300.**
+  - It is positive against every opponent: v1 +0.202, heuristic +0.120, aggressive +0.140.
+  - At BC the same contrast is +0.015 [−0.008, +0.038] (post-hoc).
+- **Across training runs** (post-hoc t over three runs), neither contrast is established: D3 [−0.48, +0.26], Ds [−0.21, +0.52].
+  - Only the spell-only RL gain is ([+0.11, +0.35]).
+  - The spell-only children span 0.037, the v2 children 0.321. The v2-r2 child lost 0.023 to its parent, while its sampled training score rose from 0.17 to 0.28.
+- **Placement** (8-pair check): RL from v3 did not bring back back-row play.
+  - v3 children place 0% of troops on the back rows and 75–85% on the front row.
+  - v2 and spell-only children place 45–60% on the back rows and 27–32% on the front row.
+- **Spells.** Every child casts 0.00 Fireballs per game except v2-r2 (0.65).
+  - Arrows run from 0.04 to 6.23 per game; v3 children cast the fewest (≤ 0.80).
+  - Spell globals improved RL play without visibly changing Fireball use. The mechanism is unmeasured.
+- **Tactical aggregate**: v3 children 0.39–0.46, the other children 0.37–0.39.
+
+**Reading.**
+- Geometry costs play at BC (−0.18 here, about −0.3 in the BC ablation). Six RL iterations recover neither the score, on average, nor the placement.
+- Spell globals are neutral at BC and give the best and most consistent children after RL. Three training runs cannot separate that from the v2 children's run-to-run spread.
+
+**Options for the owner** (option 1 chosen, October 26):
+1. **Spell globals only** (recommended):
+   - Drop the geometry channels and keep the eight spell globals. The board returns to 24 channels under a new schema name, with a re-derived cache and re-pinned tests.
+   - The structural ties remain, so proposal 1's criterion is not met. The +0.15 is a lean, not an established effect.
+   - Proposal 3 needs its own RL comparison, which can carry a v2 control.
+2. **Spell globals only, confirmed first**: a second frozen comparison of v2 against the real spell-only schema, with more training runs (for example six). That is about 1–2 h locally.
+3. **Keep v3 as committed.** After RL it is worse on average and keeps front-row placement.
+4. **Revert to v2.** This discards spell globals, which are neutral at BC and lean positive under RL.
+
+### Spell globals only (v4) — October 26, 2026
+
+**What changed** (`src/ai/v2/observation.js`, schema `edger_oracle_observation_v4`):
+- The board returns to the v2 `32×18×24`. The globals stay at 104, with the eight spell-opportunity inputs at 96–103 exactly as in v3. v3's geometry channels and their code are removed.
+- The actor has 36,914 parameters (776,652 bytes exported).
+- Caches record `edger_oracle_observation_v4`, so BC, offline and V-trace refuse v2 and v3 caches. The episode cohort stays pinned to `edger_oracle_observation_v2`.
+- Tests:
+  - The geometry test is removed; the spell-globals test stays.
+  - The golden logits (`87ab23d5…`, which a copy without the zero-product skip reproduces) and the seeded model's bank and match pins are re-captured. The corpus test pins the v4 dimensions.
+  - The runtime-cost fixture seeds return to 11/17, so that file is identical to `3496c92`.
+  - The cadence tests' default seed moves from 7 to 8: under v4, seed 7 plays no card in the first 400 states.
+
+**Evidence** in `Y` = `~/edge_royale-runs/20261026-observation-v4.noindex/` (see its `README.md`):
+- **Cache.** The v4 cache of the 160-episode subset was built from the same manifest. In all 9,343 rows it equals:
+  - the spell-only cache with its all-zero geometry channels removed;
+  - full v3 on board channels 0–23 and all 104 globals;
+  - the v2 cache on the whole board and globals 0–95.
+
+  Every other column equals an arm64 Node rebuild of the spell-only cache. The October 25 caches were built under the x86_64 Node v25. Against them, 32 rewards and 278 discounted returns differ by at most 2.2×10⁻¹⁶, because `PER_TICK_GAMMA ** deltaTicks` rounds differently in the two Node builds (see Limits).
+- **The tested models carry over exactly.** Deleting conv1's input channels 24–30 turns the six spell-only models (3 BC parents, 3 RL children) into v4 models. Under the v4 code they reproduce the spell-only code exactly:
+  - every parity-bank logit, bit for bit (333 fixtures);
+  - 144 full matches (2 seeds × 2 sides × v1, heuristic and aggressive × deterministic and sampled), with identical decisions, log probabilities and hashes (12,258 decisions);
+  - a negative control (the geometry-on v3 code) differs on the bank and in all 24 of its matches.
+
+  The converted children pass real-PyTorch parity under v4 and reproduce the RL comparison's tactical and game results exactly. The spell-only rows of the RL comparison therefore describe v4 models.
+- **Fresh BC.** A v4 BC model (seed 20260718, the ablation recipe) trains, exports and passes parity: worst 0.191 of tolerance, identical tie sets and no fragile margins. It scores 0.656 in the 16-pair heuristic check with zero illegal attempts. The spell-only model of the same seed also scores 0.656, but it is a different model: only 2 of the 32 games are identical.
+
 ## Limits
 
 - The corpus is a 160-episode subset, not the production corpus.
-- All seven models are local, non-promotable diagnostics.
+- All models here (the seven reviewed, the 12 ablation models, the 9 RL children, and the v4 conversions and BC model) are local, non-promotable diagnostics.
+- The RL comparison has three training runs of six iterations per schema, and its frozen intervals cover evaluation seeds only.
+- JavaScript does not specify `**` or `Math.hypot` as correctly rounded. Cache rewards (`**`) differ in the last bits between Node v25 x86_64 and Node v20 arm64. The sim's `Math.hypot` agreed: every observation in the subset was identical under both. Other JavaScript engines are untested.
 - Opportunity checks mirror the fixture scorers (Fireball radius plus entity radius, value ≥ 0.70, tower HP ≤ 207). They are not a strategic optimum.
 - The RL suppression mechanism is inferred from model outputs, not traced through training.
 
@@ -269,4 +361,32 @@ bc/run-arms.sh       # v3g and v3s BC
 bc/run-arms-resume.sh
 python3 -I teacher-placement.py "$X/tactical/corpus-rows.jsonl" > teacher-placement.txt
 python3 -I summarize.py > summary.md
+```
+
+RL comparison (`W/README.md` describes every file). `run.sh` sets its own `PATH`
+and is resumable: it skips finished steps.
+
+```bash
+W=~/edge_royale-runs/20261026-observation-rl-comparison.noindex
+cd "$W"
+bash run.sh                             # writes run.log and DONE
+python3 -I analyze.py > analysis.md     # frozen
+python3 -I posthoc.py > posthoc.md      # post-hoc, not frozen
+```
+
+Observation v4 (`Y/README.md` describes every file). `v4repo` is a scratch
+mirror of the repository tree; `dense` is its `src/` and `scripts/` without the
+conv's zero-product skip.
+
+```bash
+Y=~/edge_royale-runs/20261026-observation-v4.noindex
+V=~/edge_royale-runs/20261025-observation-v3.noindex
+export PATH=$HOME/edge_royale-runs/20260929T0346Z-cadence-confirmation/node-v20.20.2/bin:$PATH
+cd "$Y"
+node pins.mjs v4repo > pins-v4.json && node pins.mjs dense > pins-dense.json
+(cd v4repo && node scripts/edger-dataset.mjs --manifest "$V/manifest.json" --out "$Y/v4/subset-decisions.parquet" --python /usr/local/bin/python3)
+(cd "$V/v3srepo" && node scripts/edger-dataset.mjs --manifest "$V/manifest.json" --out "$Y/v3s-arm64/subset-decisions.parquet" --python /usr/local/bin/python3)
+python3 -I cache-equal.py v4/subset-decisions.parquet v3s-arm64/subset-decisions.parquet "$V/v3/subset-decisions.parquet" "$V/v2/subset-decisions.parquet" > cache-equal-arm64.json
+bash convert.sh    # six spell-only models converted to v4, plus the control
+bash bc.sh         # fresh v4 BC, export and js-eval
 ```
