@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import fs from "node:fs";
 
 import { HEURISTIC_BOT_ID, enumerateLegalCardActions } from "../src/ai/botRuntime.js";
 import { DEFAULT_DECK } from "../src/sim/cards.js";
@@ -8,6 +9,7 @@ import {
   EDGER_V2_BOARD_CHANNELS,
   EDGER_V2_BOARD_HEIGHT,
   EDGER_V2_BOARD_WIDTH,
+  EDGER_V2_CARD_ACTIONS,
   EDGER_V2_GLOBAL_FEATURES,
   buildEdgerV2LegalMasks,
   buildEdgerV2Observation,
@@ -85,6 +87,33 @@ test("spell globals flag lethal towers and count the best enemy-troop hits", () 
   assert.deepEqual(Array.from(red.slice(96)), [1, 0, 1, 0, 0, 1, 3 / 8, 4 / 8]);
   const blue = buildEdgerV2Observation({ engine, actor: "blue" }).global;
   assert.deepEqual(Array.from(blue.slice(96)), [0, 0, 0, 0, 0, 0, 1 / 8, 1 / 8]);
+});
+
+test("the learner's Fireball opportunity constants match the observation layout", () => {
+  const source = fs.readFileSync(new URL("../scripts/edger-v2-training.py", import.meta.url), "utf8");
+  const constant = (name) => source.match(new RegExp(`^${name} = (.+)$`, "m"))?.[1];
+  assert.equal(Number(constant("FIREBALL_CARD_INDEX")), EDGER_V2_CARD_ACTIONS.indexOf("fireball"));
+  assert.equal(constant("FIREBALL_LETHAL_GLOBALS"), "(96, 97, 98)");
+  assert.equal(Number(constant("FIREBALL_TROOP_HITS_GLOBAL")), 102);
+  assert.equal(Number(constant("SPELL_TROOP_HITS_DENOMINATOR")), 8);
+  assert.equal(Number(constant("CLUSTER_MINIMUM_TROOP_HITS")), 3);
+  // In the spell-globals state above, Fireball and Arrows inputs differ, so
+  // these positions are Fireball's: lethal crown and king, three troops.
+  const engine = createProductionEngine({ seed: 7105 });
+  const blueTowers = engine.state.entities.filter(
+    (entity) => entity.entity_type === "tower" && entity.team === "blue",
+  );
+  blueTowers.filter((tower) => tower.tower_role === "crown").sort((a, b) => a.x - b.x)[0].hp = 200;
+  blueTowers.find((tower) => tower.tower_role === "king").hp = 90;
+  engine.state.entities.push(
+    createTroop({ id: "b1", cardId: "knight", team: "blue", x: 9, y: 20 }),
+    createTroop({ id: "b2", cardId: "knight", team: "blue", x: 10, y: 20 }),
+    createTroop({ id: "b3", cardId: "knight", team: "blue", x: 9, y: 21 }),
+    createTroop({ id: "b4", cardId: "knight", team: "blue", x: 14.5, y: 20.5 }),
+  );
+  const red = buildEdgerV2Observation({ engine, actor: "red" }).global;
+  assert.deepEqual([red[96], red[97], red[98]], [1, 0, 1]);
+  assert.equal(red[102] * 8, 3);
 });
 
 test("v2 action encoding uses fixed deck, row-major placement, and bounded delay", () => {

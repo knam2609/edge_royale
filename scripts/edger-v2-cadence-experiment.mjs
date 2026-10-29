@@ -723,6 +723,19 @@ export function pruneEpisodeBodies(episodesDir, headersDir) {
   return { headers, body_bytes_deleted: bytes, headers_dir: headersDir };
 }
 
+export function heldoutCaptureRecord(report) {
+  const capture = report.opportunity_capture;
+  return {
+    rows: capture.model.opportunity.rows,
+    capture_rate: capture.model.opportunity.capture_rate,
+    mean_p_fireball: capture.model.opportunity.mean_p_fireball,
+    parent_capture_rate: capture.parent.opportunity.capture_rate,
+    parent_mean_p_fireball: capture.parent.opportunity.mean_p_fireball,
+    capture_rate_below_parent: capture.capture_rate_below_parent,
+    mean_p_fireball_below_parent: capture.mean_p_fireball_below_parent,
+  };
+}
+
 async function commandTrainArm(args) {
   const arm = required(args, "arm");
   const cadence = required(args, "cadence");
@@ -741,6 +754,7 @@ async function commandTrainArm(args) {
   const heldout = args.heldout ? path.resolve(args.heldout) : null;
   const budgetMinutes = Number(args["budget-minutes"] ?? 150);
   const lossMode = String(args["loss-mode"] ?? "full");
+  const cardKlCoefficient = String(args["card-kl-coefficient"] ?? "0");
   const decomposeEvery = String(args["decompose-every"] ?? "0");
   const torchSeed = String(args["torch-seed"] ?? "20260926");
   // Episodes may live outside the work directory (e.g. off a synced or nearly
@@ -756,6 +770,7 @@ async function commandTrainArm(args) {
     arm,
     cadence,
     loss_mode: lossMode,
+    card_kl_coefficient: Number(cardKlCoefficient),
     decompose_every: Number(decomposeEvery),
     torch_seed: Number(torchSeed),
     seeds_file: path.resolve(args.seeds),
@@ -835,6 +850,7 @@ async function commandTrainArm(args) {
       "--metrics-out", path.join(iterationDir, "learner-metrics.json"),
       "--learning-rate", learningRate,
       "--loss-mode", lossMode,
+      "--card-kl-coefficient", cardKlCoefficient,
       "--decompose-every", decomposeEvery,
       "--seed", torchSeed,
     ], logPath);
@@ -872,6 +888,9 @@ async function commandTrainArm(args) {
       if (held.status !== 0) {
         throw new Error(`held-out evaluation failed: ${held.stderr}`);
       }
+      record.opportunity_capture = heldoutCaptureRecord(
+        JSON.parse(fs.readFileSync(path.join(iterationDir, "heldout.json"), "utf8")),
+      );
     }
     record.checkpoint = nextCheckpoint;
     record.checkpoint_sha256 = sha256File(nextCheckpoint);
@@ -890,6 +909,14 @@ async function commandTrainArm(args) {
         break;
       }
     }
+  }
+  if (heldout) {
+    // Held-out Fireball capture below the parent's is a diagnostic failure,
+    // reported rather than stopping the arm.
+    status.capture_below_parent_iterations = status.iterations
+      .filter((record) => record.opportunity_capture?.capture_rate_below_parent === true)
+      .map((record) => record.iteration);
+    status.capture_diagnostic = status.capture_below_parent_iterations.length > 0 ? "failed" : "passed";
   }
   status.finished_at = new Date().toISOString();
   status.wall_seconds = (Date.now() - armStarted) / 1000;

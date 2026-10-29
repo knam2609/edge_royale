@@ -278,6 +278,103 @@ class CadenceLearnerTests(unittest.TestCase):
             for group, value in measured_update["effective_update_l2"].items():
                 self.assertEqual(value == 0.0, mode == "fixed_one_tick" and group == "delay", group)
 
+    def test_a_reference_without_card_kl_leaves_the_update_unchanged(self) -> None:
+        _, episode = synthetic_episode(50, mode="learned", seed=23)
+        plain = seeded_policy()
+        measured = copy.deepcopy(plain)
+        reference = seeded_policy(7)
+        plain_update = cadence.train_cadence_episode(
+            plain, episode, torch.optim.Adam(plain.parameters(), lr=1e-3), delay_mode="learned",
+            stratum=VOCAB["edger"], batch_size=16, value_loss_weight=0.5, entropy_bonus=0.001,
+        )
+        measured_update = cadence.train_cadence_episode(
+            measured, episode, torch.optim.Adam(measured.parameters(), lr=1e-3), delay_mode="learned",
+            stratum=VOCAB["edger"], batch_size=16, value_loss_weight=0.5, entropy_bonus=0.001,
+            reference=reference,
+        )
+        self.assertEqual(plain_update["gradient_norm"], measured_update["gradient_norm"])
+        for (name, left), (_, right) in zip(plain.named_parameters(), measured.named_parameters()):
+            self.assertTrue(torch.equal(left, right), name)
+        self.assertIsNone(plain_update["card_kl_to_reference_given_choice"])
+        # Measured on the pre-update weights, over rows with a real card choice.
+        batch = cadence.episode_batch(episode, 0, 50, VOCAB["edger"])
+        with torch.no_grad():
+            kl = training.categorical_kl(
+                training.forward_batch(reference, batch)["card"],
+                training.forward_batch(seeded_policy(), batch)["card"],
+                batch.card_mask,
+            )
+        choice = batch.card_mask[:, 1:].any(dim=1)
+        self.assertTrue(math.isclose(
+            measured_update["card_kl_to_reference_given_choice"], float(kl[choice].mean()), rel_tol=1e-5))
+
+    def test_card_kl_pulls_the_card_head_toward_the_reference(self) -> None:
+        _, episode = synthetic_episode(60, mode="learned", seed=29)
+        reference = seeded_policy(7)
+        batch = cadence.episode_batch(episode, 0, 60, VOCAB["edger"])
+
+        def kl_after(coefficient: float) -> float:
+            model = seeded_policy()
+            optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
+            for _ in range(3):
+                cadence.train_cadence_episode(
+                    model, episode, optimizer, delay_mode="learned", stratum=VOCAB["edger"],
+                    batch_size=16, value_loss_weight=0.5, entropy_bonus=0.001,
+                    reference=reference, card_kl_coefficient=coefficient,
+                )
+            with torch.no_grad():
+                return float(training.categorical_kl(
+                    training.forward_batch(reference, batch)["card"],
+                    training.forward_batch(model, batch)["card"],
+                    batch.card_mask,
+                ).sum())
+
+        self.assertLess(kl_after(5.0), kl_after(0.0))
+
+    def test_card_kl_is_a_separate_card_and_trunk_term(self) -> None:
+        _, episode = synthetic_episode(50, mode="learned", seed=31)
+        model = seeded_policy()
+        update = cadence.train_cadence_episode(
+            model, episode, torch.optim.Adam(model.parameters(), lr=1e-3), delay_mode="learned",
+            stratum=VOCAB["edger"], batch_size=16, value_loss_weight=0.5, entropy_bonus=0.001,
+            reference=seeded_policy(7), card_kl_coefficient=0.05, decompose=True,
+        )
+        decomposition = update["gradient_decomposition"]
+        self.assertLess(decomposition["relative_residual"], 1e-5)
+        norms = decomposition["group_norms"]["card_kl"]
+        self.assertGreater(norms["card"], 0.0)
+        self.assertGreater(norms["trunk"], 0.0)
+        for group in ("placement", "delay", "value"):
+            self.assertEqual(norms[group], 0.0, group)
+        for invalid in (
+            {"card_kl_coefficient": 0.05},
+            {"card_kl_coefficient": -1.0, "reference": seeded_policy(7)},
+            {"card_kl_coefficient": 0.05, "reference": seeded_policy(7), "loss_mode": "critic_only"},
+        ):
+            with self.assertRaises(ValueError):
+                cadence.train_cadence_episode(
+                    model, episode, torch.optim.Adam(model.parameters()), delay_mode="learned",
+                    stratum=0, batch_size=16, value_loss_weight=0.5, entropy_bonus=0.001, **invalid,
+                )
+
+    def test_heldout_capture_below_the_parent_is_flagged(self) -> None:
+        def capture(rows: int, argmax: int, p: float | None) -> dict:
+            entry = {
+                "rows": rows, "fireball_argmax": argmax,
+                "capture_rate": argmax / rows if rows else None, "mean_p_fireball": p,
+            }
+            return {"lethal": entry, "cluster": entry, "opportunity": entry}
+
+        below = cadence.opportunity_capture_against_parent(capture(10, 2, 0.3), capture(10, 3, 0.2))
+        self.assertIs(below["capture_rate_below_parent"], True)
+        self.assertIs(below["mean_p_fireball_below_parent"], False)
+        equal = cadence.opportunity_capture_against_parent(capture(10, 0, 0.1), capture(10, 0, 0.1))
+        self.assertIs(equal["capture_rate_below_parent"], False)
+        self.assertIs(equal["mean_p_fireball_below_parent"], False)
+        empty = cadence.opportunity_capture_against_parent(capture(0, 0, None), capture(0, 0, None))
+        self.assertIsNone(empty["capture_rate_below_parent"])
+        self.assertIsNone(empty["mean_p_fireball_below_parent"])
+
     def test_critic_only_moves_the_actor_only_through_the_trunk(self) -> None:
         _, episode = synthetic_episode(40, mode="fixed_one_tick", seed=13)
         model = seeded_policy()
@@ -389,7 +486,7 @@ class CadenceLearnerTests(unittest.TestCase):
                 arm="test", iteration=0, out=str(root / "out.pt"),
                 metrics_out=str(root / "metrics.json"), learning_rate=1e-3, batch_size=16,
                 value_loss_weight=0.5, entropy_bonus=0.001, loss_mode="full",
-                decompose_every=2, seed=1,
+                card_kl_coefficient=0.0, decompose_every=2, seed=1,
             )
             loader = lambda path: episodes[Path(path).stem]
             with mock.patch.object(cadence, "load_cadence_episode", loader), \
@@ -398,10 +495,20 @@ class CadenceLearnerTests(unittest.TestCase):
                     cadence.run_train_iteration(SimpleNamespace(**arguments))
                 arguments["loss_mode"] = "critic_only"
                 cadence.run_train_iteration(SimpleNamespace(**arguments))
+                # The card KL coefficient is fixed for the whole arm, like the loss mode.
+                with self.assertRaisesRegex(ValueError, "card KL coefficient changed"):
+                    cadence.run_train_iteration(SimpleNamespace(**{
+                        **arguments, "checkpoint": str(root / "out.pt"), "iteration": 1,
+                        "out": str(root / "out1.pt"), "card_kl_coefficient": 0.05,
+                    }))
             metrics = json.loads((root / "metrics.json").read_text())
             saved = torch.load(root / "out.pt", weights_only=False)
             self.assertEqual(saved["loss_mode"], "critic_only")
+            self.assertEqual(saved["card_kl_coefficient"], 0.0)
             self.assertEqual(metrics["loss_mode"], "critic_only")
+            self.assertEqual(metrics["card_kl_coefficient"], 0.0)
+            # Measured against the parent even without the penalty; the trunk moved.
+            self.assertGreater(metrics["conditional"]["card_kl_to_reference_given_choice"], 0.0)
             self.assertEqual(metrics["gradient_decomposition"]["episodes"], 2)
             self.assertEqual(set(metrics["gradient_decomposition"]["per_component_group_mean"]), {"value"})
             conditional = metrics["conditional"]

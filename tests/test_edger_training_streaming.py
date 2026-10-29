@@ -693,6 +693,174 @@ class LogitScaleMetricTest(TrainingFixture):
         self.assertAlmostEqual(training.LOGIT_SCALE_WARNING_MAGNITUDE, 83.886, places=3)
 
 
+def spell_features(
+    *,
+    fireball_legal: bool = True,
+    lethal: tuple[int, ...] = (),
+    arrows_lethal: tuple[int, ...] = (),
+    fireball_hits: int = 0,
+    arrows_hits: int = 0,
+) -> tuple[list[float], list[int]]:
+    """v4 globals and a card mask with the given spell-opportunity inputs."""
+    global_features = [0.0] * training.GLOBAL_FEATURES
+    for tower in lethal:
+        global_features[96 + tower] = 1.0
+    for tower in arrows_lethal:
+        global_features[99 + tower] = 1.0
+    global_features[102] = fireball_hits / 8
+    global_features[103] = arrows_hits / 8
+    card_mask = [1] * training.CARD_ACTIONS
+    card_mask[training.FIREBALL_CARD_INDEX] = int(fireball_legal)
+    return global_features, card_mask
+
+
+def opportunity_row(index: int, split: str, policy: str, card: int, **features: object) -> dict[str, object]:
+    row = decision_row(index, split)
+    row["global"], row["legal_masks"]["card"] = spell_features(**features)
+    row["policy_id"] = policy
+    row["selected"]["card_index"] = card
+    return row
+
+
+class FireballOpportunityRecipeTest(TrainingFixture):
+    def test_fireball_opportunity_reads_the_v4_spell_globals(self) -> None:
+        cases = [
+            ({"lethal": (1,)}, 1),
+            ({"lethal": (2,), "fireball_hits": 5}, 1),
+            ({"fireball_hits": 3}, 2),
+            ({"fireball_hits": 2, "arrows_hits": 6}, 0),
+            ({"arrows_lethal": (0, 1, 2)}, 0),
+            ({"fireball_legal": False, "lethal": (0,), "fireball_hits": 8}, 0),
+        ]
+        features = [spell_features(**case) for case, _ in cases]
+        codes = training.fireball_opportunity(
+            torch.tensor([global_features for global_features, _ in features]),
+            torch.tensor([mask for _, mask in features], dtype=torch.bool),
+        )
+        self.assertEqual(codes.tolist(), [expected for _, expected in cases])
+        for (global_features, mask), (_, expected) in zip(features, cases):
+            row = {"global": global_features, "legal_masks": {"card": mask}}
+            self.assertEqual(training.row_fireball_opportunity(row), expected)
+
+    def test_row_expansion_drops_filtered_card_targets_and_repeats_opportunities(self) -> None:
+        self.assertIsNone(training.bc_row_expansion("none", 1))
+        for invalid in (("all", 1), ("none", 0)):
+            with self.assertRaises(ValueError):
+                training.bc_row_expansion(*invalid)
+        lethal = opportunity_row(0, "train", "aggressive", 1, lethal=(0,))
+        teacher = opportunity_row(1, "train", "edger", 8, lethal=(0,))
+        ordinary = opportunity_row(2, "train", "random", 8, fireball_hits=1)
+        expand = training.bc_row_expansion("opportunity", 3)
+        filtered = expand(lethal)
+        self.assertEqual(len(filtered), 3)
+        self.assertTrue(all(item["card_loss_weight"] == 0.0 for item in filtered))
+        self.assertNotIn("card_loss_weight", lethal)
+        self.assertEqual(expand(teacher), [teacher] * 3)
+        self.assertEqual(expand(ordinary), [ordinary])
+        self.assertEqual(training.bc_row_expansion("opportunity", 1)(lethal)[0]["card_loss_weight"], 0.0)
+        self.assertEqual(training.bc_row_expansion("none", 2)(lethal), [lethal] * 2)
+
+    def test_a_zero_card_weight_keeps_the_placement_and_delay_targets(self) -> None:
+        torch.set_num_threads(1)
+        training.seed_everything(29)
+        model = training.EdgerV2Policy(1).eval()
+        rows = [opportunity_row(index, "train", "edger", 1 + index, lethal=(0,)) for index in range(3)]
+        rows[1]["card_loss_weight"] = 0.0
+        batch = next(iter(training.loader_for(rows, {"edger_heuristic": 0}, 3, False, 1)))
+        with torch.no_grad():
+            logits = training.forward_batch(model, batch)
+            joint, parts = training.actor_losses(logits, batch)
+            self.assertTrue(torch.equal(training.bc_joint_loss(logits, batch, False), joint))
+            weighted = training.bc_joint_loss(logits, batch, True)
+        self.assertEqual(float(weighted[0]), float(joint[0]))
+        self.assertEqual(float(weighted[2]), float(joint[2]))
+        self.assertEqual(float(weighted[1]), float(parts["placement"][1] + parts["delay"][1]))
+        self.assertGreater(float(parts["card"][1]), 0.0)
+        self.assertGreater(float(parts["placement"][1]), 0.0)
+
+    def test_capture_is_the_deterministic_card_choice_on_held_out_opportunities(self) -> None:
+        rows = [
+            opportunity_row(0, "train", "edger", 8, lethal=(0,)),
+            opportunity_row(1, "validation", "edger", 1, lethal=(1,)),
+            opportunity_row(2, "validation", "aggressive", 1, lethal=(2,), fireball_hits=4),
+            opportunity_row(3, "validation", "edger", 8, fireball_hits=3),
+            opportunity_row(4, "validation", "edger", 1, fireball_hits=2),
+            opportunity_row(5, "validation", "edger", 1, fireball_legal=False, lethal=(0,)),
+        ]
+        dataset = self.root / "capture.parquet"
+        self.prepare(rows, dataset)
+        torch.set_num_threads(1)
+        model = training.EdgerV2Policy(1).eval()
+        vocab = {"edger_heuristic": 0}
+        for bias, captured in ((2.0, True), (-1.0, False)):
+            with torch.no_grad():
+                model.card_head.weight.zero_()
+                model.card_head.bias.zero_()
+                model.card_head.bias[training.FIREBALL_CARD_INDEX] = bias
+            capture = training.evaluate_opportunity_capture(
+                model, dataset, "validation", vocab, 2, torch.device("cpu")
+            )
+            p = math.exp(bias) / (math.exp(bias) + training.CARD_ACTIONS - 1)
+            for name, rows_expected in (("lethal", 2), ("cluster", 1), ("opportunity", 3)):
+                entry = capture[name]
+                self.assertEqual(entry["rows"], rows_expected, name)
+                self.assertEqual(entry["fireball_argmax"], rows_expected if captured else 0, name)
+                self.assertEqual(entry["capture_rate"], 1.0 if captured else 0.0, name)
+                self.assertAlmostEqual(entry["mean_p_fireball"], p, places=6)
+
+    def test_bc_records_the_data_recipe_and_held_out_capture(self) -> None:
+        rows = [
+            opportunity_row(0, "train", "aggressive", 1, lethal=(0,)),
+            opportunity_row(1, "train", "edger", 8, lethal=(0,)),
+            opportunity_row(2, "train", "random", 8, fireball_hits=3),
+            opportunity_row(3, "train", "defender", 1, fireball_hits=1),
+            opportunity_row(4, "train", "edger", 1),
+            opportunity_row(5, "train", "edger", 0),
+            opportunity_row(6, "validation", "edger", 8, lethal=(1,)),
+            opportunity_row(7, "validation", "edger", 0),
+        ]
+        dataset = self.root / "recipe.parquet"
+        self.prepare(rows, dataset)
+
+        def bc(name: str, *recipe: str) -> dict[str, object]:
+            checkpoint = self.root / f"{name}.pt"
+            run_training(
+                ["bc", "--dataset", str(dataset), "--out", str(checkpoint), "--seed", "20260718",
+                 "--epochs", "1", "--batch-size", "2", *recipe],
+                cwd=self.git_root,
+            )
+            return torch.load(checkpoint, map_location="cpu", weights_only=False)
+
+        plain = bc("plain")
+        self.assertEqual(plain["metrics"]["data_recipe"], {
+            "card_teacher_filter": "none",
+            "card_target_filtered_teachers": [],
+            "opportunity_oversample": 1,
+            "train_rows_after_expansion": 6,
+            "train_card_targets_dropped": 0,
+            "train_lethal_rows": 2,
+            "train_cluster_rows": 1,
+        })
+        recipe = ["--card-teacher-filter", "opportunity", "--opportunity-oversample", "3"]
+        first, second = bc("recipe-a", *recipe), bc("recipe-b", *recipe)
+        self.assertEqual(first["metrics"]["data_recipe"], {
+            "card_teacher_filter": "opportunity",
+            "card_target_filtered_teachers": ["aggressive", "defender", "random"],
+            "opportunity_oversample": 3,
+            "train_rows_after_expansion": 12,
+            "train_card_targets_dropped": 6,
+            "train_lethal_rows": 2,
+            "train_cluster_rows": 1,
+        })
+        capture = first["metrics"]["validation_opportunity_capture"]
+        self.assertEqual(capture["lethal"]["rows"], 1)
+        self.assertEqual(capture["cluster"]["rows"], 0)
+        self.assertEqual(capture["opportunity"]["rows"], 1)
+        for name, value in first["model_state"].items():
+            self.assertTrue(torch.equal(value, second["model_state"][name]), name)
+        self.assertFalse(torch.equal(first["model_state"]["card_head.bias"], plain["model_state"]["card_head.bias"]))
+
+
 class ActorExportFidelityTest(unittest.TestCase):
     def _checkpoint(self) -> dict[str, object]:
         return {

@@ -313,6 +313,8 @@ def train_cadence_episode(
     entropy_bonus: float,
     loss_mode: str = "full",
     decompose: bool = False,
+    reference: training.EdgerV2Policy | None = None,
+    card_kl_coefficient: float = 0.0,
 ) -> dict[str, Any]:
     """One production-style V-trace update from one fresh episode.
 
@@ -323,9 +325,20 @@ def train_cadence_episode(
     ``decompose`` additionally measures each loss term's gradient separately
     with ``torch.autograd.grad`` on the same graph; the applied gradient is
     still the single combined backward pass, so the update is unchanged.
+
+    A positive ``card_kl_coefficient`` adds KL(reference || model) over the
+    card head (tactical review proposal 3). The forward direction keeps
+    probability on every card the BC reference plays, so rare cards cannot
+    collapse. Zero leaves the update exactly the production one.
     """
     if loss_mode not in LOSS_MODES:
         raise ValueError(f"unknown loss mode {loss_mode}")
+    if card_kl_coefficient < 0:
+        raise ValueError("card KL coefficient must not be negative")
+    if card_kl_coefficient > 0 and reference is None:
+        raise ValueError("a card KL term needs a reference policy")
+    if card_kl_coefficient > 0 and loss_mode == "critic_only":
+        raise ValueError("critic_only has no actor loss to add a card KL term to")
     count = episode["rows"]
     behavior = behavior_log_probability(episode, delay_mode)
     ranges = microbatch_ranges(count, batch_size)
@@ -357,6 +370,8 @@ def train_cadence_episode(
     names = [name for name, _ in model.named_parameters()]
     parameters = [parameter for _, parameter in model.named_parameters()]
     components = ("value",) if loss_mode == "critic_only" else ("policy", "value", "entropy")
+    if card_kl_coefficient > 0:
+        components = (*components, "card_kl")
     component_grads = (
         {component: [torch.zeros_like(parameter) for parameter in parameters] for component in components}
         if decompose
@@ -365,6 +380,7 @@ def train_cadence_episode(
     head_policy_loss = {"card": 0.0, "placement": 0.0, "delay": 0.0}
     head_entropy = {"card": 0.0, "placement": 0.0, "delay": 0.0}
     card_entropy_given_choice = 0.0
+    card_kl_total = 0.0
     value_loss_total = 0.0
     for start, end in ranges:
         batch = episode_batch(episode, start, end, stratum)
@@ -382,6 +398,16 @@ def train_cadence_episode(
             loss = (
                 policy_loss + value_loss_weight * value_loss - entropy_bonus * entropy.sum()
             ) / count
+        card_kl = None
+        if reference is not None:
+            with torch.no_grad():
+                reference_card = training.forward_batch(reference, batch)["card"]
+            # Measured with or without the penalty; rows with only PASS legal
+            # contribute exactly zero. Detached unless it enters the loss.
+            card = logits["card"] if card_kl_coefficient > 0 else logits["card"].detach()
+            card_kl = training.categorical_kl(reference_card, card, batch.card_mask)
+            if card_kl_coefficient > 0:
+                loss = loss + card_kl_coefficient * card_kl.sum() / count
         if not torch.isfinite(loss):
             raise ValueError("non-finite cadence V-trace loss; no candidate accepted")
         if component_grads is not None:
@@ -390,6 +416,8 @@ def train_cadence_episode(
                 "value": value_loss_weight * value_loss / count,
                 "entropy": -entropy_bonus * entropy.sum() / count,
             }
+            if card_kl_coefficient > 0:
+                terms["card_kl"] = card_kl_coefficient * card_kl.sum() / count
             for component in components:
                 grads = torch.autograd.grad(
                     terms[component], parameters, retain_graph=True, allow_unused=True
@@ -406,6 +434,8 @@ def train_cadence_episode(
             for head, tensor in entropies.items():
                 head_entropy[head] += float(tensor.sum())
             card_entropy_given_choice += float(entropies["card"][batch.card_mask[:, 1:].any(dim=1)].sum())
+            if card_kl is not None:
+                card_kl_total += float(card_kl.sum())
             value_loss_total += float(value_loss)
     group_norms = group_gradient_norms(model)
     decomposition = None
@@ -463,6 +493,10 @@ def train_cadence_episode(
         # over rows with a legal non-PASS card, placement entropy over play rows.
         "card_entropy_given_choice": card_entropy_given_choice / choice_rows if choice_rows else None,
         "placement_entropy_given_play": head_entropy["placement"] / play_rows if play_rows else None,
+        # On-policy KL(reference || model) over the card head, during the update.
+        "card_kl_to_reference_given_choice": (
+            card_kl_total / choice_rows if reference is not None and choice_rows else None
+        ),
         "value_loss_vs_vtrace": value_loss_total / count,
         "critic_mse_vs_vtrace_before": float(np.mean(residual**2)),
         "critic_mse_vs_return_before": float(np.mean((returns_array - values_array) ** 2)),
@@ -592,6 +626,7 @@ def run_train_iteration(args: argparse.Namespace) -> None:
     training.seed_everything(args.seed)
     checkpoint, model = load_any_checkpoint(args.checkpoint)
     _, parent = load_any_checkpoint(args.parent)
+    parent.eval()
     vocab = checkpoint["opponent_stratum_vocabulary"]
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
     optimizer_restored = False
@@ -600,6 +635,8 @@ def run_train_iteration(args: argparse.Namespace) -> None:
             raise ValueError("delay mode changed within an arm")
         if checkpoint.get("loss_mode", "full") != args.loss_mode:
             raise ValueError("loss mode changed within an arm")
+        if checkpoint.get("card_kl_coefficient", 0.0) != args.card_kl_coefficient:
+            raise ValueError("card KL coefficient changed within an arm")
         optimizer.load_state_dict(checkpoint["optimizer_state"])
         optimizer_restored = True
     collection = json.loads(Path(args.collection).read_text())
@@ -626,6 +663,8 @@ def run_train_iteration(args: argparse.Namespace) -> None:
             entropy_bonus=args.entropy_bonus,
             loss_mode=args.loss_mode,
             decompose=args.decompose_every > 0 and index % args.decompose_every == 0,
+            reference=parent,
+            card_kl_coefficient=args.card_kl_coefficient,
         )
         advantages.extend(update.pop("_advantages"))
         ratios.extend(update.pop("_ratios"))
@@ -664,6 +703,7 @@ def run_train_iteration(args: argparse.Namespace) -> None:
         "batch_size": args.batch_size,
         "value_loss_weight": args.value_loss_weight,
         "entropy_bonus": args.entropy_bonus,
+        "card_kl_coefficient": args.card_kl_coefficient,
         "optimizer_restored": optimizer_restored,
         "budget": {
             "episodes": len(updates),
@@ -726,6 +766,11 @@ def run_train_iteration(args: argparse.Namespace) -> None:
                 sum(update["entropy_per_head"]["placement"] * update["rows"] for update in updates) / play_rows
                 if play_rows else None
             ),
+            "card_kl_to_reference_given_choice": (
+                sum(update["card_kl_to_reference_given_choice"] * update["choice_rows"]
+                    for update in updates if update["choice_rows"]) / choice_rows
+                if choice_rows else None
+            ),
             "importance_ratio_given_choice": {
                 **distribution(ratio_array[choice]),
                 "fraction_clipped_above_1": float(np.mean(ratio_array[choice] > 1.0)) if choice_rows else None,
@@ -772,6 +817,7 @@ def run_train_iteration(args: argparse.Namespace) -> None:
         "arm": args.arm,
         "delay_mode": args.delay_mode,
         "loss_mode": args.loss_mode,
+        "card_kl_coefficient": args.card_kl_coefficient,
         "iteration": args.iteration,
         "seed": args.seed,
         "model_state": model.state_dict(),
@@ -907,6 +953,25 @@ def run_probe(args: argparse.Namespace) -> None:
     print(json.dumps(report, indent=1))
 
 
+def opportunity_capture_against_parent(
+    model: dict[str, dict[str, Any]], parent: dict[str, dict[str, Any]]
+) -> dict[str, Any]:
+    """Pooled held-out capture below the parent's is a diagnostic failure
+    (tactical review proposal 3); it is reported, and training continues."""
+    pooled, parent_pooled = model["opportunity"], parent["opportunity"]
+    comparable = pooled["rows"] > 0 and pooled["rows"] == parent_pooled["rows"]
+    return {
+        "model": model,
+        "parent": parent,
+        "capture_rate_below_parent": (
+            pooled["capture_rate"] < parent_pooled["capture_rate"] if comparable else None
+        ),
+        "mean_p_fireball_below_parent": (
+            pooled["mean_p_fireball"] < parent_pooled["mean_p_fireball"] if comparable else None
+        ),
+    }
+
+
 def run_heldout(args: argparse.Namespace) -> None:
     checkpoint, model = load_any_checkpoint(args.checkpoint)
     _, parent = load_any_checkpoint(args.parent)
@@ -920,6 +985,10 @@ def run_heldout(args: argparse.Namespace) -> None:
         "note": "Teacher-label imitation loss on the 20260921 frozen subset; not the RL objective.",
         "validation": training.evaluate_loss_parquet(model, args.dataset, "validation", vocab, 32, device),
         "kl_from_parent": training.evaluate_kl_parquet(parent, model, args.dataset, "validation", vocab, 32, device),
+        "opportunity_capture": opportunity_capture_against_parent(
+            training.evaluate_opportunity_capture(model, args.dataset, "validation", vocab, 32, device),
+            training.evaluate_opportunity_capture(parent, args.dataset, "validation", vocab, 32, device),
+        ),
     }
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text(json.dumps(report, indent=1) + "\n")
@@ -944,6 +1013,10 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--value-loss-weight", type=float, default=0.5)
     train.add_argument("--entropy-bonus", type=float, default=0.001)
     train.add_argument("--loss-mode", default="full", choices=LOSS_MODES)
+    train.add_argument(
+        "--card-kl-coefficient", type=float, default=0.0,
+        help="weight of KL(parent || model) over the card head (0 = the production update)",
+    )
     train.add_argument(
         "--decompose-every", type=int, default=0,
         help="measure per-loss-term gradients on every Nth episode update (0 = never)",

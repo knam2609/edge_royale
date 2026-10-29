@@ -9,7 +9,8 @@ It is read-only. No gate, floor, scorer, fixture, model, observation or runtime
 changed, and nothing here selects a model or clears a gate. The owner approved
 the [proposals](#proposals--approved-october-25) on
 October 25. Proposals 1–2 were implemented, ablated and compared under RL later (see
-[below](#proposals-12-observation-v3-and-bc-ablation--october-2526-2026));
+[below](#proposals-12-observation-v3-and-bc-ablation--october-2526-2026)),
+and proposal 3 followed ([below](#proposal-3-data-and-learning-on-v4--october-27-2026));
 those changes are outside this read-only investigation.
 
 - `X` = `~/edge_royale-runs/20261025-tactical-parity-warmup.noindex/`. Scripts and outputs are in `X/tactical/`; models are in `X/models/`; the corpus subset is in `X/corpus/`.
@@ -149,7 +150,7 @@ implemented as observation schema v3 and committed locally as a checkpoint. Afte
 [BC ablation](#proposals-12-observation-v3-and-bc-ablation--october-2526-2026) the owner chose a bounded local RL
 comparison (October 26). It [reported](#rl-comparison--october-26-2026) inconclusive by its frozen rule,
 and the owner then chose spell globals only: proposal 2 lands as
-[observation schema v4](#spell-globals-only-v4--october-26-2026), and proposal 1's geometry is dropped. Proposals 3 and 4 are not implemented. Each lands as its own change, with its own tests and fresh provenance.
+[observation schema v4](#spell-globals-only-v4--october-26-2026), and proposal 1's geometry is dropped. Proposal 3 is implemented as default-off learner options and tested in a [local experiment](#proposal-3-data-and-learning-on-v4--october-27-2026) (October 27). Proposal 4 is not implemented. Each lands as its own change, with its own tests and fresh provenance.
 None lowers a floor or adds a handcrafted spell or placement override. The
 approval does not cover pushing, cloud actions or promotion.
 
@@ -324,6 +325,81 @@ Intervals below are 95% bootstraps over evaluation seeds.
   The converted children pass real-PyTorch parity under v4 and reproduce the RL comparison's tactical and game results exactly. The spell-only rows of the RL comparison therefore describe v4 models.
 - **Fresh BC.** A v4 BC model (seed 20260718, the ablation recipe) trains, exports and passes parity: worst 0.191 of tolerance, identical tie sets and no fragile margins. It scores 0.656 in the 16-pair heuristic check with zero illegal attempts. The spell-only model of the same seed also scores 0.656, but it is a different model: only 2 of the 32 games are identical.
 
+## Proposal 3: data and learning on v4 — October 27, 2026
+
+**Status: implemented locally as default-off options. The frozen local
+experiment labels it `proposal 3 costs play`, after a recorded post-cap
+continuation; the owner decides (options below).** Evidence is in `P` = `~/edge_royale-runs/20261027-proposal3.noindex/`
+(`plan.md`, `FROZEN.txt`, `analysis.md`, `posthoc.md`, `README.md`, `SHA256SUMS`).
+
+**What changed** (`scripts/edger-v2-training.py`, `scripts/edger-v2-cadence-experiment.py` and `.mjs`; see [training](EDGER_TRAINING.md#4-learning)):
+- **Opportunity classes** come from the v4 spell globals and the legal card mask, so the cache is unchanged.
+  - Lethal means Fireball is legal and some enemy tower is at or below its tower damage. That matches this review's 92 lethal rows exactly.
+  - Cluster means Fireball is legal and one cast could hit at least 3 enemy troops, by the engine's impact rule. That gives 404 rows, a strict subset of the 423 found by the scorer-based check above.
+  - On the subset, the train split has 74 lethal and 320 cluster rows, and the validation split 18 and 84.
+- **Teacher filter** (BC `--card-teacher-filter opportunity`): in opportunity rows, the card targets of aggressive, defender and random get weight 0; their placement and delay targets stay.
+  - In train lethal rows, the weighted Fireball target rises from 52% to 66%.
+  - In train cluster rows, it rises from 28% to 55%.
+- **Oversampling** (BC `--opportunity-oversample K`): every opportunity row appears K times per epoch.
+- **KL floor** (RL `train-arm --card-kl-coefficient β`): β × KL(BC parent ‖ model) over the card head on every on-policy row.
+- **Capture diagnostic** (`train-arm --heldout`): after every iteration, the held-out Fireball capture rate is recorded for the model and its parent. Capture below the parent's is flagged as a diagnostic failure; it does not stop the arm.
+- **Defaults are unchanged.** A default BC run under the new code reproduces the October 26 v4 BC checkpoint bit for bit (24/24 tensors, `P/repro/compare.json`).
+  - That v4 baseline captures 0 of 102 held-out opportunities, with mean P(Fireball) 0.13.
+  - The production `vtrace` learner has no KL term yet.
+
+**Experiment** (frozen in `P/plan.md` before any output):
+- BC: four recipes × three seeds. The recipes are `b0` (baseline), `bf` (filter), `bo` (oversample ×4) and `bfo` (both).
+- RL: parents `b0` and `bfo` × β ∈ {0, 0.05} × three runs, with the October 26 learned/full recipe.
+- Evaluation: all 24 models on the October 26 protocol.
+- Advisory label: `proposal 3 helps` needs the full proposal (`bfo` with KL) to be within −0.02 of the old recipe's primary score, to capture more held-out opportunities, and to pass the capture diagnostic in every run.
+
+**Run.** UTC October 26, 14:44–21:23.
+- Every BC run, all 12 arms (six iterations each) and all 72 evaluations exited 0. No game had an illegal attempt, every evaluation passed its repeat checks, and all 24 models pass parity (worst 0.381 of tolerance).
+- The held-out check costs about 2 minutes per iteration (it reads the cache four times), so arms took 17–18 minutes instead of about 3.
+- The runner stopped at its frozen 6 h cap at 20:44:56Z, before 7 of the 72 evaluations and all of the children's secondary checks. Its frozen analysis is in `P/analysis-at-cap.md`; it is labelled inconclusive because of the missing outputs.
+- `P/post-cap.sh` finished the rest with unchanged commands. It was written and hashed at 19:17Z, before any score was read (`P/POSTCAP.txt`). That is a deviation from the plan's "stop and report partial results"; the contrast that drives the label uses only children, which were all evaluated before the cap.
+
+**BC: the data recipe works.** Held-out capture of the 102 opportunities, per seed:
+
+| Recipe | Capture (lethal of 18 / cluster of 84) | Fireballs per evaluation game | Parent primary, mean of runs |
+|---|---|---|---|
+| `b0` | 0 / 0 in every seed | 0.00 | 0.497 |
+| `bf` | 1/3, 0/2, 1/1 | 0.06–0.25 | 0.511 |
+| `bo` | 9/6, 7/3, 7/4 | 0.14–0.25 | 0.529 |
+| `bfo` | 13/18, 10/14, 12/16 (24–30%) | 0.83–1.60 | 0.471 |
+
+- `bfo` minus `b0` primary is −0.025 [−0.052, +0.002]; `bf` is +0.014 and `bo` +0.033 [+0.006, +0.059].
+- By this review's scorer-based labels, `bfo` makes Fireball the argmax in 56–72% of validation lethal rows (b0: 0%). The card-argmax match with teachers falls from 0.82 to 0.78–0.80.
+- Oversampling drives lethal capture, and the filter adds cluster capture.
+
+**RL without the KL floor erases it.** All three `bfo-k0` arms end with 0 held-out capture and 0 Fireballs per game; the parents' mean P(Fireball) of 0.24–0.29 falls to 0.005–0.019. They also score −0.045 [−0.065, −0.025] against `b0-k0`.
+
+**The KL floor keeps some Fireball but costs play.** At β = 0.05 the on-policy card KL to the parent stays at 0.03–0.07 nats, against 0.35–0.84 without it. That holds every card choice near the weaker BC parent, not only rare ones.
+
+| Children, mean of runs | Primary | Final held-out capture | Fireballs per game |
+|---|---|---|---|
+| `b0-k0` (old recipe) | 0.845 | 0 | 0.00 |
+| `b0-kl` | 0.730 | 0 | 0.00 |
+| `bfo-k0` | 0.800 | 0 | 0.00 |
+| `bfo-kl` (full proposal) | 0.741 | 0.108 (0.137, 0.176, 0.010) | 0.24 (0.19, 0.41, 0.08) |
+
+- `P` = child(`bfo-kl`) − child(`b0-k0`) is −0.104 [−0.126, −0.082] run-averaged; per run −0.013, −0.216 and −0.083. The KL term alone costs −0.115 [−0.136, −0.093] on `b0` parents.
+- RL gains with the floor are +0.234 (`b0`) and +0.270 (`bfo`), against +0.348 and +0.328 without it.
+- The `bfo-kl` children are the first v4 children that cast Fireball in evaluation. All three still fail the capture diagnostic: capture falls below the parent's in every iteration.
+- Tactical aggregates are 0.37–0.39 for every child, and placement is unchanged (36–54% back rows).
+- Post hoc: the old-recipe children from fresh v4 parents (0.819, 0.884, 0.832) are in line with the October 26 spell-only children (0.832, 0.822, 0.795).
+
+**Frozen label: `proposal 3 costs play`.** `P` is below −0.02 and negative in every run.
+
+**Options for the owner:**
+1. **Targeted floor** (recommended):
+   - Keep the BC data recipe and apply the card KL only on opportunity rows (the same globals), so ordinary card choices learn freely.
+   - This tests whether the floor's play cost comes from anchoring ordinary states.
+   - It is one bounded local comparison, `bfo` parents × 3 runs, with this run's `bfo-k0` children as the control. That is about 1.5 h, or less with a faster held-out check.
+2. **Smaller global β** (for example 0.01): the same trade-off, probably smaller in both directions.
+3. **Stop at BC.** Keep the options (default off) and move to proposal 4. Its corpus-derived opportunity bank would then measure Fireball capture in the gate.
+4. **Revert proposal 3.** Not recommended: the options are default-off, bit-identical at default, and tested.
+
 ## Limits
 
 - The corpus is a 160-episode subset, not the production corpus.
@@ -332,6 +408,8 @@ Intervals below are 95% bootstraps over evaluation seeds.
 - JavaScript does not specify `**` or `Math.hypot` as correctly rounded. Cache rewards (`**`) differ in the last bits between Node v25 x86_64 and Node v20 arm64. The sim's `Math.hypot` agreed: every observation in the subset was identical under both. Other JavaScript engines are untested.
 - Opportunity checks mirror the fixture scorers (Fireball radius plus entity radius, value ≥ 0.70, tower HP ≤ 207). They are not a strategic optimum.
 - The RL suppression mechanism is inferred from model outputs, not traced through training.
+- Proposal 3 tested one KL coefficient (0.05) and one oversampling factor (4), on the same subset, development seeds and three training runs. Its held-out capture uses 102 validation rows (18 lethal).
+- The post-cap continuation is a recorded deviation from the proposal 3 plan; the frozen label at the cap was inconclusive only because outputs were missing.
 
 ## Reproduction
 
@@ -389,4 +467,21 @@ node pins.mjs v4repo > pins-v4.json && node pins.mjs dense > pins-dense.json
 python3 -I cache-equal.py v4/subset-decisions.parquet v3s-arm64/subset-decisions.parquet "$V/v3/subset-decisions.parquet" "$V/v2/subset-decisions.parquet" > cache-equal-arm64.json
 bash convert.sh    # six spell-only models converted to v4, plus the control
 bash bc.sh         # fresh v4 BC, export and js-eval
+```
+
+Proposal 3 (`P/README.md` describes every file). `run.sh` and `post-cap.sh`
+set their own `PATH` and skip finished steps; `post-cap.sh` is `run.sh` with a
+24 h cap and its own log.
+
+```bash
+P=~/edge_royale-runs/20261027-proposal3.noindex
+Y=~/edge_royale-runs/20261026-observation-v4.noindex
+cd "$P"
+(cd p3repo && OMP_NUM_THREADS=1 /usr/local/bin/python3 scripts/edger-v2-training.py bc --dataset "$Y/v4/subset-decisions.parquet" --out "$P/repro/b0-s20260718.pt" --seed 20260718 --epochs 6)
+python3 -I repro/compare.py repro/b0-s20260718.pt "$Y/bc/v4-s20260718.pt" > repro/compare.json
+bash run.sh                              # frozen; stopped at its 6 h cap
+python3 -I analyze.py > analysis-at-cap.md
+bash post-cap.sh                         # recorded continuation
+python3 -I analyze.py > analysis.md      # frozen analysis, completed output
+python3 -I posthoc.py > posthoc.md       # post-hoc, not frozen
 ```

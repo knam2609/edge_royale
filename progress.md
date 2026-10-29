@@ -1,6 +1,17 @@
 # Current State
 
-- October 27, 2026 (latest): observation v4 is **committed locally as `43d037c`** on `edger-v2-accumulated` (not pushed), and the local toolchain is restored. The owner **approved proposal 3 (data/learning on v4) as the next session's work** (task 1).
+- October 27, 2026 (latest): tactical **proposal 3 (data/learning on v4) is implemented as default-off learner options and ran as a frozen local experiment. Frozen label: `proposal 3 costs play`.** On October 30 the owner chose option 1, the targeted floor (task 1), and had the changes committed locally on `edger-v2-accumulated` after `d28d710` (not pushed). Record: [proposal 3](docs/EDGER_TACTICAL_REVIEW.md#proposal-3-data-and-learning-on-v4--october-27-2026). Evidence: `P` = `~/edge_royale-runs/20261027-proposal3.noindex/` (see its `README.md`).
+  - **Code** (`scripts/edger-v2-training.py`, `scripts/edger-v2-cadence-experiment.py`/`.mjs`, tests; docs in [training](docs/EDGER_TRAINING.md#4-learning)):
+    - Fireball opportunity classes come from the v4 globals and the card mask: lethal (globals 96–98) and cluster (≥3 troops, global 102).
+    - BC `--card-teacher-filter opportunity` drops the card targets of aggressive, defender and random in those rows, and `--opportunity-oversample K` repeats them.
+    - `train-arm --card-kl-coefficient β` adds KL(BC parent ‖ model) over the card head. `--heldout` records capture per iteration and flags capture below the parent's (`capture_diagnostic`, which does not stop the arm).
+    - Defaults reproduce the October 26 v4 BC checkpoint bit for bit. Live v1, the runtime, observation, gates and floors are unchanged. The production `vtrace` learner has no KL term.
+  - **Result** (12 BC models, 12 RL arms, 24 evaluated models):
+    - BC: filter plus oversample ×4 (`bfo`) raises held-out capture from 0/102 to 24–30% (lethal 10–13/18), at −0.025 [−0.052, +0.002] primary.
+    - RL without KL drives capture and Fireball casts back to 0 in every run.
+    - KL β = 0.05 keeps some Fireball (capture 0.01–0.18, 0.08–0.41 casts per game, the first v4 children to cast it), but it holds every card choice near the weaker parent. Full proposal minus old recipe P = −0.104 [−0.126, −0.082], negative in every run, and every `bfo-kl` arm fails the capture diagnostic.
+  - **Deviation:** the runner stopped at its frozen 6 h cap before 7 parent evaluations and the children's secondary checks; the frozen label at the cap was inconclusive only because those outputs were missing. A continuation (`post-cap.sh`), written and hashed before any score was read, finished them with unchanged commands.
+- October 27, 2026: observation v4 is **committed locally as `43d037c`** on `edger-v2-accumulated` (not pushed), and the local toolchain is restored. The owner approved proposal 3 (data/learning on v4) as the next work; it ran later on October 27 (above).
   - **Machine**, changed with the owner's approval. Evidence is in `Z` = `~/edge_royale-runs/20261027-toolchain-restore.noindex/` (see its `README.md`).
     - The owner accepted the Xcode licence, so `/usr/bin/git` runs again without `DEVELOPER_DIR`.
     - The official arm64 Node v20.20.2 with npm 10.8.2 is in `~/.local/opt/node-v20.20.2-darwin-arm64`. `node`, `npm` and `npx` are linked into `~/.local/bin`, which the bash login profile puts first on `PATH`. Its `node` is byte-identical to the pinned `38de4fc4…`. The broken Intel `/usr/local/bin/node` is still installed but shadowed. The zsh profiles do not add `~/.local/bin`.
@@ -85,6 +96,7 @@
 # Source of Truth
 
 - Product/workflow: `AGENTS.md`, `README.md`, `docs/BOT_LEVELS.md`. Training: `docs/EDGER_TRAINING.md`. Roadmap: `docs/IMPLEMENTATION_PLAN.md`, `docs/SPRINT_BACKLOG.md`.
+- Proposal 3 (October 27): `P` holds the scratch mirror `p3repo` (commit `d8ebe2b`), the pre-plan reproduction `repro/`, the frozen `plan.md`, `run.sh`, `analyze.py`, seeds and `FROZEN.txt`, the hashed continuation `post-cap.sh`/`POSTCAP.txt`, BC checkpoints/models/evaluations, 12 arms, 72 evaluations, secondary checks, `analysis-at-cap.md`, `analysis.md`, the post-hoc `posthoc.py`/`posthoc.md`, logs, `README.md` and `SHA256SUMS` (5,432 files, `052305d0…`).
 - Toolchain restore (October 27): `Z` holds nodejs.org's `SHASUMS256.txt` for v20.20.2, the installed node's hash, the Playwright and browser revisions, `browser-pin-check.mjs` and its output, the smoke and `npm test` logs, `README.md` and `SHA256SUMS`.
 - Observation v3 ablation (October 25–26): `V` holds the scratch mirrors, the four caches, the BC checkpoints, exported models, evaluation, games and placement outputs, `summary.md`, `teacher-placement.txt`, the October 26 validation logs, `README.md` and `SHA256SUMS`.
 - Observation v4 (October 26): `Y` holds the scratch mirror `v4repo` and its `dense` copy; `pins.mjs` and its outputs; the v4 cache and the arm64 rebuild of the spell-only cache; `cache-equal.py` and its reports; `convert-check.mjs`, `convert.sh`, the converted models and reports; `bc.sh` and the v4 BC model, export and evaluations; the validation logs, `README.md` and `SHA256SUMS`.
@@ -124,10 +136,12 @@
 - Tactical: v1 scores 0.451; two scorers accept distant back-center plays. Every v2 model picks Giant in both spell fixtures (Fireball probability ≤0.015); forced spells already use maximum-scoring cells.
   - The placement-tie cause is now established: a 3×3 receptive field, no coordinate or geometry channels, and the lowest-index tie-break. 47.9% of corpus troop rows are structurally tied.
   - Fireball causes are measured but not fixed. Spell-opportunity inputs do not fix it under BC or after six RL iterations (October 26).
+  - Proposal 3 (October 27) fixes it at BC (held-out capture 24–30%), but RL erases it without a floor. A global card KL floor (β = 0.05) keeps some Fireball, but costs about 0.1 primary, because it anchors every card choice to the weaker BC parent. One β, one oversampling factor (4), and 102 held-out opportunity rows (18 lethal).
+  - `train-arm --heldout` reads the whole cache four times per iteration, about 2 minutes on the subset, so it does not scale to the production corpus as written. The production `vtrace` learner has no card KL option.
   - Observation v4 keeps the structural ties, so proposal 1 is not met. v3's geometry removed them but cost play at BC (about −0.3 against the heuristic) and, on average, after six RL iterations (D3 −0.109), with no return of back-row play.
   - The spell globals' RL gain over v2 (+0.154) is a lean: it is not established across three training runs, and its mechanism is unmeasured, since Fireball use did not change.
   - Both experiments use one 160-episode subset, development seeds and a diagnostic recipe.
-  - The data/learning and scoring proposals are approved (October 25) but not implemented. The RL suppression mechanism is inferred from outputs, not traced in training logs.
+  - The scoring proposal is approved (October 25) but not implemented. The RL suppression of Fireball is now observed directly in held-out capture per iteration (October 27), but its mechanism through shared trunk features is inferred, not traced.
 - Parity: under the old `1e-5`, all seven models failed on placement alone (magnitudes 149–746) while decisions agreed everywhere. Under the October 25 contract the shipped runtime passes 7/7 locally with one ULP of headroom (worst 3 of 4 ULP).
   - That headroom is measured only on one M1 with PyTorch 2.11.0. The reference host's PyTorch/BLAS accumulation order may need a different k; re-measure before a campaign relies on it.
   - Decimal-double weights (V2, deferred) matter only against a float64 reference. Option F (bounding logit scale in training) stays an advisory warning.
@@ -139,7 +153,11 @@
 # Next Tasks
 
 1. Finish the approved [tactical proposals](docs/EDGER_TACTICAL_REVIEW.md#proposals--approved-october-25). New models must pass the new parity contract; all ablation, RL and v4 models do locally.
-   - **Next session: proposal 3, data/learning on v4. The owner approved starting it (October 27).** It covers teacher filtering, opportunity oversampling, a KL/entropy floor and an opportunity-capture diagnostic. Spell globals leave Fireball unchosen under both BC and RL, so this is the lever for Fireball. It needs fresh v4 BC parents, since the filtering changes the BC data. Its RL comparison can carry a v2-observation control that also re-tests the spell globals' lean. Teacher filtering will not change the front-row placement target, since v1 and the heuristic both place 90%+ of troops there. Run it locally; cloud, push and promotion still need separate approval.
+   - **Next: option 1 of the [proposal 3 options](docs/EDGER_TACTICAL_REVIEW.md#proposal-3-data-and-learning-on-v4--october-27-2026), the targeted floor** (owner choice, October 30; frozen label `proposal 3 costs play`, October 27).
+     - Keep the `bfo` BC recipe and apply the card KL only on opportunity rows, in one bounded local comparison against this run's `bfo-k0` children (about 1.5 h).
+     - Before another RL run, make `heldout` cheaper (one pass, or a pre-filtered opportunity file), and size the wall cap from measured arm and evaluation times: arms took 17–18 min with `--heldout`, and evaluations about 6 min per child and 5 min per parent.
+     - The v2-observation control was not carried, because the opportunity classes come from the v4 globals. The spell globals' lean stays a lean.
+     - Run locally; cloud, push and promotion still need separate approval.
    - Representation (proposals 1–2) is done as [observation v4](docs/EDGER_TACTICAL_REVIEW.md#spell-globals-only-v4--october-26-2026), committed locally as `43d037c` (October 27). Proposal 1 is closed as not met.
      - Do not tune placement by hand: a back-row preference would be a handcrafted override.
    - Scoring, an approved gate change:
@@ -160,7 +178,19 @@
 
 # Validation
 
-October 27, 2026 (latest), toolchain restore, from `~/Developer/edge_royale` with `~/.local/bin` first on `PATH`; `Z` is as above.
+October 27, 2026 (latest), proposal 3, from `~/Developer/edge_royale` with `~/.local/bin` (arm64 Node v20.20.2) first on `PATH` and `/usr/local/bin/python3` (arm64, PyTorch 2.11.0); `P` is as above.
+- `npm test` passed 227/227 in 235 s before the mirror was made (`P/npm-test.log`), and 227/227 in 349 s on the final tree (`P/npm-test-final.log`).
+- `OMP_NUM_THREADS=1 /usr/local/bin/python3 -m unittest tests.test_edger_training_streaming tests.test_edger_v2_cadence` passed 36/36 (9 new tests), before and after the final edit. `npm test` also runs the cadence file.
+- `node --test tests/edger-v2-policy.test.js` passed 9/9. It pins the learner's Fireball constants to the observation layout.
+- Pre-plan check: the default BC recipe in `P/p3repo` reproduces `Y/bc/v4-s20260718.pt` (24/24 tensors, identical validation metrics; `P/repro/compare.json`). The experiment's own `b0-s20260718` export has identical weights.
+- Experiment:
+  - `bash run.sh` (frozen; `FROZEN.txt` re-verified at the cap) ran 2026-10-26T14:44:04Z–20:44:56Z and stopped at its cap. `python3 -I analyze.py > analysis-at-cap.md`.
+  - `bash post-cap.sh` (hashed at 19:17:04Z in `POSTCAP.txt`) ran 20:45:16Z–21:23:04Z. `python3 -I analyze.py > analysis.md`; `python3 -I posthoc.py > posthoc.md`.
+  - Every step exited 0, with zero illegal attempts, and all 24 models pass parity (worst 0.381 of tolerance).
+- `shasum -a 256 -c SHA256SUMS` in `P` passes 5,432/5,432. `git diff --check` passes. The repository's `src/`, `scripts/` and `tests/` equal `P/p3repo` except that re-wrap.
+- Bot-bench and smoke were not run: no live-bot, runtime or client code changed (learner and diagnostic scripts only).
+
+October 27, 2026, toolchain restore, from `~/Developer/edge_royale` with `~/.local/bin` first on `PATH`; `Z` is as above.
 - `/usr/bin/git --version` prints `git version 2.54.0 (Apple Git-157)` without `DEVELOPER_DIR`.
 - `grep ' node-v20.20.2-darwin-arm64.tar.gz$' SHASUMS256.txt | shasum -a 256 -c -` passed on the nodejs.org download (`Z/node-SHASUMS256.txt`). The installed `bin/node` hashes to `38de4fc4…` (`Z/node-binary.sha256`). A clean `bash -l` resolves `node`, `npm` and `npx` to `~/.local/bin`: v20.20.2, npm 10.8.2, `arm64`.
 - `npx playwright install chromium` (Playwright 1.58.2) installed Chromium 1208 and FFmpeg 1011 (`Z/playwright-version.txt`).

@@ -41,6 +41,7 @@ import {
   buildReplicationSeedPlans,
   exactSignTest,
   frozenSuiteSeeds,
+  heldoutCaptureRecord,
   pairedContrast,
   pruneEpisodeBodies,
   selectEvaluationSeeds,
@@ -554,6 +555,27 @@ test("episode pruning keeps headers and deletes bodies", () => {
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test("train-arm records pooled held-out Fireball capture against the parent", () => {
+  const entry = (rows, argmax, p) => ({ rows, fireball_argmax: argmax, capture_rate: argmax / rows, mean_p_fireball: p });
+  const record = heldoutCaptureRecord({
+    opportunity_capture: {
+      model: { lethal: entry(2, 0, 0.1), cluster: entry(3, 1, 0.2), opportunity: entry(5, 1, 0.16) },
+      parent: { lethal: entry(2, 1, 0.3), cluster: entry(3, 1, 0.2), opportunity: entry(5, 2, 0.24) },
+      capture_rate_below_parent: true,
+      mean_p_fireball_below_parent: true,
+    },
+  });
+  assert.deepEqual(record, {
+    rows: 5,
+    capture_rate: 0.2,
+    mean_p_fireball: 0.16,
+    parent_capture_rate: 0.4,
+    parent_mean_p_fireball: 0.24,
+    capture_rate_below_parent: true,
+    mean_p_fireball_below_parent: true,
+  });
 });
 
 test("paired contrasts compare identical seed pairs", () => {

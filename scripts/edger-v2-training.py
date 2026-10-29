@@ -56,6 +56,21 @@ KL_LIMIT = 0.05
 ADVANTAGE_TEMPERATURE = 0.25
 ADVANTAGE_WEIGHT_MIN = 0.1
 ADVANTAGE_WEIGHT_MAX = 20.0
+# Fireball opportunity states (tactical review proposal 3), read from the v4
+# spell-opportunity globals and the legal card mask. Lethal: Fireball is legal
+# and some enemy tower is at or below its tower damage. Cluster: otherwise, one
+# cast could hit at least three enemy troops (the engine's impact rule).
+FIREBALL_CARD_INDEX = 8
+FIREBALL_LETHAL_GLOBALS = (96, 97, 98)
+FIREBALL_TROOP_HITS_GLOBAL = 102
+SPELL_TROOP_HITS_DENOMINATOR = 8
+CLUSTER_MINIMUM_TROOP_HITS = 3
+OPPORTUNITY_NONE = 0
+OPPORTUNITY_CLASSES = {"lethal": 1, "cluster": 2}
+# BC does not imitate these teachers' card choices in opportunity states:
+# aggressive and defender never cast spells, and random casts at random.
+CARD_TARGET_FILTERED_TEACHERS = frozenset({"aggressive", "defender", "random"})
+CARD_TEACHER_FILTERS = ("none", "opportunity")
 PARQUET_ROW_GROUP_SIZE = 256
 # The absolute floor of the parity contract. The gate itself is in
 # scripts/edger-v2-evaluation-core.mjs and also allows 4 float32 ULP above
@@ -300,6 +315,7 @@ class Batch:
     policy_rating: Tensor
     vtrace_target: Tensor
     vtrace_advantage: Tensor
+    card_loss_weight: Tensor
 
     def to(self, device: torch.device) -> "Batch":
         return Batch(
@@ -361,6 +377,9 @@ class DecisionDataset(Dataset[dict[str, Any]]):
             "vtrace_advantage": torch.tensor(
                 row.get("vtrace_advantage", 0.0), dtype=torch.float32
             ),
+            "card_loss_weight": torch.tensor(
+                row.get("card_loss_weight", 1.0), dtype=torch.float32
+            ),
         }
 
 
@@ -398,6 +417,7 @@ def iter_parquet_rows(
     shuffle: bool = False,
     seed: int = 1,
     predicate: Callable[[dict[str, Any]], bool] | None = None,
+    expand: Callable[[dict[str, Any]], list[dict[str, Any]]] | None = None,
 ) -> Iterator[dict[str, Any]]:
     parquet = pq.ParquetFile(path)
     row_groups = list(range(parquet.num_row_groups))
@@ -406,6 +426,9 @@ def iter_parquet_rows(
     for row_group in row_groups:
         # Materialization is deliberately bounded to one deterministic 256-row group.
         rows = parquet.read_row_group(row_group).to_pylist()
+        if expand is not None:
+            # Before the shuffle, so repeated rows spread across the group.
+            rows = [item for row in rows for item in expand(row)]
         if shuffle:
             random.Random(seed ^ ((row_group + 1) * 0x9E3779B1)).shuffle(rows)
         for row in rows:
@@ -464,6 +487,7 @@ def batches_for_parquet(
     shuffle: bool,
     seed: int,
     predicate: Callable[[dict[str, Any]], bool] | None = None,
+    expand: Callable[[dict[str, Any]], list[dict[str, Any]]] | None = None,
 ) -> Iterator[Batch]:
     pending: list[dict[str, Any]] = []
     for row in iter_parquet_rows(
@@ -472,6 +496,7 @@ def batches_for_parquet(
         shuffle=shuffle,
         seed=seed,
         predicate=predicate,
+        expand=expand,
     ):
         pending.append(row)
         if len(pending) == batch_size:
@@ -512,6 +537,14 @@ def actor_losses(logits: dict[str, Tensor], batch: Batch) -> tuple[Tensor, dict[
         "placement": placement_loss,
         "delay": delay_loss,
     }
+
+
+def bc_joint_loss(logits: dict[str, Tensor], batch: Batch, weighted_card: bool) -> Tensor:
+    joint, parts = actor_losses(logits, batch)
+    if not weighted_card:
+        # The unchanged graph, so the default recipe stays bit-identical.
+        return joint
+    return parts["card"] * batch.card_loss_weight + parts["placement"] + parts["delay"]
 
 
 def forward_batch(model: EdgerV2Policy, batch: Batch) -> dict[str, Tensor]:
@@ -675,6 +708,82 @@ def evaluate_kl_parquet(
     return total / max(1, count)
 
 
+def fireball_opportunity(global_features: Tensor, card_mask: Tensor) -> Tensor:
+    """Per-row opportunity class: 0 none, or a value of OPPORTUNITY_CLASSES."""
+    legal = card_mask[:, FIREBALL_CARD_INDEX].bool()
+    lethal = legal & (global_features[:, list(FIREBALL_LETHAL_GLOBALS)] > 0.5).any(dim=1)
+    hits = torch.round(
+        global_features[:, FIREBALL_TROOP_HITS_GLOBAL] * SPELL_TROOP_HITS_DENOMINATOR
+    )
+    cluster = legal & ~lethal & (hits >= CLUSTER_MINIMUM_TROOP_HITS)
+    return (
+        lethal.long() * OPPORTUNITY_CLASSES["lethal"]
+        + cluster.long() * OPPORTUNITY_CLASSES["cluster"]
+    )
+
+
+def row_fireball_opportunity(row: dict[str, Any]) -> int:
+    return int(fireball_opportunity(
+        torch.tensor([row["global"]], dtype=torch.float32),
+        torch.tensor([row["legal_masks"]["card"]], dtype=torch.bool),
+    )[0])
+
+
+def evaluate_opportunity_capture(
+    model: EdgerV2Policy,
+    path: str | Path,
+    split: str,
+    vocab: dict[str, int],
+    batch_size: int,
+    device: torch.device,
+) -> dict[str, dict[str, float | int | None]]:
+    """How often the deterministic card choice takes a Fireball opportunity.
+
+    Capture is the masked card argmax (lowest index on ties, as the runtime)
+    being Fireball; the mean Fireball probability is reported alongside.
+    """
+    model.eval()
+    totals = {
+        name: {"rows": 0, "fireball_argmax": 0, "p_fireball_sum": 0.0}
+        for name in [*OPPORTUNITY_CLASSES, "opportunity"]
+    }
+    with torch.no_grad():
+        for batch in batches_for_parquet(
+            path,
+            vocab,
+            batch_size,
+            split=split,
+            shuffle=False,
+            seed=1,
+            predicate=lambda row: row_fireball_opportunity(row) != OPPORTUNITY_NONE,
+        ):
+            batch = batch.to(device)
+            opportunity = fireball_opportunity(batch.global_features, batch.card_mask)
+            card = mask_logits(forward_batch(model, batch)["card"], batch.card_mask)
+            captured = card.argmax(dim=1) == FIREBALL_CARD_INDEX
+            probability = F.softmax(card, dim=1)[:, FIREBALL_CARD_INDEX]
+            for name, rows in [
+                *((name, opportunity == code) for name, code in OPPORTUNITY_CLASSES.items()),
+                ("opportunity", opportunity != OPPORTUNITY_NONE),
+            ]:
+                totals[name]["rows"] += int(rows.sum())
+                totals[name]["fireball_argmax"] += int(captured[rows].sum())
+                totals[name]["p_fireball_sum"] += float(probability[rows].sum())
+    return {
+        name: {
+            "rows": total["rows"],
+            "fireball_argmax": total["fireball_argmax"],
+            "capture_rate": (
+                total["fireball_argmax"] / total["rows"] if total["rows"] else None
+            ),
+            "mean_p_fireball": (
+                total["p_fireball_sum"] / total["rows"] if total["rows"] else None
+            ),
+        }
+        for name, total in totals.items()
+    }
+
+
 def environment_metadata() -> dict[str, Any]:
     return {
         "python": platform.python_version(),
@@ -762,11 +871,61 @@ def winner_finetune_predicate(
     return selected, count_parquet_rows(path, split="train", predicate=selected)
 
 
+def bc_row_expansion(
+    card_teacher_filter: str,
+    opportunity_oversample: int,
+) -> Callable[[dict[str, Any]], list[dict[str, Any]]] | None:
+    """The BC data recipe for Fireball opportunity rows; None leaves BC unchanged.
+
+    ``opportunity`` drops the card target, never the placement or delay target,
+    of filtered teachers in opportunity rows. Oversampling repeats every
+    opportunity row in each epoch.
+    """
+    if card_teacher_filter not in CARD_TEACHER_FILTERS:
+        raise ValueError(f"--card-teacher-filter must be one of {CARD_TEACHER_FILTERS}")
+    if opportunity_oversample < 1:
+        raise ValueError("--opportunity-oversample must be at least 1")
+    if card_teacher_filter == "none" and opportunity_oversample == 1:
+        return None
+
+    def expand(row: dict[str, Any]) -> list[dict[str, Any]]:
+        if row_fireball_opportunity(row) == OPPORTUNITY_NONE:
+            return [row]
+        if (
+            card_teacher_filter == "opportunity"
+            and row.get("policy_id") in CARD_TARGET_FILTERED_TEACHERS
+        ):
+            row = {**row, "card_loss_weight": 0.0}
+        return [row] * opportunity_oversample
+
+    return expand
+
+
+def bc_data_recipe_counts(
+    path: str | Path,
+    expand: Callable[[dict[str, Any]], list[dict[str, Any]]] | None,
+) -> dict[str, int]:
+    counts = {"train_rows_after_expansion": 0, "train_card_targets_dropped": 0}
+    counts.update({f"train_{name}_rows": 0 for name in OPPORTUNITY_CLASSES})
+    codes = {code: name for name, code in OPPORTUNITY_CLASSES.items()}
+    for row in iter_parquet_rows(path, split="train"):
+        code = row_fireball_opportunity(row)
+        if code != OPPORTUNITY_NONE:
+            counts[f"train_{codes[code]}_rows"] += 1
+        emitted = expand(row) if expand is not None else [row]
+        counts["train_rows_after_expansion"] += len(emitted)
+        counts["train_card_targets_dropped"] += sum(
+            1 for item in emitted if item.get("card_loss_weight", 1.0) == 0.0
+        )
+    return counts
+
+
 def run_bc(args: argparse.Namespace) -> None:
     require_clean_git()
     seed_everything(args.seed)
     metadata = parquet_metadata(args.dataset)
     require_cache_observation_schema(metadata, args.dataset)
+    expand = bc_row_expansion(args.card_teacher_filter, args.opportunity_oversample)
     train_samples = count_parquet_rows(args.dataset, split="train")
     validation_samples = count_parquet_rows(args.dataset, split="validation")
     if not train_samples:
@@ -785,11 +944,12 @@ def run_bc(args: argparse.Namespace) -> None:
             split="train",
             shuffle=True,
             seed=args.seed + epoch,
+            expand=expand,
         ):
             batch = batch.to(device)
             optimizer.zero_grad(set_to_none=True)
             logits = forward_batch(model, batch)
-            joint, _ = actor_losses(logits, batch)
+            joint = bc_joint_loss(logits, batch, expand is not None)
             value = model.value(logits["fused"], batch.stratum)
             value_loss = F.mse_loss(value, batch.discounted_return, reduction="none")
             loss = (
@@ -812,11 +972,12 @@ def run_bc(args: argparse.Namespace) -> None:
             shuffle=True,
             seed=args.seed ^ 0x51A7,
             predicate=finetune_predicate,
+            expand=expand,
         ):
             batch = batch.to(device)
             finetune_optimizer.zero_grad(set_to_none=True)
             logits = forward_batch(model, batch)
-            joint, _ = actor_losses(logits, batch)
+            joint = bc_joint_loss(logits, batch, expand is not None)
             loss = (joint * batch.sample_weight).mean()
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -827,7 +988,20 @@ def run_bc(args: argparse.Namespace) -> None:
         "train_samples": train_samples,
         "validation_samples": validation_samples,
         "winner_top_quartile_finetune_samples": finetune_samples,
+        "data_recipe": {
+            "card_teacher_filter": args.card_teacher_filter,
+            "card_target_filtered_teachers": (
+                sorted(CARD_TARGET_FILTERED_TEACHERS)
+                if args.card_teacher_filter != "none"
+                else []
+            ),
+            "opportunity_oversample": args.opportunity_oversample,
+            **bc_data_recipe_counts(args.dataset, expand),
+        },
         "validation": evaluate_loss_parquet(
+            model, args.dataset, "validation", vocab, args.batch_size, device
+        ),
+        "validation_opportunity_capture": evaluate_opportunity_capture(
             model, args.dataset, "validation", vocab, args.batch_size, device
         ),
         "streaming": {
@@ -1843,6 +2017,14 @@ def build_parser() -> argparse.ArgumentParser:
     bc = subparsers.add_parser("bc")
     add_training_arguments(bc)
     bc.add_argument("--value-loss-weight", type=float, default=0.5)
+    bc.add_argument(
+        "--card-teacher-filter", default="none", choices=CARD_TEACHER_FILTERS,
+        help="'opportunity' drops filtered teachers' card targets in Fireball opportunity rows",
+    )
+    bc.add_argument(
+        "--opportunity-oversample", type=int, default=1,
+        help="times each Fireball opportunity row appears per epoch",
+    )
     bc.set_defaults(func=run_bc)
 
     offline = subparsers.add_parser("offline")

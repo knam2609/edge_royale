@@ -144,6 +144,16 @@ diagnostics alone do not prove runtime fidelity or candidate ill-conditioning.
 
 Behavior cloning trains the factorized joint action loss and behavior-value critic over the entire compatible corpus. If league ratings exist, it then makes one 10× lower-learning-rate pass over winner-side samples from top-quartile policies.
 
+Fireball opportunity rows ([tactical review](EDGER_TACTICAL_REVIEW.md) proposal 3) are read from the v4 spell globals and the legal card mask:
+- lethal: Fireball is legal and some enemy tower is at or below Fireball tower damage (globals 96–98);
+- cluster: otherwise, Fireball is legal and one cast could hit at least three enemy troops (global 102).
+
+Two BC options act only on those rows. Both default off, and the defaults reproduce earlier BC checkpoints bit for bit.
+- `--card-teacher-filter opportunity` gives the card target of `aggressive`, `defender` and `random` weight 0. Their placement and delay targets stay. Aggressive and defender never cast spells, and random casts at random.
+- `--opportunity-oversample K` repeats every opportunity row K times per epoch, before the row-group shuffle.
+
+BC metrics record the recipe and its row counts (`data_recipe`), and the held-out Fireball capture (`validation_opportunity_capture`). Capture is how often the masked card argmax (lowest index on ties, as at runtime) is Fireball on validation opportunity rows, with the mean Fireball probability alongside.
+
 The critic:
 
 - receives opponent stratum only in its training-only branch
@@ -188,6 +198,21 @@ the live bot, the promotion evaluator or campaigns.
   actor moves only through value-loss gradients into the shared trunk;
   `value_detached` keeps the full actor loss but trains the value head on
   detached trunk features. The loss mode cannot change within an arm.
+- Card KL floor (`train-arm --card-kl-coefficient β`, default 0; tactical
+  proposal 3): adds β × KL(BC parent ‖ model) over the card head on every
+  on-policy row. The forward direction keeps probability on cards the parent
+  plays, so rare cards such as Fireball cannot collapse. β = 0 is the
+  production update exactly. The coefficient cannot change within an arm, and
+  `critic_only` rejects it. Learner metrics report the on-policy card KL to
+  the parent (`conditional.card_kl_to_reference_given_choice`) at any β.
+- `train-arm --heldout <v4 cache>` also measures held-out Fireball capture for
+  the model and its parent after every iteration (see Learning above). A pooled
+  capture rate below the parent's is a diagnostic failure: the arm records
+  `capture_below_parent_iterations` and `capture_diagnostic`, and keeps
+  training. The production `vtrace` learner has no card KL term yet.
+  `heldout` reads the whole cache four times (loss, KL, and capture for the
+  model and the parent): about 2 minutes per iteration on the 9,343-row
+  subset, so it does not scale to the production corpus as written.
 - `--decompose-every N` measures policy, value and entropy gradients
   separately (`torch.autograd.grad` on the same graph) on every Nth update,
   with their trunk cosine. The applied step is still the one combined backward
