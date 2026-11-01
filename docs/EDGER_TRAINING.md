@@ -205,14 +205,24 @@ the live bot, the promotion evaluator or campaigns.
   production update exactly. The coefficient cannot change within an arm, and
   `critic_only` rejects it. Learner metrics report the on-policy card KL to
   the parent (`conditional.card_kl_to_reference_given_choice`) at any β.
+- Targeted floor (`train-arm --card-kl-rows opportunity`, default `all`;
+  proposal 3 option 1): the same β × KL term, with the same per-row weight,
+  only on Fireball opportunity rows (the classes above, read from each
+  on-policy row's globals and card mask). Other rows get no KL term. `all` is
+  the floor above, bit-identical to the October 27 arms. The row set cannot
+  change within an arm. Learner metrics count the on-policy opportunity rows
+  and their card KL (`conditional.opportunity_rows`,
+  `conditional.card_kl_to_reference_given_opportunity`).
 - `train-arm --heldout <v4 cache>` also measures held-out Fireball capture for
   the model and its parent after every iteration (see Learning above). A pooled
   capture rate below the parent's is a diagnostic failure: the arm records
   `capture_below_parent_iterations` and `capture_diagnostic`, and keeps
   training. The production `vtrace` learner has no card KL term yet.
-  `heldout` reads the whole cache four times (loss, KL, and capture for the
-  model and the parent): about 2 minutes per iteration on the 9,343-row
-  subset, so it does not scale to the production corpus as written.
+  `heldout` reads the validation split once and reuses its batches for the
+  loss, the KL and both captures; its report is byte-identical to the earlier
+  four-read version. That is about 28 s per iteration on the 9,343-row subset,
+  down from about 139 s, and it still decodes the whole file, so it does not
+  scale to the production corpus as written.
 - `--decompose-every N` measures policy, value and entropy gradients
   separately (`torch.autograd.grad` on the same graph) on every Nth update,
   with their trunk cosine. The applied step is still the one combined backward

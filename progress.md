@@ -1,6 +1,16 @@
 # Current State
 
-- October 27, 2026 (latest): tactical **proposal 3 (data/learning on v4) is implemented as default-off learner options and ran as a frozen local experiment. Frozen label: `proposal 3 costs play`.** On October 30 the owner chose option 1, the targeted floor (task 1), and had the changes committed locally on `edger-v2-accumulated` after `d28d710` (not pushed). Record: [proposal 3](docs/EDGER_TACTICAL_REVIEW.md#proposal-3-data-and-learning-on-v4--october-27-2026). Evidence: `P` = `~/edge_royale-runs/20261027-proposal3.noindex/` (see its `README.md`).
+- October 30, 2026 (latest): **proposal 3's option 1, the targeted card KL floor, is implemented as a default-off option and ran as a frozen local experiment. Frozen label: `inconclusive`.** On November 2 the owner had the code and doc changes committed locally on `edger-v2-accumulated`, after `20a9c9e` (not pushed), and chose the recommended follow-up, a stronger targeted floor with β = 1 (task 1). Record: [option 1](docs/EDGER_TACTICAL_REVIEW.md#option-1-targeted-floor--october-30-2026). Evidence: `T` = `~/edge_royale-runs/20261030-targeted-floor.noindex/` (see its `README.md`).
+  - **Code** (`scripts/edger-v2-cadence-experiment.py`/`.mjs`, `scripts/edger-v2-training.py`, tests; docs in [training](docs/EDGER_TRAINING.md#4-learning)):
+    - `train-arm --card-kl-rows opportunity` applies the card KL floor, at the same per-row weight, only on Fireball opportunity rows. The default `all` is the October 27 floor, and learner metrics count on-policy opportunity rows and their card KL.
+    - `heldout` reads the validation split once: a byte-identical report in 28 s instead of 139 s, so arms take 6–8 min instead of 17–18.
+    - Iteration 0 of `P`'s `bfo-kl-r0` and `bfo-k0-r0`, rerun under the new code, matches `P` bit for bit (weights, optimizer state, held-out reports). So `P`'s children served as controls.
+  - **Result** (3 arms `bfo-klo-r0/r1/r2`, β = 0.05; the run took 40 min against a 2 h cap):
+    - The targeted floor costs no play: against no floor, +0.001 [−0.021, +0.021] (the global floor cost −0.059). Targeted minus global is +0.059 [+0.038, +0.082], positive in every run.
+    - It does not keep Fireball. Final held-out capture is 0.02/0/0.02, with 0.01–0.04 Fireballs per game, and every arm fails the capture diagnostic.
+    - Opportunity rows are only 1–7% of on-policy rows, and their card KL to the parent rises from 0.06–0.18 to 0.22–0.58. At this β the floor barely anchors them, so the run cannot tell whether holding them would cost play.
+    - Against the old recipe, `PT` = −0.044 [−0.065, −0.024] (per run +0.050, −0.154, −0.029). That is about the `bfo` recipe's cost under RL (−0.045), not the floor's.
+- October 27, 2026: tactical **proposal 3 (data/learning on v4) is implemented as default-off learner options and ran as a frozen local experiment. Frozen label: `proposal 3 costs play`.** On October 30 the owner chose option 1, the targeted floor (above), and had the changes **committed locally as `20a9c9e`** on `edger-v2-accumulated` (not pushed). Record: [proposal 3](docs/EDGER_TACTICAL_REVIEW.md#proposal-3-data-and-learning-on-v4--october-27-2026). Evidence: `P` = `~/edge_royale-runs/20261027-proposal3.noindex/` (see its `README.md`).
   - **Code** (`scripts/edger-v2-training.py`, `scripts/edger-v2-cadence-experiment.py`/`.mjs`, tests; docs in [training](docs/EDGER_TRAINING.md#4-learning)):
     - Fireball opportunity classes come from the v4 globals and the card mask: lethal (globals 96–98) and cluster (≥3 troops, global 102).
     - BC `--card-teacher-filter opportunity` drops the card targets of aggressive, defender and random in those rows, and `--opportunity-oversample K` repeats them.
@@ -96,6 +106,7 @@
 # Source of Truth
 
 - Product/workflow: `AGENTS.md`, `README.md`, `docs/BOT_LEVELS.md`. Training: `docs/EDGER_TRAINING.md`. Roadmap: `docs/IMPLEMENTATION_PLAN.md`, `docs/SPRINT_BACKLOG.md`.
+- Option 1, the targeted floor (October 30): `T` holds the scratch mirror `t1repo` (commit `62f0abc` on `20a9c9e`), the pre-plan checks `repro/` (`run-repro.sh`, `compare.py`/`.json`, `heldout-speed/`), the frozen `plan.md`, `run.sh`, `analyze.py`, seeds and `FROZEN.txt`, 3 arms, 9 evaluations, secondary checks, `analysis.md`, logs, the validation logs, `README.md` and `SHA256SUMS` (1,586 files, `3aa92ff4…`). Its analysis reads `P`'s controls and checks them against `P/SHA256SUMS`.
 - Proposal 3 (October 27): `P` holds the scratch mirror `p3repo` (commit `d8ebe2b`), the pre-plan reproduction `repro/`, the frozen `plan.md`, `run.sh`, `analyze.py`, seeds and `FROZEN.txt`, the hashed continuation `post-cap.sh`/`POSTCAP.txt`, BC checkpoints/models/evaluations, 12 arms, 72 evaluations, secondary checks, `analysis-at-cap.md`, `analysis.md`, the post-hoc `posthoc.py`/`posthoc.md`, logs, `README.md` and `SHA256SUMS` (5,432 files, `052305d0…`).
 - Toolchain restore (October 27): `Z` holds nodejs.org's `SHASUMS256.txt` for v20.20.2, the installed node's hash, the Playwright and browser revisions, `browser-pin-check.mjs` and its output, the smoke and `npm test` logs, `README.md` and `SHA256SUMS`.
 - Observation v3 ablation (October 25–26): `V` holds the scratch mirrors, the four caches, the BC checkpoints, exported models, evaluation, games and placement outputs, `summary.md`, `teacher-placement.txt`, the October 26 validation logs, `README.md` and `SHA256SUMS`.
@@ -137,7 +148,8 @@
   - The placement-tie cause is now established: a 3×3 receptive field, no coordinate or geometry channels, and the lowest-index tie-break. 47.9% of corpus troop rows are structurally tied.
   - Fireball causes are measured but not fixed. Spell-opportunity inputs do not fix it under BC or after six RL iterations (October 26).
   - Proposal 3 (October 27) fixes it at BC (held-out capture 24–30%), but RL erases it without a floor. A global card KL floor (β = 0.05) keeps some Fireball, but costs about 0.1 primary, because it anchors every card choice to the weaker BC parent. One β, one oversampling factor (4), and 102 held-out opportunity rows (18 lethal).
-  - `train-arm --heldout` reads the whole cache four times per iteration, about 2 minutes on the subset, so it does not scale to the production corpus as written. The production `vtrace` learner has no card KL option.
+  - Option 1 (October 30): a card KL floor on opportunity rows only (β = 0.05) costs no play but does not keep Fireball (final capture 0–2%). It barely anchors those rows, which are 1–7% of on-policy rows, so whether holding them costs play is untested. One β and one row mask were tried.
+  - `train-arm --heldout` now reads the validation split once (about 28 s per iteration on the subset), but it still decodes the whole file, so it does not scale to the production corpus as written. The production `vtrace` learner has no card KL option.
   - Observation v4 keeps the structural ties, so proposal 1 is not met. v3's geometry removed them but cost play at BC (about −0.3 against the heuristic) and, on average, after six RL iterations (D3 −0.109), with no return of back-row play.
   - The spell globals' RL gain over v2 (+0.154) is a lean: it is not established across three training runs, and its mechanism is unmeasured, since Fireball use did not change.
   - Both experiments use one 160-episode subset, development seeds and a diagnostic recipe.
@@ -153,9 +165,10 @@
 # Next Tasks
 
 1. Finish the approved [tactical proposals](docs/EDGER_TACTICAL_REVIEW.md#proposals--approved-october-25). New models must pass the new parity contract; all ablation, RL and v4 models do locally.
-   - **Next: option 1 of the [proposal 3 options](docs/EDGER_TACTICAL_REVIEW.md#proposal-3-data-and-learning-on-v4--october-27-2026), the targeted floor** (owner choice, October 30; frozen label `proposal 3 costs play`, October 27).
-     - Keep the `bfo` BC recipe and apply the card KL only on opportunity rows, in one bounded local comparison against this run's `bfo-k0` children (about 1.5 h).
-     - Before another RL run, make `heldout` cheaper (one pass, or a pre-filtered opportunity file), and size the wall cap from measured arm and evaluation times: arms took 17–18 min with `--heldout`, and evaluations about 6 min per child and 5 min per parent.
+   - **Next: the stronger targeted floor**, the [option 1 follow-up](docs/EDGER_TACTICAL_REVIEW.md#option-1-targeted-floor--october-30-2026) the owner chose on November 2 (option 1's frozen label was `inconclusive`, October 30).
+     - β = 1 on opportunity rows (20× per row; 0.2–1.4× the global floor's total KL weight). One bounded local comparison, 3 arms against `T`'s and `P`'s controls, about 40 min.
+     - The alternatives not chosen: stop at BC and move to proposal 4, or keep the old recipe for RL and record Fireball capture as unresolved.
+     - Measured costs for sizing a cap: an arm takes 6–8 min with the one-read `--heldout`, a child evaluation 4.5–7.5 min, and the secondary checks about 30 s per child.
      - The v2-observation control was not carried, because the opportunity classes come from the v4 globals. The spell globals' lean stays a lean.
      - Run locally; cloud, push and promotion still need separate approval.
    - Representation (proposals 1–2) is done as [observation v4](docs/EDGER_TACTICAL_REVIEW.md#spell-globals-only-v4--october-26-2026), committed locally as `43d037c` (October 27). Proposal 1 is closed as not met.
@@ -178,7 +191,19 @@
 
 # Validation
 
-October 27, 2026 (latest), proposal 3, from `~/Developer/edge_royale` with `~/.local/bin` (arm64 Node v20.20.2) first on `PATH` and `/usr/local/bin/python3` (arm64, PyTorch 2.11.0); `P` is as above.
+October 30, 2026 (latest), option 1 (the targeted floor), from `~/Developer/edge_royale` with `~/.local/bin` (arm64 Node v20.20.2) first on `PATH` and `/usr/local/bin/python3` (arm64, PyTorch 2.11.0); `T` is as above. The clock dates below are UTC (October 29).
+- `npm test` passed 227/227 in 264 s on the final tree (`T/npm-test.log`).
+- `OMP_NUM_THREADS=1 /usr/local/bin/python3 -m unittest tests.test_edger_training_streaming tests.test_edger_v2_cadence` passed 39/39, 3 of them new (`T/python-tests.log`). `node --test tests/edger-v2-policy.test.js` passed 9/9.
+- Pre-plan checks:
+  - The one-read `heldout` output is `cmp`-identical to the four-read output and to `P/arms/bfo-k0-r0/iter5/heldout.json` (`T/repro/heldout-speed/`).
+  - `bash repro/run-repro.sh`: iteration 0 of `bfo-kl-r0` and `bfo-k0-r0` under `t1repo` matches `P` (24/24 tensors, optimizer state, held-out reports; `T/repro/compare.json`).
+- Experiment:
+  - `bash run.sh` (frozen at 14:33:09Z; `FROZEN.txt` re-verified before analysis) ran 2026-10-29T14:33:20Z–15:13:36Z. Every step exited 0, with zero illegal attempts and deterministic evaluations, and all three children pass parity (worst 0.381 of tolerance).
+  - `python3 -I analyze.py > analysis.md`, run after the re-verification. Its control-file checks against `P/SHA256SUMS` passed, and it reproduces `P`'s contrasts exactly.
+- `shasum -a 256 -c SHA256SUMS` in `T` passes 1,586/1,586. `git diff --check` passes. The repository's `src/`, `scripts/` and `tests/` equal `T/t1repo`.
+- Bot-bench and smoke were not run: no live-bot, runtime or client code changed (learner and diagnostic scripts only).
+
+October 27, 2026, proposal 3, from `~/Developer/edge_royale` with `~/.local/bin` (arm64 Node v20.20.2) first on `PATH` and `/usr/local/bin/python3` (arm64, PyTorch 2.11.0); `P` is as above.
 - `npm test` passed 227/227 in 235 s before the mirror was made (`P/npm-test.log`), and 227/227 in 349 s on the final tree (`P/npm-test-final.log`).
 - `OMP_NUM_THREADS=1 /usr/local/bin/python3 -m unittest tests.test_edger_training_streaming tests.test_edger_v2_cadence` passed 36/36 (9 new tests), before and after the final edit. `npm test` also runs the cadence file.
 - `node --test tests/edger-v2-policy.test.js` passed 9/9. It pins the learner's Fireball constants to the observation layout.

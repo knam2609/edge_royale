@@ -357,6 +357,65 @@ class CadenceLearnerTests(unittest.TestCase):
                     stratum=0, batch_size=16, value_loss_weight=0.5, entropy_bonus=0.001, **invalid,
                 )
 
+    def test_the_targeted_card_kl_covers_only_fireball_opportunity_rows(self) -> None:
+        _, episode = synthetic_episode(50, mode="learned", seed=37)
+        reference = seeded_policy(7)
+        batch = cadence.episode_batch(episode, 0, 50, VOCAB["edger"])
+        opportunity = training.fireball_opportunity(
+            batch.global_features, batch.card_mask
+        ) != training.OPPORTUNITY_NONE
+        self.assertTrue(0 < int(opportunity.sum()) < 50, "fixture must mix opportunity rows")
+        model = seeded_policy()
+        update = cadence.train_cadence_episode(
+            model, episode, torch.optim.Adam(model.parameters(), lr=1e-3), delay_mode="learned",
+            stratum=VOCAB["edger"], batch_size=16, value_loss_weight=0.5, entropy_bonus=0.001,
+            reference=reference, card_kl_coefficient=0.05, card_kl_rows="opportunity", decompose=True,
+        )
+        # The penalty's gradient is that of the same per-row KL, opportunity rows only.
+        fresh = seeded_policy()
+        with torch.no_grad():
+            reference_card = training.forward_batch(reference, batch)["card"]
+        kl = training.categorical_kl(reference_card, training.forward_batch(fresh, batch)["card"], batch.card_mask)
+        penalty = 0.05 * kl[opportunity].sum() / 50
+        grads = torch.autograd.grad(penalty, list(fresh.parameters()), allow_unused=True)
+        expected = cadence.grouped_l2([(name, grad) for (name, _), grad in zip(fresh.named_parameters(), grads)])
+        measured = update["gradient_decomposition"]["group_norms"]["card_kl"]
+        for group in ("card", "trunk"):
+            self.assertGreater(expected[group], 0.0, group)
+            self.assertTrue(math.isclose(measured[group], expected[group], rel_tol=1e-4), group)
+        self.assertEqual(update["opportunity_rows"], int(opportunity.sum()))
+        self.assertTrue(math.isclose(
+            update["card_kl_to_reference_given_opportunity"], float(kl.detach()[opportunity].mean()), rel_tol=1e-5))
+        with self.assertRaises(ValueError):
+            cadence.train_cadence_episode(
+                model, episode, torch.optim.Adam(model.parameters()), delay_mode="learned",
+                stratum=0, batch_size=16, value_loss_weight=0.5, entropy_bonus=0.001,
+                reference=reference, card_kl_coefficient=0.05, card_kl_rows="choice",
+            )
+
+    def test_the_targeted_card_kl_without_opportunity_rows_is_the_production_update(self) -> None:
+        _, episode = synthetic_episode(50, mode="learned", seed=41)
+        episode["global"][:, list(training.FIREBALL_LETHAL_GLOBALS)] = 0.0
+        episode["global"][:, training.FIREBALL_TROOP_HITS_GLOBAL] = 0.0
+        plain = seeded_policy()
+        targeted = copy.deepcopy(plain)
+        reference = seeded_policy(7)
+        plain_update = cadence.train_cadence_episode(
+            plain, episode, torch.optim.Adam(plain.parameters(), lr=1e-3), delay_mode="learned",
+            stratum=VOCAB["edger"], batch_size=16, value_loss_weight=0.5, entropy_bonus=0.001,
+            reference=reference,
+        )
+        targeted_update = cadence.train_cadence_episode(
+            targeted, episode, torch.optim.Adam(targeted.parameters(), lr=1e-3), delay_mode="learned",
+            stratum=VOCAB["edger"], batch_size=16, value_loss_weight=0.5, entropy_bonus=0.001,
+            reference=reference, card_kl_coefficient=0.05, card_kl_rows="opportunity",
+        )
+        self.assertEqual(plain_update["gradient_norm"], targeted_update["gradient_norm"])
+        for (name, left), (_, right) in zip(plain.named_parameters(), targeted.named_parameters()):
+            self.assertTrue(torch.equal(left, right), name)
+        self.assertEqual(targeted_update["opportunity_rows"], 0)
+        self.assertIsNone(targeted_update["card_kl_to_reference_given_opportunity"])
+
     def test_heldout_capture_below_the_parent_is_flagged(self) -> None:
         def capture(rows: int, argmax: int, p: float | None) -> dict:
             entry = {
@@ -486,7 +545,7 @@ class CadenceLearnerTests(unittest.TestCase):
                 arm="test", iteration=0, out=str(root / "out.pt"),
                 metrics_out=str(root / "metrics.json"), learning_rate=1e-3, batch_size=16,
                 value_loss_weight=0.5, entropy_bonus=0.001, loss_mode="full",
-                card_kl_coefficient=0.0, decompose_every=2, seed=1,
+                card_kl_coefficient=0.0, card_kl_rows="all", decompose_every=2, seed=1,
             )
             loader = lambda path: episodes[Path(path).stem]
             with mock.patch.object(cadence, "load_cadence_episode", loader), \
@@ -501,12 +560,23 @@ class CadenceLearnerTests(unittest.TestCase):
                         **arguments, "checkpoint": str(root / "out.pt"), "iteration": 1,
                         "out": str(root / "out1.pt"), "card_kl_coefficient": 0.05,
                     }))
+                with self.assertRaisesRegex(ValueError, "card KL rows changed"):
+                    cadence.run_train_iteration(SimpleNamespace(**{
+                        **arguments, "checkpoint": str(root / "out.pt"), "iteration": 1,
+                        "out": str(root / "out1.pt"), "card_kl_rows": "opportunity",
+                    }))
             metrics = json.loads((root / "metrics.json").read_text())
             saved = torch.load(root / "out.pt", weights_only=False)
             self.assertEqual(saved["loss_mode"], "critic_only")
             self.assertEqual(saved["card_kl_coefficient"], 0.0)
+            self.assertEqual(saved["card_kl_rows"], "all")
             self.assertEqual(metrics["loss_mode"], "critic_only")
             self.assertEqual(metrics["card_kl_coefficient"], 0.0)
+            self.assertEqual(metrics["card_kl_rows"], "all")
+            self.assertEqual(
+                metrics["conditional"]["opportunity_rows"],
+                sum(update["opportunity_rows"] for update in metrics["updates"]),
+            )
             # Measured against the parent even without the penalty; the trunk moved.
             self.assertGreater(metrics["conditional"]["card_kl_to_reference_given_choice"], 0.0)
             self.assertEqual(metrics["gradient_decomposition"]["episodes"], 2)

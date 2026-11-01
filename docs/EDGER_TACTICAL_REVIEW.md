@@ -10,7 +10,8 @@ changed, and nothing here selects a model or clears a gate. The owner approved
 the [proposals](#proposals--approved-october-25) on
 October 25. Proposals 1–2 were implemented, ablated and compared under RL later (see
 [below](#proposals-12-observation-v3-and-bc-ablation--october-2526-2026)),
-and proposal 3 followed ([below](#proposal-3-data-and-learning-on-v4--october-27-2026));
+and proposal 3 followed ([below](#proposal-3-data-and-learning-on-v4--october-27-2026)),
+with its option 1, a [targeted floor](#option-1-targeted-floor--october-30-2026), on October 30;
 those changes are outside this read-only investigation.
 
 - `X` = `~/edge_royale-runs/20261025-tactical-parity-warmup.noindex/`. Scripts and outputs are in `X/tactical/`; models are in `X/models/`; the corpus subset is in `X/corpus/`.
@@ -150,7 +151,7 @@ implemented as observation schema v3 and committed locally as a checkpoint. Afte
 [BC ablation](#proposals-12-observation-v3-and-bc-ablation--october-2526-2026) the owner chose a bounded local RL
 comparison (October 26). It [reported](#rl-comparison--october-26-2026) inconclusive by its frozen rule,
 and the owner then chose spell globals only: proposal 2 lands as
-[observation schema v4](#spell-globals-only-v4--october-26-2026), and proposal 1's geometry is dropped. Proposal 3 is implemented as default-off learner options and tested in a [local experiment](#proposal-3-data-and-learning-on-v4--october-27-2026) (October 27). Proposal 4 is not implemented. Each lands as its own change, with its own tests and fresh provenance.
+[observation schema v4](#spell-globals-only-v4--october-26-2026), and proposal 1's geometry is dropped. Proposal 3 is implemented as default-off learner options and tested in a [local experiment](#proposal-3-data-and-learning-on-v4--october-27-2026) (October 27), and the owner's option 1, a [targeted floor](#option-1-targeted-floor--october-30-2026), followed (October 30). Proposal 4 is not implemented. Each lands as its own change, with its own tests and fresh provenance.
 None lowers a floor or adds a handcrafted spell or placement override. The
 approval does not cover pushing, cloud actions or promotion.
 
@@ -327,9 +328,10 @@ Intervals below are 95% bootstraps over evaluation seeds.
 
 ## Proposal 3: data and learning on v4 — October 27, 2026
 
-**Status: implemented locally as default-off options. The frozen local
-experiment labels it `proposal 3 costs play`, after a recorded post-cap
-continuation; the owner decides (options below).** Evidence is in `P` = `~/edge_royale-runs/20261027-proposal3.noindex/`
+**Status: implemented locally as default-off options (committed locally as
+`20a9c9e`, October 30). The frozen local experiment labels it `proposal 3
+costs play`, after a recorded post-cap continuation. The owner chose option 1,
+the [targeted floor](#option-1-targeted-floor--october-30-2026) (October 30).** Evidence is in `P` = `~/edge_royale-runs/20261027-proposal3.noindex/`
 (`plan.md`, `FROZEN.txt`, `analysis.md`, `posthoc.md`, `README.md`, `SHA256SUMS`).
 
 **What changed** (`scripts/edger-v2-training.py`, `scripts/edger-v2-cadence-experiment.py` and `.mjs`; see [training](EDGER_TRAINING.md#4-learning)):
@@ -400,6 +402,65 @@ continuation; the owner decides (options below).** Evidence is in `P` = `~/edge_
 3. **Stop at BC.** Keep the options (default off) and move to proposal 4. Its corpus-derived opportunity bank would then measure Fireball capture in the gate.
 4. **Revert proposal 3.** Not recommended: the options are default-off, bit-identical at default, and tested.
 
+### Option 1: targeted floor — October 30, 2026
+
+**Status: implemented locally as a default-off option; the frozen local
+experiment is labelled `inconclusive`. On November 2 the owner had it
+committed locally and chose option 1 below, the stronger targeted floor.**
+Evidence is in `T` = `~/edge_royale-runs/20261030-targeted-floor.noindex/`
+(`plan.md`, `FROZEN.txt`, `analysis.md`, `README.md`, `SHA256SUMS`).
+
+**What changed** (see [training](EDGER_TRAINING.md#4-learning)):
+- `train-arm --card-kl-rows opportunity` applies the card KL floor only on Fireball opportunity rows, with the same per-row weight (β divided by the episode's rows). Other rows get no KL term. The default `all` is the October 27 floor.
+- Learner metrics count on-policy opportunity rows and their card KL to the parent.
+- `heldout` reads the validation split once instead of four times. Its report is byte-identical, in 28 s instead of 139 s, so an arm takes 6–8 minutes instead of 17–18.
+- **Reproduction:** iteration 0 of `P`'s `bfo-kl-r0` and `bfo-k0-r0`, rerun under the new code, matches `P`'s checkpoints (24/24 tensors, optimizer state) and held-out reports exactly (`T/repro/compare.json`). So `P`'s children are valid controls and were not rerun.
+
+**Experiment** (frozen in `T/plan.md` before any output):
+- Arms: `bfo-klo-r0/r1/r2`, the `bfo` parents with β = 0.05 on opportunity rows only, otherwise `P`'s recipe and seed plans.
+- Evaluation: `P`'s protocol. The analysis checks `P`'s files against `P/SHA256SUMS` and reuses `P`'s bootstrap draws, so `P`'s contrasts reproduce exactly.
+- Labels: as in `P`, with the full proposal now `PT` = child(`bfo-klo`) − child(`b0-k0`). One label was added, `targeted floor keeps play, capture below parent`, because every `P` arm with a `bfo` parent failed the capture diagnostic.
+
+**Run.** UTC October 29, 14:33–15:13 (40 min, cap 2 h).
+- All three arms completed six iterations, and every step exited 0.
+- No game had an illegal attempt, and every evaluation was deterministic.
+- All three children pass parity (worst 0.381 of tolerance).
+
+**The targeted floor costs no play, but it does not keep Fireball.**
+
+| Children, mean of runs | Primary | Final held-out capture | Final mean P(FB) | Fireballs per game |
+|---|---|---|---|---|
+| `b0-k0` (old recipe) | 0.845 | 0 | 0.005–0.019 | 0.00 |
+| `bfo-k0` (no floor) | 0.800 | 0 | 0.005–0.019 | 0.00 |
+| `bfo-kl` (global floor) | 0.741 | 0.108 | 0.143–0.223 | 0.24 |
+| `bfo-klo` (targeted floor) | 0.800 | 0.013 (0.020, 0.000, 0.020) | 0.090–0.125 | 0.02 (0.01, 0.04, 0.01) |
+
+- **Play:** the targeted floor's cost against no floor is +0.001 [−0.021, +0.021]; the global floor's was −0.059 [−0.082, −0.037]. Targeted minus global is +0.059 [+0.038, +0.082], positive in every run.
+- **Against the old recipe:** `PT` is −0.044 [−0.065, −0.024] run-averaged; per run +0.050, −0.154 and −0.029.
+  - That is about `P`'s data-under-RL cost, child(`bfo-k0`) − child(`b0-k0`) = −0.045. So the remaining gap is the `bfo` recipe's cost under RL, not the floor's.
+- **Fireball:** held-out capture falls from the parents' 24–30% to 0–2% by iteration 5, and every arm fails the capture diagnostic. The children keep more Fireball probability than without a floor, but it is rarely the argmax.
+- **Why the floor is weak:** opportunity rows are only 1.0%, 7.0% and 3.2% of each arm's on-policy rows (87–228 per iteration).
+  - On those rows the card KL to the parent rises from 0.06–0.18 to 0.22–0.58 nats over six iterations, above its rise over all choice rows (0.03–0.10 to 0.10–0.43).
+  - The global floor held the choice-row card KL at 0.02–0.07. The shared trunk and card head move with the ordinary rows, and β = 0.05 on 1–7% of rows does not hold them back.
+- Tactical aggregates are 0.37–0.39, and back-row placement is 44–50%, as in `P`.
+
+**Frozen label: `inconclusive`.**
+- Run-averaged `PT` is below −0.02, but not negative in every run (r0 is +0.050).
+- The capture gain is 0.013 against 0, and all three arms fail the capture diagnostic.
+
+**Reading.** The October 27 floor's play cost did not appear when the floor was
+restricted to opportunity rows. But at this β the restricted floor hardly
+anchors anything, so this run cannot tell whether holding Fireball on
+opportunity rows alone would cost play.
+
+**Options for the owner:**
+1. **Stronger targeted floor** (recommended):
+   - The same comparison with β = 1 on opportunity rows (20× per row).
+   - Given the measured 1–7% share, that puts 0.2–1.4× the global floor's total KL weight on opportunity rows alone.
+   - It is one bounded local comparison, 3 arms against these controls, about 40 min. It tests whether holding the opportunity rows costs play.
+2. **Stop at BC** and move to proposal 4, keeping the options default-off.
+3. **Keep the old recipe** for RL (`b0-k0` children remain the best-scoring) and record Fireball capture as unresolved.
+
 ## Limits
 
 - The corpus is a 160-episode subset, not the production corpus.
@@ -410,6 +471,7 @@ continuation; the owner decides (options below).** Evidence is in `P` = `~/edge_
 - The RL suppression mechanism is inferred from model outputs, not traced through training.
 - Proposal 3 tested one KL coefficient (0.05) and one oversampling factor (4), on the same subset, development seeds and three training runs. Its held-out capture uses 102 validation rows (18 lethal).
 - The post-cap continuation is a recorded deviation from the proposal 3 plan; the frozen label at the cap was inconclusive only because outputs were missing.
+- Option 1 tested one coefficient (0.05) and one row mask, with `P`'s parents, seeds and controls; the controls were trained on October 26–27 under code shown to reproduce them.
 
 ## Reproduction
 
@@ -484,4 +546,16 @@ python3 -I analyze.py > analysis-at-cap.md
 bash post-cap.sh                         # recorded continuation
 python3 -I analyze.py > analysis.md      # frozen analysis, completed output
 python3 -I posthoc.py > posthoc.md       # post-hoc, not frozen
+```
+
+Option 1, the targeted floor (`T/README.md` describes every file). `t1repo` is
+a scratch mirror of the repository at `20a9c9e` with the option 1 working tree
+committed on top (`62f0abc`). `run.sh` sets its own `PATH` and skips finished steps.
+
+```bash
+T=~/edge_royale-runs/20261030-targeted-floor.noindex
+cd "$T"
+bash repro/run-repro.sh                  # pre-plan check: iteration 0 of two P arms
+bash run.sh                              # frozen; writes run.log and DONE
+python3 -I analyze.py > analysis.md      # frozen
 ```

@@ -808,6 +808,44 @@ class FireballOpportunityRecipeTest(TrainingFixture):
                 self.assertEqual(entry["capture_rate"], 1.0 if captured else 0.0, name)
                 self.assertAlmostEqual(entry["mean_p_fireball"], p, places=6)
 
+    def test_heldout_batches_come_from_one_read_of_the_validation_split(self) -> None:
+        spec = importlib.util.spec_from_file_location(
+            "edger_v2_cadence_for_streaming_test", ROOT / "scripts" / "edger-v2-cadence-experiment.py"
+        )
+        cadence = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = cadence
+        spec.loader.exec_module(cadence)
+        rows = []
+        for index in range(80):
+            split = "train" if index % 5 == 0 else "validation"
+            features = (
+                {"lethal": (index % 3,)} if index % 7 == 0
+                else {"fireball_hits": 3} if index % 4 == 0
+                else {"fireball_hits": 2}
+            )
+            rows.append(opportunity_row(index, split, "edger", index % 9, **features))
+        dataset = self.root / "heldout.parquet"
+        self.prepare(rows, dataset)
+        vocab = {"edger_heuristic": 0}
+        learner = cadence.training
+        reads = mock.Mock(wraps=learner.iter_parquet_rows)
+        with mock.patch.object(learner, "iter_parquet_rows", reads):
+            validation, opportunity = cadence.heldout_batches(dataset, vocab)
+        self.assertEqual(reads.call_count, 1)
+        for found, predicate in (
+            (validation, None),
+            (opportunity, lambda row: learner.row_fireball_opportunity(row) != learner.OPPORTUNITY_NONE),
+        ):
+            expected = list(learner.batches_for_parquet(
+                dataset, vocab, 32, split="validation", shuffle=False, seed=1, predicate=predicate,
+            ))
+            self.assertEqual(len(found), len(expected))
+            for left, right in zip(found, expected):
+                for field, value in left.__dict__.items():
+                    self.assertTrue(torch.equal(value, getattr(right, field)), field)
+        self.assertEqual([batch.card.shape[0] for batch in validation], [32, 32])
+        self.assertGreater(sum(batch.card.shape[0] for batch in opportunity), 0)
+
     def test_bc_records_the_data_recipe_and_held_out_capture(self) -> None:
         rows = [
             opportunity_row(0, "train", "aggressive", 1, lethal=(0,)),

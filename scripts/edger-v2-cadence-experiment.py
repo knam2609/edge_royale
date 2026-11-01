@@ -31,7 +31,7 @@ import sys
 import time
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Iterator
 
 import numpy as np
 import torch
@@ -51,6 +51,9 @@ DIAGNOSTIC_CHECKPOINT_SCHEMA = "edger_v2_cadence_diagnostic_checkpoint_v1"
 PROMOTION_STATUS = "diagnostic_only_not_promotable"
 DELAY_MODES = ("learned", "fixed_one_tick")
 LOSS_MODES = ("full", "critic_only", "value_detached")
+# Rows the card KL penalty covers: every row, or only Fireball opportunity rows
+# (tactical review proposal 3, option 1, the targeted floor).
+CARD_KL_ROWS = ("all", "opportunity")
 DTYPES = {
     "Int32Array": np.dtype("<i4"),
     "Int16Array": np.dtype("<i2"),
@@ -315,6 +318,7 @@ def train_cadence_episode(
     decompose: bool = False,
     reference: training.EdgerV2Policy | None = None,
     card_kl_coefficient: float = 0.0,
+    card_kl_rows: str = "all",
 ) -> dict[str, Any]:
     """One production-style V-trace update from one fresh episode.
 
@@ -330,9 +334,13 @@ def train_cadence_episode(
     card head (tactical review proposal 3). The forward direction keeps
     probability on every card the BC reference plays, so rare cards cannot
     collapse. Zero leaves the update exactly the production one.
+    ``card_kl_rows="opportunity"`` applies it, with the same per-row weight,
+    only on Fireball opportunity rows, so ordinary card choices learn freely.
     """
     if loss_mode not in LOSS_MODES:
         raise ValueError(f"unknown loss mode {loss_mode}")
+    if card_kl_rows not in CARD_KL_ROWS:
+        raise ValueError(f"unknown card KL rows {card_kl_rows}")
     if card_kl_coefficient < 0:
         raise ValueError("card KL coefficient must not be negative")
     if card_kl_coefficient > 0 and reference is None:
@@ -381,6 +389,8 @@ def train_cadence_episode(
     head_entropy = {"card": 0.0, "placement": 0.0, "delay": 0.0}
     card_entropy_given_choice = 0.0
     card_kl_total = 0.0
+    opportunity_card_kl_total = 0.0
+    opportunity_rows = 0
     value_loss_total = 0.0
     for start, end in ranges:
         batch = episode_batch(episode, start, end, stratum)
@@ -406,8 +416,12 @@ def train_cadence_episode(
             # contribute exactly zero. Detached unless it enters the loss.
             card = logits["card"] if card_kl_coefficient > 0 else logits["card"].detach()
             card_kl = training.categorical_kl(reference_card, card, batch.card_mask)
+            opportunity = training.fireball_opportunity(
+                batch.global_features, batch.card_mask
+            ) != training.OPPORTUNITY_NONE
+            penalized_kl = card_kl if card_kl_rows == "all" else card_kl[opportunity]
             if card_kl_coefficient > 0:
-                loss = loss + card_kl_coefficient * card_kl.sum() / count
+                loss = loss + card_kl_coefficient * penalized_kl.sum() / count
         if not torch.isfinite(loss):
             raise ValueError("non-finite cadence V-trace loss; no candidate accepted")
         if component_grads is not None:
@@ -417,7 +431,7 @@ def train_cadence_episode(
                 "entropy": -entropy_bonus * entropy.sum() / count,
             }
             if card_kl_coefficient > 0:
-                terms["card_kl"] = card_kl_coefficient * card_kl.sum() / count
+                terms["card_kl"] = card_kl_coefficient * penalized_kl.sum() / count
             for component in components:
                 grads = torch.autograd.grad(
                     terms[component], parameters, retain_graph=True, allow_unused=True
@@ -436,6 +450,8 @@ def train_cadence_episode(
             card_entropy_given_choice += float(entropies["card"][batch.card_mask[:, 1:].any(dim=1)].sum())
             if card_kl is not None:
                 card_kl_total += float(card_kl.sum())
+                opportunity_card_kl_total += float(card_kl[opportunity].sum())
+                opportunity_rows += int(opportunity.sum())
             value_loss_total += float(value_loss)
     group_norms = group_gradient_norms(model)
     decomposition = None
@@ -496,6 +512,12 @@ def train_cadence_episode(
         # On-policy KL(reference || model) over the card head, during the update.
         "card_kl_to_reference_given_choice": (
             card_kl_total / choice_rows if reference is not None and choice_rows else None
+        ),
+        # Fireball opportunity rows, counted when a reference is given.
+        "opportunity_rows": opportunity_rows if reference is not None else None,
+        "card_kl_to_reference_given_opportunity": (
+            opportunity_card_kl_total / opportunity_rows
+            if reference is not None and opportunity_rows else None
         ),
         "value_loss_vs_vtrace": value_loss_total / count,
         "critic_mse_vs_vtrace_before": float(np.mean(residual**2)),
@@ -637,6 +659,8 @@ def run_train_iteration(args: argparse.Namespace) -> None:
             raise ValueError("loss mode changed within an arm")
         if checkpoint.get("card_kl_coefficient", 0.0) != args.card_kl_coefficient:
             raise ValueError("card KL coefficient changed within an arm")
+        if checkpoint.get("card_kl_rows", "all") != args.card_kl_rows:
+            raise ValueError("card KL rows changed within an arm")
         optimizer.load_state_dict(checkpoint["optimizer_state"])
         optimizer_restored = True
     collection = json.loads(Path(args.collection).read_text())
@@ -665,6 +689,7 @@ def run_train_iteration(args: argparse.Namespace) -> None:
             decompose=args.decompose_every > 0 and index % args.decompose_every == 0,
             reference=parent,
             card_kl_coefficient=args.card_kl_coefficient,
+            card_kl_rows=args.card_kl_rows,
         )
         advantages.extend(update.pop("_advantages"))
         ratios.extend(update.pop("_ratios"))
@@ -691,6 +716,7 @@ def run_train_iteration(args: argparse.Namespace) -> None:
     total_rows = sum(update["rows"] for update in updates)
     choice_rows = int(choice.sum())
     play_rows = int(play.sum())
+    opportunity_rows = sum(update["opportunity_rows"] for update in updates)
     decomposed = [update["gradient_decomposition"] for update in updates if update["gradient_decomposition"]]
     cosines = [item["trunk_cosine_policy_value"] for item in decomposed if item["trunk_cosine_policy_value"] is not None]
     metrics = {
@@ -704,6 +730,7 @@ def run_train_iteration(args: argparse.Namespace) -> None:
         "value_loss_weight": args.value_loss_weight,
         "entropy_bonus": args.entropy_bonus,
         "card_kl_coefficient": args.card_kl_coefficient,
+        "card_kl_rows": args.card_kl_rows,
         "optimizer_restored": optimizer_restored,
         "budget": {
             "episodes": len(updates),
@@ -771,6 +798,12 @@ def run_train_iteration(args: argparse.Namespace) -> None:
                     for update in updates if update["choice_rows"]) / choice_rows
                 if choice_rows else None
             ),
+            "opportunity_rows": opportunity_rows,
+            "card_kl_to_reference_given_opportunity": (
+                sum(update["card_kl_to_reference_given_opportunity"] * update["opportunity_rows"]
+                    for update in updates if update["opportunity_rows"]) / opportunity_rows
+                if opportunity_rows else None
+            ),
             "importance_ratio_given_choice": {
                 **distribution(ratio_array[choice]),
                 "fraction_clipped_above_1": float(np.mean(ratio_array[choice] > 1.0)) if choice_rows else None,
@@ -818,6 +851,7 @@ def run_train_iteration(args: argparse.Namespace) -> None:
         "delay_mode": args.delay_mode,
         "loss_mode": args.loss_mode,
         "card_kl_coefficient": args.card_kl_coefficient,
+        "card_kl_rows": args.card_kl_rows,
         "iteration": args.iteration,
         "seed": args.seed,
         "model_state": model.state_dict(),
@@ -972,22 +1006,43 @@ def opportunity_capture_against_parent(
     }
 
 
+def heldout_batches(
+    dataset: str | Path, vocab: dict[str, int]
+) -> tuple[list[training.Batch], list[training.Batch]]:
+    """Validation batches and Fireball opportunity batches from one read.
+
+    Both equal what training.batches_for_parquet yields for the validation
+    split, without and with the opportunity predicate, in the same order.
+    """
+    opportunity_rows: list[dict[str, Any]] = []
+
+    def validation_rows() -> Iterator[dict[str, Any]]:
+        for row in training.iter_parquet_rows(dataset, split="validation"):
+            if training.row_fireball_opportunity(row) != training.OPPORTUNITY_NONE:
+                opportunity_rows.append(row)
+            yield row
+
+    validation = list(training.batches_from_rows(validation_rows(), vocab, 32))
+    return validation, list(training.batches_from_rows(opportunity_rows, vocab, 32))
+
+
 def run_heldout(args: argparse.Namespace) -> None:
     checkpoint, model = load_any_checkpoint(args.checkpoint)
     _, parent = load_any_checkpoint(args.parent)
     vocab = checkpoint["opponent_stratum_vocabulary"]
     device = torch.device("cpu")
+    validation, opportunity = heldout_batches(args.dataset, vocab)
     report = {
         "checkpoint": str(Path(args.checkpoint).resolve()),
         "dataset": str(Path(args.dataset).resolve()),
         "dataset_sha256": training.sha256_file(args.dataset),
         "split": "validation",
         "note": "Teacher-label imitation loss on the 20260921 frozen subset; not the RL objective.",
-        "validation": training.evaluate_loss_parquet(model, args.dataset, "validation", vocab, 32, device),
-        "kl_from_parent": training.evaluate_kl_parquet(parent, model, args.dataset, "validation", vocab, 32, device),
+        "validation": training.evaluate_loss_batches(model, validation, device),
+        "kl_from_parent": training.evaluate_kl_batches(parent, model, validation, device),
         "opportunity_capture": opportunity_capture_against_parent(
-            training.evaluate_opportunity_capture(model, args.dataset, "validation", vocab, 32, device),
-            training.evaluate_opportunity_capture(parent, args.dataset, "validation", vocab, 32, device),
+            training.evaluate_opportunity_capture_batches(model, opportunity, device),
+            training.evaluate_opportunity_capture_batches(parent, opportunity, device),
         ),
     }
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
@@ -1016,6 +1071,10 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument(
         "--card-kl-coefficient", type=float, default=0.0,
         help="weight of KL(parent || model) over the card head (0 = the production update)",
+    )
+    train.add_argument(
+        "--card-kl-rows", default="all", choices=CARD_KL_ROWS,
+        help="rows the card KL covers: all, or only Fireball opportunity rows",
     )
     train.add_argument(
         "--decompose-every", type=int, default=0,

@@ -16,7 +16,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, Iterable, Iterator
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -489,15 +489,25 @@ def batches_for_parquet(
     predicate: Callable[[dict[str, Any]], bool] | None = None,
     expand: Callable[[dict[str, Any]], list[dict[str, Any]]] | None = None,
 ) -> Iterator[Batch]:
+    yield from batches_from_rows(
+        iter_parquet_rows(
+            path,
+            split=split,
+            shuffle=shuffle,
+            seed=seed,
+            predicate=predicate,
+            expand=expand,
+        ),
+        vocab,
+        batch_size,
+    )
+
+
+def batches_from_rows(
+    rows: Iterable[dict[str, Any]], vocab: dict[str, int], batch_size: int
+) -> Iterator[Batch]:
     pending: list[dict[str, Any]] = []
-    for row in iter_parquet_rows(
-        path,
-        split=split,
-        shuffle=shuffle,
-        seed=seed,
-        predicate=predicate,
-        expand=expand,
-    ):
+    for row in rows:
         pending.append(row)
         if len(pending) == batch_size:
             dataset = DecisionDataset(pending, vocab)
@@ -564,6 +574,16 @@ def evaluate_loss_parquet(
     batch_size: int,
     device: torch.device,
 ) -> dict[str, float | None]:
+    return evaluate_loss_batches(
+        model,
+        batches_for_parquet(path, vocab, batch_size, split=split, shuffle=False, seed=1),
+        device,
+    )
+
+
+def evaluate_loss_batches(
+    model: EdgerV2Policy, batches: Iterable[Batch], device: torch.device
+) -> dict[str, float | None]:
     model.eval()
     totals = {
         "joint": 0.0,
@@ -575,14 +595,7 @@ def evaluate_loss_parquet(
     count = 0
     maximum_logit = 0.0
     with torch.no_grad():
-        for batch in batches_for_parquet(
-            path,
-            vocab,
-            batch_size,
-            split=split,
-            shuffle=False,
-            seed=1,
-        ):
+        for batch in batches:
             batch = batch.to(device)
             logits = forward_batch(model, batch)
             for head, mask in (
@@ -674,19 +687,26 @@ def evaluate_kl_parquet(
     batch_size: int,
     device: torch.device,
 ) -> float:
+    return evaluate_kl_batches(
+        reference,
+        candidate,
+        batches_for_parquet(path, vocab, batch_size, split=split, shuffle=False, seed=1),
+        device,
+    )
+
+
+def evaluate_kl_batches(
+    reference: EdgerV2Policy,
+    candidate: EdgerV2Policy,
+    batches: Iterable[Batch],
+    device: torch.device,
+) -> float:
     reference.eval()
     candidate.eval()
     total = 0.0
     count = 0
     with torch.no_grad():
-        for batch in batches_for_parquet(
-            path,
-            vocab,
-            batch_size,
-            split=split,
-            shuffle=False,
-            seed=1,
-        ):
+        for batch in batches:
             batch = batch.to(device)
             reference_logits = forward_batch(reference, batch)
             candidate_logits = forward_batch(candidate, batch)
@@ -742,13 +762,9 @@ def evaluate_opportunity_capture(
     Capture is the masked card argmax (lowest index on ties, as the runtime)
     being Fireball; the mean Fireball probability is reported alongside.
     """
-    model.eval()
-    totals = {
-        name: {"rows": 0, "fireball_argmax": 0, "p_fireball_sum": 0.0}
-        for name in [*OPPORTUNITY_CLASSES, "opportunity"]
-    }
-    with torch.no_grad():
-        for batch in batches_for_parquet(
+    return evaluate_opportunity_capture_batches(
+        model,
+        batches_for_parquet(
             path,
             vocab,
             batch_size,
@@ -756,7 +772,22 @@ def evaluate_opportunity_capture(
             shuffle=False,
             seed=1,
             predicate=lambda row: row_fireball_opportunity(row) != OPPORTUNITY_NONE,
-        ):
+        ),
+        device,
+    )
+
+
+def evaluate_opportunity_capture_batches(
+    model: EdgerV2Policy, batches: Iterable[Batch], device: torch.device
+) -> dict[str, dict[str, float | int | None]]:
+    """Capture over batches of rows; rows without an opportunity count nowhere."""
+    model.eval()
+    totals = {
+        name: {"rows": 0, "fireball_argmax": 0, "p_fireball_sum": 0.0}
+        for name in [*OPPORTUNITY_CLASSES, "opportunity"]
+    }
+    with torch.no_grad():
+        for batch in batches:
             batch = batch.to(device)
             opportunity = fireball_opportunity(batch.global_features, batch.card_mask)
             card = mask_logits(forward_batch(model, batch)["card"], batch.card_mask)

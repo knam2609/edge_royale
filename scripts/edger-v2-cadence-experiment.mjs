@@ -755,6 +755,7 @@ async function commandTrainArm(args) {
   const budgetMinutes = Number(args["budget-minutes"] ?? 150);
   const lossMode = String(args["loss-mode"] ?? "full");
   const cardKlCoefficient = String(args["card-kl-coefficient"] ?? "0");
+  const cardKlRows = String(args["card-kl-rows"] ?? "all");
   const decomposeEvery = String(args["decompose-every"] ?? "0");
   const torchSeed = String(args["torch-seed"] ?? "20260926");
   // Episodes may live outside the work directory (e.g. off a synced or nearly
@@ -771,6 +772,7 @@ async function commandTrainArm(args) {
     cadence,
     loss_mode: lossMode,
     card_kl_coefficient: Number(cardKlCoefficient),
+    card_kl_rows: cardKlRows,
     decompose_every: Number(decomposeEvery),
     torch_seed: Number(torchSeed),
     seeds_file: path.resolve(args.seeds),
@@ -851,6 +853,7 @@ async function commandTrainArm(args) {
       "--learning-rate", learningRate,
       "--loss-mode", lossMode,
       "--card-kl-coefficient", cardKlCoefficient,
+      "--card-kl-rows", cardKlRows,
       "--decompose-every", decomposeEvery,
       "--seed", torchSeed,
     ], logPath);
