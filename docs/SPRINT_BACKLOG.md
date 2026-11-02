@@ -40,7 +40,7 @@
   - October 25 [tactical review](EDGER_TACTICAL_REVIEW.md):
     - Troop-placement ties are structural (identical all-zero 3×3 patches, lowest-index tie-break to back-center, a cell teachers use in 0.9% of tied rows).
     - Fireball loss has three measured causes: no lethal or cluster signal in the representation, opportunity states diluted by non-casting teachers, and RL suppression (P(Fireball) down 80–370× for r0/r1).
-    - The proposals, including broader defense and punishment scoring, were approved on October 25 and are not yet implemented.
+    - The proposals were approved on October 25. Observation v4 keeps spell globals; data and KL-floor options stay default-off after the November 2 same-host comparison. Proposal 4 adds intercept/pressure scoring, 50 mirrored scenarios and a frozen test-split Fireball capture gate. Same-host training-run variance must be sized before any further RL recipe comparison.
   - October 25 [parity-contract packet](EDGER_PARITY_CONTRACT_REVIEW.md):
     - All seven models agree with PyTorch on every argmax and tie set; only absolute placement error fails.
     - The float64 mean pool is decision-preserving (banks plus 70 full matches) and cuts the worst error from 11 to 3 ULP.

@@ -24,6 +24,7 @@ const REQUIRED_GATES = [
   "frozen_league",
   "safety",
   "tactical_scenarios",
+  "heldout_fireball",
   "replay",
   "generated_js_timing",
   "full_test_suite",

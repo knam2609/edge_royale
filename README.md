@@ -37,7 +37,9 @@ npm run dev
 Open `http://127.0.0.1:5173`.
 
 The repository pins native Node 20 through `.node-version`. Browser validation
-also requires `npx playwright install chromium`.
+also requires `npx playwright install chromium`. On the current local host, run
+the full suite with `PYTHON=/usr/local/bin/python3 npm test` to use the installed
+PyTorch/pyarrow interpreter.
 
 Controls:
 

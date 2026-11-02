@@ -201,7 +201,7 @@ the live bot, the promotion evaluator or campaigns.
 - Card KL floor (`train-arm --card-kl-coefficient β`, default 0; tactical
   proposal 3): adds β × KL(BC parent ‖ model) over the card head on every
   on-policy row. The forward direction keeps probability on cards the parent
-  plays, so rare cards such as Fireball cannot collapse. β = 0 is the
+  plays, encouraging retention of rare cards such as Fireball; argmax use can still collapse. β = 0 is the
   production update exactly. The coefficient cannot change within an arm, and
   `critic_only` rejects it. Learner metrics report the on-policy card KL to
   the parent (`conditional.card_kl_to_reference_given_choice`) at any β.
@@ -457,7 +457,8 @@ npm run edger:reference:v2 -- --champion <live-v1.json> --anchors <paths> --out 
 npm run edger:export:v2 -- --checkpoint <candidate.pt> --out <candidate.json>
 npm run edger:generate:v2 -- --model <candidate.json> --out <candidate.js>
 npm run edger:parity:v2 -- --model <candidate.json> --out <parity.json>
-npm run edger:evaluate:v2 -- <candidate/champion/anchor/reference/external-report arguments>
+npm run edger:opportunity-bank -- --manifest <local-manifest.json> --out <frozen-bank.json>
+npm run edger:evaluate:v2 -- --opportunity-bank <frozen-bank.json> <candidate/champion/anchor/reference/external-report arguments>
 npm run edger:promote:v2 -- --model <candidate.json> --report <full-report.json>
 npm run edger:campaign:remote -- launch
 npm run edger:campaign:remote -- status
@@ -482,7 +483,7 @@ The corpus, BC, offline-improvement, scaling, league/V-trace, parity, large-samp
 
 Failed campaigns retain reports/checkpoints and never update the promoted artifact.
 
-Parity, tactical feasibility/quality, and timing run before the match workers.
+Parity, tactical feasibility/quality, held-out Fireball capture, and timing run before the match workers.
 A failed preflight produces a rejected report with `generated_matches=0`,
 `match_suite_skipped=true`, and failed/skipped match gates. The tactical suite
 uses six-tower production arenas and complete fixed decks. Every category floor
@@ -503,6 +504,53 @@ report measured errors, argmax or tie-set disagreement without inferring a root
 cause from logit scale. The parity tolerance changed to the hybrid rule above on
 October 25, 2026; the identical-argmax, quality, safety, and `p95 ≤ 5 ms`
 thresholds are unchanged.
+
+Proposal 4 (November 2, 2026) versions the synthetic bank as
+`edger_tactical_scenarios_v2`: five states per category (tick, elixir and lane
+variants), each mirrored by a 180-degree team rotation, for 50 decisions.
+Defense requires an intercept in the threat's lane, between it and its target
+tower, with deployment plus estimated closure preceding tower contact.
+Punishment requires a troop in the front rows (canonical y 12.5–16.5) while
+enemy elixir is at most 2; back-row and spell credit is zero. All five existing
+category minimums and the strict aggregate improvement over the heuristic stay
+unchanged. The defense base moves from the old center Giant to the actual
+bridge lane, because interception was otherwise unreachable in the existing
+placement action set. The timing gate keeps the original five input states.
+
+`edger:opportunity-bank` reads only stable **test** shards from a checksummed
+manifest, checks each episode's compressed checksum and full replay, and
+retains the first opportunity per episode/actor/class. Lethal takes precedence
+over cluster; Fireball must be legal. Labels use tower HP ≤ Fireball damage or
+at least three enemy troop centers within a legal cast's radius, matching the
+engine's current-state impact geometry. This does not forecast projectile
+arrival or establish strategic value. The bank stores read-only inference
+state snapshots, episode/replay checksums, the source manifest hash and a
+logical bank checksum. No training command imports or consumes the bank.
+
+Snapshots (schema `edger_fireball_opportunity_bank_v2`) carry every engine
+field a decision reads, including the spawn and effect counters and the last
+tick's combat events (v2 globals 84, 85 and 87). The builder proves each
+snapshot before storing it: the restored engine's legal actions, v2
+observation and v1 per-action features must equal the live replay engine's,
+or the build fails. Validation requires exactly that field set and rejects
+schema v1 banks, whose snapshots dropped those three fields.
+
+V2 evaluation requires `--opportunity-bank <frozen-bank.json>`. The new
+`heldout_fireball` preflight gate scores **correctly aimed, legal Fireballs**;
+card choice is reported separately. It reuses the existing tower-finishing
+0.80 and spell-value 0.70 numbers as the lethal and cluster capture-rate
+minimums. These are explicit new capture gates, not recalibrated synthetic
+score units or thresholds fitted to a baseline. Missing/invalid banks, empty
+classes and failed capture prevent match dispatch and promotion. Reports bind
+the bank's logical and file checksums; old reports without this gate cannot
+promote. Freeze the source manifest, sampling rule and bank before evaluating
+candidates; do not tune them against candidate scores. The production driver
+builds the bank in `full-cache` before offline/league learning and passes that
+same artifact to full evaluation. A new campaign still needs fresh compatible
+scaling/provenance and separate approval.
+
+See the [proposal 4 record](EDGER_TACTICAL_REVIEW.md#proposal-4-scoring-and-held-out-opportunities--november-2-2026)
+for the before/after heuristic and live-v1 baselines, bank coverage and limits.
 
 Failure reports are retained under `failed-stages/<stage>/<attempt>/`, separate
 from passed `stages/` artifacts. See [the September diagnosis](EDGER_EVALUATION_DIAGNOSIS.md)

@@ -2,11 +2,12 @@ import fs from "node:fs";
 import { performance } from "node:perf_hooks";
 
 import { loadReplay } from "../src/replay/codec.js";
-import { FIREBALL_CONFIG, ARROWS_CONFIG } from "../src/sim/config.js";
+import { FIREBALL_CONFIG, ARROWS_CONFIG, TICK_RATE } from "../src/sim/config.js";
 import { createEngine } from "../src/sim/engine.js";
 import { createTower, createTroop } from "../src/sim/entities.js";
 import { createArena, ROYALE_TOWER_X, ROYALE_TOWER_Y, createRoyaleArena } from "../src/sim/map.js";
 import { getTowerStats } from "../src/sim/stats.js";
+import { getEntitySurfaceDistance } from "../src/sim/nav.js";
 import { DEFAULT_DECK, getCard } from "../src/sim/cards.js";
 import {
   EDGER_BOT_ID,
@@ -35,6 +36,8 @@ export const PROMOTION_GATE_CONFIG = Object.freeze({
     pocket_pressure: 0.55,
   }),
 });
+
+export const TACTICAL_SUITE_VERSION = "edger_tactical_scenarios_v2";
 
 function passGate(details = {}) {
   return { passed: true, ...details };
@@ -90,67 +93,92 @@ function makeRoyaleEngine({ redHand, blueHand, blueLeftHp, blueRightHp, extraEnt
   return engine;
 }
 
-function getEnemiesHit(engine, action, radius) {
+function getEnemiesHit(engine, action, radius, actor = "red") {
   if (!action || action.type !== "PLAY_CARD") {
     return [];
   }
   return engine.state.entities.filter((entity) => {
-    if (entity.team !== "blue" || entity.hp <= 0) {
+    if (entity.team === actor || entity.hp <= 0) {
       return false;
     }
     return Math.hypot(entity.x - action.x, entity.y - action.y) <= radius + (entity.radius ?? 0) + 1e-9;
   });
 }
 
-function scoreDefense(engine, action) {
+export function scoreDefense(engine, action, actor = "red") {
   if (!action || action.type !== "PLAY_CARD") {
     return 0;
   }
   const card = getCard(action.cardId);
-  if (card?.type !== "troop" || action.y > 16) {
+  if (card?.type !== "troop" || card.targeting_mode === "buildings") {
     return 0;
   }
-  const laneScore = Math.max(0, 1 - Math.abs(action.x - 9) / 5);
+  const ownY = (y) => actor === "red" ? y : 32 - y;
+  const lane = (x) => (actor === "red" ? x : 18 - x) <= 9 ? "left" : "right";
+  const towers = engine.state.entities.filter((e) => e.team === actor && e.entity_type === "tower" && e.hp > 0);
+  const threats = engine.state.entities.filter((e) => e.team !== actor && e.entity_type === "troop" && e.hp > 0 && ownY(e.y) <= 17);
+  const intercepts = threats.some((threat) => {
+    const locked = towers.find((tower) => tower.id === threat.target_entity_id);
+    const tower = locked ?? [...towers].sort((a, b) =>
+      Math.hypot(a.x - threat.x, a.y - threat.y) - Math.hypot(b.x - threat.x, b.y - threat.y) || a.id.localeCompare(b.id))[0];
+    if (!tower || lane(action.x) !== lane(threat.x) || Math.abs(action.x - threat.x) > 2.5 ||
+        ownY(action.y) < ownY(tower.y) || ownY(action.y) > ownY(threat.y)) return false;
+    const speed = threat.move_speed;
+    if (!(speed > 0)) return false;
+    const towerDistance = Math.max(0, getEntitySurfaceDistance(threat, tower) - threat.attack_range);
+    const towerContact = towerDistance / speed;
+    const deploy = card.deploy_time_ticks / TICK_RATE;
+    // Estimate closure only after deployment; a ranged defender must acquire
+    // the threat as well as reach it. This scorer is a geometric proxy, not a
+    // second combat simulation.
+    const separation = Math.max(0, Math.hypot(action.x - threat.x, action.y - threat.y) - speed * deploy);
+    const reach = Math.min(card.attack_range, card.sight_range) + (threat.radius ?? 0);
+    const contact = deploy + Math.max(0, separation - reach) / (card.move_speed + speed);
+    return contact < towerContact;
+  });
+  if (!intercepts) return 0;
   const counter = action.cardId === "mini_pekka" ? 0.45 : action.cardId === "musketeer" ? 0.25 : 0.05;
-  return Math.min(1.25, 0.45 + laneScore * 0.45 + counter);
+  return Math.min(1.25, 0.45 + 0.45 + counter);
 }
 
-function scoreSpellValue(engine, action) {
+function scoreSpellValue(engine, action, actor = "red") {
   if (!action || action.type !== "PLAY_CARD" || !["fireball", "arrows"].includes(action.cardId)) {
     return 0;
   }
   const config = action.cardId === "fireball" ? FIREBALL_CONFIG : ARROWS_CONFIG;
-  const hits = getEnemiesHit(engine, action, config.radius_tiles);
+  const hits = getEnemiesHit(engine, action, config.radius_tiles, actor);
   const troopHits = hits.filter((entity) => entity.entity_type === "troop").length;
   const towerHits = hits.filter((entity) => entity.entity_type === "tower").length;
   return Math.min(1.25, troopHits * 0.32 + towerHits * 0.18);
 }
 
-function scoreTowerFinishing(engine, action) {
+function scoreTowerFinishing(engine, action, actor = "red") {
   if (!action || action.type !== "PLAY_CARD" || !["fireball", "arrows"].includes(action.cardId)) {
     return 0;
   }
   const config = action.cardId === "fireball" ? FIREBALL_CONFIG : ARROWS_CONFIG;
-  const lethalTower = getEnemiesHit(engine, action, config.radius_tiles).some(
+  const lethalTower = getEnemiesHit(engine, action, config.radius_tiles, actor).some(
     (entity) => entity.entity_type === "tower" && entity.hp <= config.tower_damage,
   );
-  return lethalTower ? 1.15 : scoreSpellValue(engine, action) * 0.45;
+  return lethalTower ? 1.15 : scoreSpellValue(engine, action, actor) * 0.45;
 }
 
-function scoreElixirPunishment(engine, action) {
+export function scoreElixirPunishment(engine, action, actor = "red") {
   if (!action || action.type !== "PLAY_CARD") {
     return 0;
   }
   const card = getCard(action.cardId);
-  if (card?.type !== "troop") {
-    return 0.15;
+  const enemy = actor === "red" ? "blue" : "red";
+  const y = actor === "red" ? action.y : 32 - action.y;
+  if (card?.type !== "troop" || engine.state.elixir[enemy].elixir > 2 || y < 12.5 || y > 16.5) {
+    return 0;
   }
-  const bridgePressure = Math.max(0, 1 - Math.abs(action.y - 14.5) / 6);
+  const bridgePressure = Math.max(0, 1 - Math.abs(y - 14.5) / 4);
   const threatCard = action.cardId === "giant" ? 0.35 : action.cardId === "mini_pekka" ? 0.25 : 0.1;
-  return Math.min(1.2, 0.35 + bridgePressure * 0.45 + threatCard);
+  return Math.min(1.2, bridgePressure * 0.65 + threatCard);
 }
 
-function scorePocketPressure(engine, action) {
+function scorePocketPressure(engine, action, actor = "red") {
   if (!action || action.type !== "PLAY_CARD") {
     return 0;
   }
@@ -158,18 +186,22 @@ function scorePocketPressure(engine, action) {
   if (card?.type !== "troop") {
     return 0;
   }
-  const inPocket = action.y >= 17.5 && action.y <= 22 && action.x <= 8.5;
-  return inPocket ? 1.15 : Math.max(0, 0.6 - Math.abs(action.x - ROYALE_TOWER_X.left) / 10);
+  const y = actor === "red" ? action.y : 32 - action.y;
+  const enemy = actor === "red" ? "blue" : "red";
+  const leftCaptured = engine.state.entities.some((e) => e.team === enemy && e.tower_role === "crown" && e.x < 9 && e.hp <= 0);
+  const x = leftCaptured ? action.x : 18 - action.x;
+  const inPocket = y >= 17.5 && y <= 22 && x <= 8.5;
+  return inPocket ? 1.15 : Math.max(0, 0.6 - Math.abs(x - ROYALE_TOWER_X.left) / 10);
 }
 
-export const SCENARIO_FIXTURES = Object.freeze([
+const BASE_SCENARIO_FIXTURES = Object.freeze([
   {
     id: "defense_giant_lane",
     category: "defense",
     makeEngine: () => makeRoyaleEngine({
       redHand: ["mini_pekka", "musketeer", "knight", "fireball"],
       extraEntities: [
-        createTroop({ id: "blue_giant", cardId: "giant", team: "blue", x: 9, y: 13.5, hp: 2800 }),
+        createTroop({ id: "blue_giant", cardId: "giant", team: "blue", x: 3.5, y: 15.5, hp: 2800 }),
       ],
       blueElixir: 4,
       seed: 6301,
@@ -228,12 +260,69 @@ export const SCENARIO_FIXTURES = Object.freeze([
   },
 ]);
 
+// Four variants per category, plus a blue-side mirror of every state. The
+// defense base is repaired to a bridge approach so interception is reachable
+// within the existing placement action set.
+export const SCENARIO_FIXTURES = Object.freeze(BASE_SCENARIO_FIXTURES.flatMap((base) =>
+  [0, 1, 2, 3, 4].flatMap((variant) => ["red", "blue"].map((actor) => ({
+    id: `${base.id}${variant ? `_v${variant}` : ""}${actor === "blue" ? "_blue" : ""}`,
+    category: base.category,
+    actor,
+    variant,
+    makeEngine: () => {
+      const engine = base.makeEngine();
+      engine.state.tick = [0, 400, 1200, 1800, 2400][variant];
+      if (variant) {
+        engine.state.elixir.red.elixir = [10, 8, 6, 9, 7][variant];
+        if (base.category === "elixir_punishment") engine.state.elixir.blue.elixir = [1, 0, 2, 1, 0][variant];
+        for (const entity of engine.state.entities) {
+          if (entity.entity_type === "troop") {
+            entity.y += [0, 0.25, -0.25, 0.5, -0.5][variant];
+          }
+        }
+      }
+      for (const entity of engine.state.entities) {
+        if (variant === 2 || variant === 4) {
+          entity.x = 18 - entity.x;
+          if (entity.ground_blocker) {
+            const { minX, maxX } = entity.ground_blocker;
+            entity.ground_blocker.minX = 18 - maxX;
+            entity.ground_blocker.maxX = 18 - minX;
+          }
+          if (entity.preferred_lane_x !== undefined) entity.preferred_lane_x = 18 - entity.preferred_lane_x;
+        }
+        if (actor === "blue") {
+          entity.team = entity.team === "red" ? "blue" : "red";
+          entity.x = 18 - entity.x;
+          entity.y = 32 - entity.y;
+          entity.velocity = { x: -entity.velocity.x, y: -entity.velocity.y };
+          entity.forced_motion_vector = { x: -entity.forced_motion_vector.x, y: -entity.forced_motion_vector.y };
+          if (entity.preferred_lane_x !== undefined) entity.preferred_lane_x = 18 - entity.preferred_lane_x;
+          if (entity.ground_blocker) {
+            const { minX, maxX, minY, maxY } = entity.ground_blocker;
+            entity.ground_blocker.minX = 18 - maxX;
+            entity.ground_blocker.maxX = 18 - minX;
+            entity.ground_blocker.minY = 32 - maxY;
+            entity.ground_blocker.maxY = 32 - minY;
+          }
+        }
+      }
+      if (actor === "blue") {
+        [engine.state.card_state.red, engine.state.card_state.blue] = [engine.state.card_state.blue, engine.state.card_state.red];
+        [engine.state.elixir.red, engine.state.elixir.blue] = [engine.state.elixir.blue, engine.state.elixir.red];
+      }
+      return engine;
+    },
+    score: (engine, action) => base.score(engine, action, actor),
+  })))),
+);
+
 export function evaluateScenarioFeasibility({
   minimums = PROMOTION_GATE_CONFIG.scenarioCategoryMinimums,
 } = {}) {
   const scenarios = SCENARIO_FIXTURES.map((fixture) => {
     const engine = fixture.makeEngine();
-    const actions = [{ type: "PASS" }, ...enumerateLegalCardActions({ engine, actor: "red" })];
+    const actions = [{ type: "PASS" }, ...enumerateLegalCardActions({ engine, actor: fixture.actor })];
     let maximum = -Infinity;
     let bestAction = null;
     for (const action of actions) {
@@ -259,28 +348,29 @@ export function evaluateScenarioFeasibility({
       passed: validDecks && productionArena && maximum >= minimum,
     };
   });
-  return { passed: scenarios.every((scenario) => scenario.passed), scenarios };
+  return { schema_version: TACTICAL_SUITE_VERSION, passed: scenarios.every((scenario) => scenario.passed), scenarios };
 }
 
-function selectScenarioAction(engine, model, selector) {
-  const legalActions = enumerateLegalCardActions({ engine, actor: "red" });
+function selectScenarioAction(engine, model, selector, actor) {
+  const legalActions = enumerateLegalCardActions({ engine, actor });
   if (selector === "heuristic") {
-    return selectHeuristicAction({ legalActions, engine, actor: "red" });
+    return selectHeuristicAction({ legalActions, engine, actor });
   }
-  return selectEdgerAction({ legalActions, engine, actor: "red", model });
+  return selectEdgerAction({ legalActions, engine, actor, model });
 }
 
-export function evaluateScenarioLeague(model, { minimums = PROMOTION_GATE_CONFIG.scenarioCategoryMinimums } = {}) {
+export function evaluateScenarioLeague(model, { minimums = PROMOTION_GATE_CONFIG.scenarioCategoryMinimums, selector = "candidate" } = {}) {
   const scenarios = SCENARIO_FIXTURES.map((fixture) => {
     const candidateEngine = fixture.makeEngine();
     const heuristicEngine = fixture.makeEngine();
-    const candidateAction = selectScenarioAction(candidateEngine, model, "candidate");
-    const heuristicAction = selectScenarioAction(heuristicEngine, model, "heuristic");
+    const candidateAction = selectScenarioAction(candidateEngine, model, selector, fixture.actor);
+    const heuristicAction = selectScenarioAction(heuristicEngine, model, "heuristic", fixture.actor);
     const candidateScore = fixture.score(candidateEngine, candidateAction);
     const heuristicScore = fixture.score(heuristicEngine, heuristicAction);
     return {
       id: fixture.id,
       category: fixture.category,
+      actor: fixture.actor,
       candidate_action: candidateAction,
       heuristic_action: heuristicAction,
       candidate_score: Number(candidateScore.toFixed(4)),
@@ -315,6 +405,7 @@ export function evaluateScenarioLeague(model, { minimums = PROMOTION_GATE_CONFIG
   const improved = candidateAggregate > heuristicAggregate;
 
   return {
+    schema_version: TACTICAL_SUITE_VERSION,
     passed: passedMinimums && improved,
     candidate_aggregate: Number(candidateAggregate.toFixed(4)),
     heuristic_aggregate: Number(heuristicAggregate.toFixed(4)),
@@ -470,8 +561,15 @@ export function evaluateTiming(
     warmupSamples = 10,
   } = {},
 ) {
-  const fixtures = SCENARIO_FIXTURES.map((fixture) => {
+  // Keep the pre-existing five-state timing method separate from the expanded
+  // quality bank so a scoring change does not silently redefine p95.
+  const fixtures = BASE_SCENARIO_FIXTURES.map((fixture) => {
     const engine = fixture.makeEngine();
+    if (fixture.category === "defense") {
+      Object.assign(engine.state.entities.find((entity) => entity.id === "blue_giant"), {
+        x: 9, y: 13.5, preferred_lane_x: 9,
+      });
+    }
     return {
       engine,
       legalActions: enumerateLegalCardActions({ engine, actor: "red" }),

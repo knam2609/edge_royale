@@ -34,6 +34,7 @@
     "edger:parity:v2": "node scripts/edger-v2-parity.mjs",
     "edger:generate:v2": "node scripts/edger-v2-generate.mjs",
     "edger:evaluate:v2": "node scripts/edger-v2-evaluate.mjs",
+    "edger:opportunity-bank": "node scripts/edger-opportunity-bank-cli.mjs",
     "edger:promote:v2": "node scripts/edger-v2-promote.mjs"
   },
   "engines": {

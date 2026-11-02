@@ -5,14 +5,15 @@ Fireball card choice (logits, masks, corpus and teacher frequencies) and the
 exact troop-placement ties found by the September 28
 [tactical audit](EDGER_EVALUATION_DIAGNOSIS.md#tactical-suite-audit--september-27).
 
-It is read-only. No gate, floor, scorer, fixture, model, observation or runtime
-changed, and nothing here selects a model or clears a gate. The owner approved
+The original October 25 investigation was read-only. No gate, floor, scorer,
+fixture, model, observation or runtime changed in that investigation, and nothing here selects a model or clears a gate. The owner approved
 the [proposals](#proposals--approved-october-25) on
 October 25. Proposals 1–2 were implemented, ablated and compared under RL later (see
 [below](#proposals-12-observation-v3-and-bc-ablation--october-2526-2026)),
 and proposal 3 followed ([below](#proposal-3-data-and-learning-on-v4--october-27-2026)),
 with its option 1, a [targeted floor](#option-1-targeted-floor--october-30-2026), on October 30;
-those changes are outside this read-only investigation.
+those changes and the November 2 proposal 4 implementation are recorded in
+separate sections below.
 
 - `X` = `~/edge_royale-runs/20261025-tactical-parity-warmup.noindex/`. Scripts and outputs are in `X/tactical/`; models are in `X/models/`; the corpus subset is in `X/corpus/`.
 
@@ -151,7 +152,7 @@ implemented as observation schema v3 and committed locally as a checkpoint. Afte
 [BC ablation](#proposals-12-observation-v3-and-bc-ablation--october-2526-2026) the owner chose a bounded local RL
 comparison (October 26). It [reported](#rl-comparison--october-26-2026) inconclusive by its frozen rule,
 and the owner then chose spell globals only: proposal 2 lands as
-[observation schema v4](#spell-globals-only-v4--october-26-2026), and proposal 1's geometry is dropped. Proposal 3 is implemented as default-off learner options and tested in a [local experiment](#proposal-3-data-and-learning-on-v4--october-27-2026) (October 27), and the owner's option 1, a [targeted floor](#option-1-targeted-floor--october-30-2026), followed (October 30). Proposal 4 is not implemented. Each lands as its own change, with its own tests and fresh provenance.
+[observation schema v4](#spell-globals-only-v4--october-26-2026), and proposal 1's geometry is dropped. Proposal 3 is implemented as default-off learner options and tested in a [local experiment](#proposal-3-data-and-learning-on-v4--october-27-2026) (October 27), and the owner's option 1, a [targeted floor](#option-1-targeted-floor--october-30-2026), followed (October 30). Proposal 4 is implemented locally in the [November 2 scoring record](#proposal-4-scoring-and-held-out-opportunities--november-2-2026). Each lands as its own change, with its own tests and fresh provenance.
 None lowers a floor or adds a handcrafted spell or placement override. The
 approval does not cover pushing, cloud actions or promotion.
 
@@ -467,7 +468,8 @@ opportunity rows alone would cost play.
 
 **Status: done locally. Frozen label, against the earlier host's controls:
 `inconclusive`. With same-host controls (a recorded addendum): `strong floor
-keeps Fireball, costs play`. The owner decides (options below).** Evidence is
+keeps Fireball, costs play`. The floor line is closed with default-off options;
+the already approved proposal 4 follows below.** Evidence is
 in `S` = `~/edge_royale-runs/20261102-targeted-floor-beta1.noindex/`
 (`plan.md`, `FROZEN.txt`, `analysis.md`, `host-check/`, `plan-m6.md`,
 `FROZEN-m6.txt`, `analysis-m6.md`, `README.md`, `SHA256SUMS`).
@@ -525,12 +527,195 @@ in `S` = `~/edge_royale-runs/20261102-targeted-floor-beta1.noindex/`
 - It costs about 0.15 primary against no floor, about twice the largest host shift of a three-run mean.
 - Under the current scoring, keeping Fireball through a floor is not worth its cost. Whether Fireball has value the scoring does not see is proposal 4's question.
 
-**Options for the owner:**
-1. **End the floor line and move to proposal 4** (recommended).
+**Follow-up options at the handoff (proposal 4 now implemented below):**
+1. **End the floor line and move to proposal 4** (followed).
    - Keep the BC data recipe and both floors default-off, and use the old recipe for RL.
    - Proposal 4's held-out opportunity bank then measures Fireball capture in the gate.
 2. **Measure training-run variance first.** For example, 6 or more runs of the old recipe on the M6, at about 2.5 min an arm. This sizes any further RL comparison, including a learner recipe for the campaign.
 3. **Tune β between 0.05 and 1.** Not recommended: the trade-off looks continuous, and three runs cannot resolve it against noise at host scale.
+
+## Proposal 4: scoring and held-out opportunities — November 2, 2026
+
+**Status: implemented locally, after the report-only checkpoint `0aeceb1`. A
+review on November 2 found that bank snapshots dropped three v2 observation
+inputs; the bank was repaired, rebuilt and re-frozen as schema v2 ([review
+repair](#review-repair-of-the-bank--november-2-2026)). On November 3 the owner
+kept the 0.80/0.70 capture minimums and had the change committed locally with
+its repair (not pushed).**
+This follows the October 25 approval. The floor line ends with the experimental options
+remaining default-off. No new training, policy weights, runtime controller,
+cloud action, publication or promotion is part of this change.
+
+Evidence: `Q4` = `~/edge_royale-runs/20261102-proposal4.noindex/` (see its
+`README.md`). `plan.md` was hashed before the scorer edits or baseline output.
+`before-scenarios.json` preserves the old five-state result. The source is
+`0aeceb1`, after `5aff157` with docs only; collection uses a clean clone at
+that commit. `source.patch` and `source-checksums.txt` bind the implementation.
+
+### Changes and feasibility
+
+- **Defense:** a troop that targets units must deploy in the threat's lane,
+  within 2.5 tiles laterally and between the threat and its target tower.
+  Deployment plus estimated closure must precede tower contact, using the
+  engine's tower surface distance and troop/card stats. A locked tower is used
+  when present; otherwise the nearest living own tower is the proxy target.
+  The old `(9.5, 5.5)` Mini P.E.K.K.A scores 0, previously 1.25.
+- **Punishment:** only troops in canonical rows 12.5–16.5 with opponent elixir
+  at most 2 earn credit. The flat troop bonus and spell credit are removed.
+  A Giant at `(9.5, 5.5)` now scores 0, previously 0.70.
+- **Expansion:** five states per category, each with a 180-degree blue-side
+  team mirror: 50 states under `edger_tactical_scenarios_v2`. Four variants
+  change tick, own elixir and lane; punishment also varies enemy elixir.
+  The pocket scorer follows the captured lane for mirrored variants.
+  The mirrors rotate the state, but not the placement grid exactly: both
+  teams use absolute x = 9.5 as the center column, which is 8.5 in red's frame
+  for blue. So each blue state has 4–8 center-column placements that differ
+  from its red twin's. This is a property of the existing action set, not of
+  this change; the mirror test scores red's rotated actions without requiring
+  them to be legal for blue.
+- **Feasibility repair:** strict interception made the old central Giant at
+  `(9,13.5)` unreachable from the existing policy placement set (bridge/front
+  row or back row). It moves to the actual bridge at `(3.5,15.5)`; this is a
+  fixture change, separately reported below, not a floor relaxation.
+  Every one of the 50 states has a legal action reaching its category floor.
+- The five category minimums and strict aggregate improvement over the
+  heuristic are unchanged. Timing retains the exact original five input
+  states, including the old defense position, so quality expansion does not
+  redefine the p95 method.
+
+### Bank provenance and new capture gate
+
+The frozen initial collection was 128 full production games, seed 20261102,
+paired sides, four opponents and four workers. It yielded only eight test
+episodes and eight opportunity states. Before reading any baseline scores,
+`coverage-addendum.md` fixed an extension to exactly 1,024 games with unchanged
+commands/seed/opponents. It resumed all 128 matching receipts, with no failures.
+This coverage-driven extension and the defense feasibility repair are recorded
+deviations from `plan.md`.
+
+`edger:opportunity-bank` verifies the source manifest, reads only its stable
+**test** shards, checks compressed episode checksums and full replay equality,
+and keeps the first opportunity per episode/actor/class. Lethal takes
+precedence; Fireball must be legal. Labels use the engine's center-radius rule,
+not the synthetic scorer's radius-plus-body allowance, applied to positions at
+decision time: the cast delay and projectile travel are ignored (see the limits
+below). Each read-only snapshot is checked against the live replay engine as
+it is built: legal actions, the v2 observation and v1 per-action features must
+match exactly. A rebuild is byte-identical.
+There is no overlap with the 160-episode training/validation subset.
+
+- Collection: 1,024 episodes, 70 test episodes.
+- Bank: **80 states**, 27 lethal from 23 episodes and 53 cluster from 50
+  episodes. Red/blue opportunities come from real decisions, not augmentation.
+- Logical bank SHA-256 (schema v2, `QB` below):
+  `4f75fbc668f597de8e3dad965049453558ab60d016658fde102c751dd2a159c9`. It
+  supersedes `Q4`'s schema v1 bank `0b247247…`, which validation now rejects.
+- `QB/BANK-FROZEN.txt` binds the file before `QB/baseline.mjs` reads its
+  scores, as `Q4/BANK-FROZEN.txt` did for the v1 bank.
+
+The new `heldout_fireball` preflight gate requires a supplied frozen bank.
+It reports Fireball card choices separately from **legal, correctly aimed
+capture**. Lethal capture must be ≥0.80, cluster capture ≥0.70: the existing
+synthetic category numbers, now explicitly used as capture-rate minimums.
+These new rate requirements are not fitted to baseline performance or
+claimed equivalent to the old synthetic score units. Missing/empty classes,
+invalid checksums/provenance, duplicate entries and failed capture reject
+before match workers. Promotion requires this gate, so old reports cannot
+pass by omitting it. The production driver freezes its corpus test bank in
+`full-cache` and passes that artifact to evaluation; existing failed campaigns
+remain immutable.
+
+### Rebaseline
+
+The implementation does not change either baseline policy. Separating scorer
+changes, the defense fixture repair and bank expansion avoids interpreting a
+changed aggregate as policy improvement (`baseline.json`).
+
+| Synthetic suite | Live v1 | Heuristic |
+|---|---:|---:|
+| Old five states, old scorers | 0.451 | 0.873 |
+| Same old states/actions, new scorers | 0.200 | 0.622 |
+| Five base states with repaired defense | 0.430 | 0.852 |
+| Expanded 50-state bank | 0.522 | 0.852 |
+
+Both fail the synthetic gate: v1 is below the spell, finishing and pocket
+minimums, while the heuristic has zero pocket credit and cannot improve over
+itself. V1's finishing score is 0.460 across variants: it takes the lethal
+spell on the right-lane variants but misses the left-lane ones.
+
+| Held-out class | Minimum | Live v1, aimed / choices / states | Heuristic, aimed / choices / states |
+|---|---:|---:|---:|
+| Lethal | 0.80 | 8 / 10 / 27 (29.6% capture) | 20 / 25 / 27 (74.1%) |
+| Cluster | 0.70 | 22 / 25 / 53 (41.5%) | 40 / 44 / 53 (75.5%) |
+
+The capture counts above are identical on the v1 and v2 banks (`QB/baseline.json`).
+
+**Neither baseline passes the new bank gate.** The heuristic misses the lethal
+minimum, and v1 misses both. The evidence is a local gate baseline, not a model
+selection result. No learning consumes this test bank. Future learner-recipe
+comparisons first need same-host seed-variance sizing; these cross-host
+experiments do not estimate that variance.
+
+### Review repair of the bank — November 2, 2026
+
+Evidence: `QB` = `~/edge_royale-runs/20261102-opportunity-bank-v2.noindex/`
+(`plan.md`, `README.md`, `SHA256SUMS`). `Q4` is unchanged.
+
+- **Defect.** Schema v1 snapshots kept the entities, cards, elixir, pending
+  effects and clock, but not `spawn_sequence`, `effect_sequence` or
+  `recent_combat_events`. The v2 observation reads them as globals 84, 85 and
+  87. On every one of the 80 bank states, the restored v2 observation differed
+  from the live replay engine: to a v2 policy, a late-game state looked like
+  the start of a match on those inputs. The board, the legal actions, the heuristic and
+  live v1 matched, so the baselines above were unaffected. The earlier
+  snapshot test used only synthetic fixtures, whose counters are initial.
+- **Impact on v2 models.** Six v4 children (`P`'s three old-recipe children
+  and the three β = 1 children) changed 0–8 of 80 decisions on restored
+  states. The β = 1 r2 child's cluster captures fell from 10 (live) to 4
+  (restored).
+- **Repair** (`scripts/edger-opportunity-bank.mjs`, schema v2). Snapshots
+  carry and restore the three fields. The builder rejects any snapshot whose
+  restored legal actions, v2 observation or v1 per-action features differ from
+  the live engine's. Validation requires exactly the snapshot field set and
+  rejects v1 banks. New tests round-trip a mid-game production state (combat
+  events, spawns and an effect) and reject a state missing a field; the
+  mid-game test fails on `Q4`'s original module.
+- **Rebuild** from `Q4/manifest-1024.json`: the same 80 entries in the same
+  order, with every old state field unchanged and only the three fields
+  added. A second build is byte-identical. Live and restored states now agree
+  on all 80 v2 observations, legal actions and heuristic and v1 actions, and
+  the six children make identical decisions on both (`QB/fidelity.json`,
+  `QB/v2-impact.json`). The baselines are unchanged, and the preflight smoke
+  binds the new hash and rejects before any match (`QB/preflight-report.json`).
+
+### Validation and limits
+
+- `PYTHON=/usr/local/bin/python3 npm test`: 235/235 on the implementation
+  (`Q4/npm-test-final.log`), and 237/237 after the bank repair (`QB/npm-test.log`).
+- `node --test tests/edger-tactical-scoring.test.js tests/edger-training-pipeline.test.js`:
+  14/14, then 16/16 after the repair (`QB/tactical-tests.log`); covers
+  counterexamples, deployment timing, all mirror observations, snapshot
+  reconstruction (synthetic and mid-game), aim/choice, split exclusion and
+  rejection controls.
+- `npm run bot:bench -- --opponents random,aggressive,defender --rounds 30 --seed 20260630 --max-ticks 6040 --min-win-rate 0.6`:
+  pass, win rates 1.000 / 0.833 / 1.000.
+- `npx --no-install playwright install chromium` restored Chromium 1208 and
+  FFmpeg 1011. Both browser trees match the recorded pins (`browser-pin-check.jsonl`).
+  `npm run smoke:browser` passes.
+- A full CLI smoke evaluation using the frozen bank rejects the bootstrap
+  before any match and binds the correct bank hash (`Q4/preflight-report.json`;
+  for the v2 bank, `QB/preflight-report.json`).
+- `npm run edger:opportunity-bank -- --manifest <Q4/manifest-1024.json> --out <QB/opportunity-bank-repeat.json>`
+  reproduces the frozen v2 bank byte for byte. Exact commands are in `Q4/README.md` and `QB/README.md`.
+- These are deterministic one-decision geometric probes. Interception does
+  not roll combat forward; capture does not forecast projectile travel or
+  measure Fireball's strategic value. Eighty states are a bounded local bank,
+  not a production corpus or a precise uncertainty estimate. Correlated
+  states from the same episode are not independent samples.
+- The explicit bank artifact is required for full evaluation. The production
+  wiring is syntax/full-suite checked locally; no cloud end-to-end run or
+  candidate promotion was attempted. Fresh scaling/provenance and the
+  accumulated-diff review remain prerequisites.
 
 ## Limits
 

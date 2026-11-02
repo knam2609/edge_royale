@@ -21,6 +21,7 @@ function parseArgs(argv) {
     seed: 20260718,
     workers: 16,
     referenceHardware: "unspecified",
+    opportunityBank: null,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -46,6 +47,8 @@ function parseArgs(argv) {
       parsed.workers = Number.parseInt(argv[++index], 10);
     } else if (arg === "--reference-hardware" && argv[index + 1]) {
       parsed.referenceHardware = argv[++index];
+    } else if (arg === "--opportunity-bank" && argv[index + 1]) {
+      parsed.opportunityBank = argv[++index];
     }
   }
   if (!parsed.candidate || !parsed.out) {
@@ -76,6 +79,7 @@ try {
     seed: args.seed,
     workers: args.workers,
     referenceHardware: args.referenceHardware,
+    opportunityBankPath: args.opportunityBank,
   });
   const output = path.resolve(args.out);
   fs.mkdirSync(path.dirname(output), { recursive: true });

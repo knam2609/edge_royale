@@ -116,6 +116,8 @@ test("failed tactical preflight skips all full-profile matches and cannot promot
     assert.equal(report.gates.pytorch_js_parity.passed, true);
     assert.equal(report.gates.tactical_scenarios.passed, false);
     assert.equal(report.gates.tactical_scenarios.feasibility.passed, true);
+    assert.equal(report.gates.heldout_fireball.passed, false);
+    assert.match(report.gates.heldout_fireball.reason, /opportunity-bank is required/);
     assert.equal(report.generated_matches, 0);
     assert.equal(report.match_suite_skipped, true);
     assert.equal(report.promotion.passed, false);
@@ -173,6 +175,7 @@ test("v2 promotion preserves the exact evaluated model bytes", () => {
     "frozen_league",
     "safety",
     "tactical_scenarios",
+    "heldout_fireball",
     "replay",
     "generated_js_timing",
     "full_test_suite",
@@ -189,6 +192,17 @@ test("v2 promotion preserves the exact evaluated model bytes", () => {
     promotion: { passed: true, failures: [] },
   }));
   fs.mkdirSync(path.join(root, "src/ai/generated"), { recursive: true });
+  // A formerly passing report without the new capture gate cannot promote.
+  const completeReport = JSON.parse(fs.readFileSync(reportPath, "utf8"));
+  const legacyReport = structuredClone(completeReport);
+  delete legacyReport.gates.heldout_fireball;
+  fs.writeFileSync(reportPath, JSON.stringify(legacyReport));
+  const legacyResult = spawnSync(process.execPath, [
+    path.resolve("scripts/edger-v2-promote.mjs"), "--model", modelPath, "--report", reportPath,
+  ], { cwd: root, encoding: "utf8" });
+  assert.notEqual(legacyResult.status, 0);
+  assert.match(legacyResult.stderr, /heldout_fireball/);
+  fs.writeFileSync(reportPath, JSON.stringify(completeReport));
   const result = spawnSync(process.execPath, [
     path.resolve("scripts/edger-v2-promote.mjs"),
     "--model",

@@ -28,6 +28,7 @@ import {
   evaluateTiming,
 } from "./edger-evaluation-core.mjs";
 import { spawnNativePython } from "./python-runtime.mjs";
+import { evaluateOpportunityBankFile } from "./edger-opportunity-bank.mjs";
 
 export const EDGER_V2_EVALUATION_REPORT_SCHEMA = "edger_v2_evaluation_report_v1";
 export const EDGER_V2_REFERENCE_REPORT_SCHEMA = "edger_v2_reference_report_v1";
@@ -752,7 +753,7 @@ export function checkCandidateParity(modelPath, model) {
 }
 
 
-export function evaluateEdgerV2Preflight({ candidateModelPath, candidate, referenceHardware }) {
+export function evaluateEdgerV2Preflight({ candidateModelPath, candidate, referenceHardware, opportunityBankPath = null }) {
   const scenarios = evaluateScenarioLeague(candidate);
   const feasibility = evaluateScenarioFeasibility();
   const timing = evaluateTiming(candidate, { samples: 100, budgetMs: 5 });
@@ -766,7 +767,9 @@ export function evaluateEdgerV2Preflight({ candidateModelPath, candidate, refere
       candidate_aggregate: scenarios.candidate_aggregate,
       heuristic_aggregate: scenarios.heuristic_aggregate,
       feasibility,
+      schema_version: scenarios.schema_version,
     },
+    heldout_fireball: evaluateOpportunityBankFile(candidate, opportunityBankPath),
     generated_js_timing: timing.passed
       ? pass({ ...timing, reference_hardware: referenceHardware })
       : fail("generated-JS p95 exceeded 5 ms", { ...timing, reference_hardware: referenceHardware }),
@@ -828,6 +831,7 @@ export async function evaluateEdgerV2Candidate({
   seed = 20260718,
   workers = 16,
   referenceHardware = "unspecified",
+  opportunityBankPath = null,
 }) {
   const profile = EDGER_V2_EVALUATION_PROFILES[profileName] ??
     EDGER_V2_EVALUATION_PROFILES.full;
@@ -849,7 +853,7 @@ export async function evaluateEdgerV2Candidate({
     weakBaselines,
   });
   // Reject deterministic/cheap failures before paying for the match suite.
-  const preflight = evaluateEdgerV2Preflight({ candidateModelPath, candidate, referenceHardware });
+  const preflight = evaluateEdgerV2Preflight({ candidateModelPath, candidate, referenceHardware, opportunityBankPath });
   const results = preflight.passed ? await executeEdgerV2EvaluationSpecs({
     candidateModelPath,
     specs,
@@ -974,6 +978,7 @@ export async function evaluateEdgerV2Candidate({
     frozen_league: frozenGate,
     safety: safetyGate(results, profile.safety_games),
     tactical_scenarios: preflight.gates.tactical_scenarios,
+    heldout_fireball: preflight.gates.heldout_fireball,
     replay: replayPassed
       ? pass({ checked_matches: allReplayChecked.length })
       : fail("generated-action replay verification failed", {

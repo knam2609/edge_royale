@@ -614,7 +614,15 @@ async function main() {
     if (validation.passed !== true) {
       throw new Error("full cache validation did not pass");
     }
+    // Freeze evaluation-only states from the unchanged test split before
+    // offline/league work. They never become learner inputs.
+    run("npm", [
+      "run", "edger:opportunity-bank", "--",
+      "--manifest", corpusManifest,
+      "--out", path.join(stageDir, "opportunity-bank.json"),
+    ]);
     return {
+      opportunity_bank_sha256: sha256File(path.join(stageDir, "opportunity-bank.json")),
       manifest_hash: validation.manifest_hash,
       rows: validation.rows,
       split_rows: validation.split_rows,
@@ -793,6 +801,7 @@ async function main() {
       "--reference", path.join(referenceDir, "live-champion-reference.json"),
       "--test-report", path.join(qaDir, "test-report.json"),
       "--browser-report", path.join(qaDir, "browser-report.json"),
+      "--opportunity-bank", path.join(fullCacheDir, "opportunity-bank.json"),
       "--profile", "full",
       "--workers", "16",
       "--seed", String(SEED),
