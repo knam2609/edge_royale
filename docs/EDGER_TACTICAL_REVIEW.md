@@ -406,7 +406,9 @@ the [targeted floor](#option-1-targeted-floor--october-30-2026) (October 30).** 
 
 **Status: implemented locally as a default-off option; the frozen local
 experiment is labelled `inconclusive`. On November 2 the owner had it
-committed locally and chose option 1 below, the stronger targeted floor.**
+committed locally (`5aff157`) and chose option 1 below, the [stronger targeted
+floor](#stronger-targeted-floor--november-2-2026). On the new M6 host, this
+section's "costs no play" reading does not replicate.**
 Evidence is in `T` = `~/edge_royale-runs/20261030-targeted-floor.noindex/`
 (`plan.md`, `FROZEN.txt`, `analysis.md`, `README.md`, `SHA256SUMS`).
 
@@ -461,6 +463,75 @@ opportunity rows alone would cost play.
 2. **Stop at BC** and move to proposal 4, keeping the options default-off.
 3. **Keep the old recipe** for RL (`b0-k0` children remain the best-scoring) and record Fireball capture as unresolved.
 
+### Stronger targeted floor — November 2, 2026
+
+**Status: done locally. Frozen label, against the earlier host's controls:
+`inconclusive`. With same-host controls (a recorded addendum): `strong floor
+keeps Fireball, costs play`. The owner decides (options below).** Evidence is
+in `S` = `~/edge_royale-runs/20261102-targeted-floor-beta1.noindex/`
+(`plan.md`, `FROZEN.txt`, `analysis.md`, `host-check/`, `plan-m6.md`,
+`FROZEN-m6.txt`, `analysis-m6.md`, `README.md`, `SHA256SUMS`).
+
+**Experiment** (frozen in `S/plan.md` before any output):
+- Arms `bfo-klo1-r0/r1/r2`: `T`'s recipe with `--card-kl-coefficient 1` (20× per row) on opportunity rows. The code is `5aff157`, whose `scripts/`, `src/` and `tests/` are byte-identical to `T`'s mirror.
+- The label-driving contrast is `F` = child(`bfo-klo1`) − child(`bfo-k0`), the floor's cost against no floor. `P`'s criterion against the old recipe (`PS`) is reported but no longer drives the label, because it also carries the `bfo` data recipe's cost under RL.
+- `Capture kept` means a mean final held-out capture of at least 0.10, set before the run from `P`'s and `T`'s results.
+
+**Run.** UTC November 1, 23:54 to November 2, 00:05 (10.6 min, cap 2 h).
+- Every step exited 0, no game had an illegal attempt, and every evaluation was deterministic.
+- All three children pass parity (worst 0.381 of tolerance).
+
+**The host changed.** The run took a quarter of `T`'s time because the local host is now a Mac mini with an Apple M6 (`Mac18,5`, macOS 27.2). The October 5 and 17 records name an M1 MacBook Air. `P` and `T` did not record their host, but their identical work ran 4.8–5.6× slower. Node v20.20.2 and PyTorch 2.11.0 (Accelerate BLAS) are unchanged. The post-hoc check (`S/host-check/`) found:
+- **JS evaluation matched across the tested hosts.** Two existing children, 200 games each against the heuristic, reproduce every action stream, final state, tick and point; only timing fields differ.
+- **PyTorch training is deterministic on the M6, but not across hosts.**
+  - A full rerun of `bfo-klo1-r0` on the M6 reproduces all six iterations: 24/24 tensors, optimizer state and held-out reports.
+  - Iteration 0 of `T`'s `bfo-klo-r0` and `P`'s `bfo-k0-r0` on the M6 has identical rollouts and identical parent held-out outputs. After one update, 0/24 tensors are equal (max |diff| 0.011, against a max update of 0.033).
+  - This is attributed, by elimination, to chip-specific float kernels; it was not traced.
+- So the frozen comparison set M6 children against M1 controls. An addendum (`S/plan-m6.md`) reran all 12 control arms on the M6 with unchanged commands, and applied the same contrasts and label rule.
+  - It was written after `analysis.md` was read, and frozen before any of its own output.
+  - It ran UTC 00:14–00:57 (43 min), and every step exited 0.
+
+**The strong floor keeps Fireball and costs play.**
+
+| Children, mean of runs | Primary, M1 controls | Primary, M6 | Final held-out capture, M6 | Fireballs per game, M6 |
+|---|---|---|---|---|
+| `b0-k0` (old recipe) | 0.845 | 0.783 | 0 | 0.00 |
+| `bfo-k0` (no floor) | 0.800 | 0.810 | 0 | 0.00 |
+| `bfo-kl` (global floor) | 0.741 | 0.714 | 0.088 | 0.35 |
+| `bfo-klo` (targeted, β = 0.05) | 0.800 | 0.727 | 0.065 | 0.19 |
+| `bfo-klo1` (targeted, β = 1; M6 only) | — | 0.649 | 0.239 (0.176, 0.333, 0.206) | 1.03 (0.50, 1.29, 1.29) |
+
+- **`F` against the M1 controls (frozen):** −0.150 [−0.174, −0.128]; per run +0.010, −0.283 and −0.178. The label is `inconclusive` because r0 is not negative.
+- **`F` against the M6 controls:** −0.160 [−0.183, −0.138]; per run −0.070, −0.177 and −0.234. The label is `strong floor keeps Fireball, costs play`.
+- **Other contrasts, M6:**
+  - against the β = 0.05 targeted floor, −0.077 [−0.101, −0.054];
+  - against the global floor, −0.065 [−0.089, −0.041];
+  - `PS`, against the old recipe, −0.133 [−0.156, −0.110] (−0.195 against M1).
+- **RL gain over the `bfo` parents:** +0.178 [+0.151, +0.205] (per run +0.390, −0.001 and +0.145). `P`'s children without a floor gained about +0.33.
+- **Inferred explanation for the play cost:** at β = 1, the card KL to the parent stays at 0.02–0.04 nats on opportunity rows and reaches only 0.04–0.12 on all choice rows. For the M6 β = 0.05 arms the choice-row figure is 0.13–0.53.
+  - The card head and trunk are shared, so holding 3–10% of choice rows holds the whole card policy near the weaker BC parent. That is what the global floor did.
+- The children cast Fireball about as often as their parents (0.83–1.60 per game). Tactical aggregates are 0.37–0.39, and back-row placement is 46–51%, as before.
+
+**Host variation is as large as the effects measured.** Each M6 control child was compared with the M1 child that has the same parent, seeds and command.
+- Per child, the difference ranges from −0.166 to +0.080 primary, and 7 of the 12 intervals exclude zero. For three-run means it ranges from −0.073 to +0.010.
+- Two earlier readings do not replicate on the M6:
+  - the `bfo` data recipe's cost under RL: `P` −0.045 [−0.065, −0.025], M6 +0.027 [+0.004, +0.050];
+  - the β = 0.05 targeted floor's freedom from cost: `T` +0.001 [−0.021, +0.021], M6 −0.083 [−0.106, −0.060].
+- The global floor's cost does replicate: `P` −0.059, M6 −0.096.
+- The observed cross-host differences at the first update can grow into six-iteration score differences as large as these comparisons' effects. The kernel cause was not isolated, and this is not an estimate of same-host seed variance. With three runs, intervals over evaluation seeds alone omit training-run uncertainty. This applies to every RL comparison in this review.
+
+**Reading.**
+- The strong targeted floor keeps Fireball on both control sets: capture 0.18–0.33, about one cast per game.
+- It costs about 0.15 primary against no floor, about twice the largest host shift of a three-run mean.
+- Under the current scoring, keeping Fireball through a floor is not worth its cost. Whether Fireball has value the scoring does not see is proposal 4's question.
+
+**Options for the owner:**
+1. **End the floor line and move to proposal 4** (recommended).
+   - Keep the BC data recipe and both floors default-off, and use the old recipe for RL.
+   - Proposal 4's held-out opportunity bank then measures Fireball capture in the gate.
+2. **Measure training-run variance first.** For example, 6 or more runs of the old recipe on the M6, at about 2.5 min an arm. This sizes any further RL comparison, including a learner recipe for the campaign.
+3. **Tune β between 0.05 and 1.** Not recommended: the trade-off looks continuous, and three runs cannot resolve it against noise at host scale.
+
 ## Limits
 
 - The corpus is a 160-episode subset, not the production corpus.
@@ -472,6 +543,8 @@ opportunity rows alone would cost play.
 - Proposal 3 tested one KL coefficient (0.05) and one oversampling factor (4), on the same subset, development seeds and three training runs. Its held-out capture uses 102 validation rows (18 lethal).
 - The post-cap continuation is a recorded deviation from the proposal 3 plan; the frozen label at the cap was inconclusive only because outputs were missing.
 - Option 1 tested one coefficient (0.05) and one row mask, with `P`'s parents, seeds and controls; the controls were trained on October 26–27 under code shown to reproduce them.
+- The β = 1 follow-up tested one more coefficient on the same mask. Its same-host controls come from an addendum written after the frozen analysis was read; that addendum changed only the controls' host.
+- RL training is bit-reproducible only on the same host (M1 against M6, PyTorch 2.11.0 with Accelerate). Host variation of a six-iteration child (up to 0.17 primary) is as large as most effects in this review, so every RL contrast here carries training-run uncertainty that its intervals do not cover. Future comparisons need same-host controls.
 
 ## Reproduction
 
@@ -558,4 +631,22 @@ cd "$T"
 bash repro/run-repro.sh                  # pre-plan check: iteration 0 of two P arms
 bash run.sh                              # frozen; writes run.log and DONE
 python3 -I analyze.py > analysis.md      # frozen
+```
+
+The stronger targeted floor (`S/README.md` describes every file). `s1repo` is
+a clone of the repository at `5aff157`. `run.sh` and `run-m6.sh` set their own
+`PATH` and skip finished steps.
+
+```bash
+S=~/edge_royale-runs/20261102-targeted-floor-beta1.noindex
+T=~/edge_royale-runs/20261030-targeted-floor.noindex
+P=~/edge_royale-runs/20261027-proposal3.noindex
+cd "$S"
+bash run.sh                                   # frozen; writes run.log and DONE
+python3 -I analyze.py > analysis.md           # frozen
+bash host-check/run.sh                        # post-hoc host check
+python3 -I host-check/compare.py "$S" "$T" "$P" > host-check/compare.json
+python3 -I host-check/compare2.py "$S" "$T" "$P" > host-check/compare2.json
+bash run-m6.sh                                # addendum, frozen in FROZEN-m6.txt; writes m6/
+python3 -I analyze-m6.py > analysis-m6.md     # addendum analysis
 ```

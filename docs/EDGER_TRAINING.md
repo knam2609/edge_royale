@@ -223,6 +223,8 @@ the live bot, the promotion evaluator or campaigns.
   four-read version. That is about 28 s per iteration on the 9,343-row subset,
   down from about 139 s, and it still decodes the whole file, so it does not
   scale to the production corpus as written.
+- Measured local results are in the [tactical review](EDGER_TACTICAL_REVIEW.md#stronger-targeted-floor--november-2-2026). Each floor that kept Fireball also cost play (global β = 0.05, targeted β = 1), so both stay default-off.
+- Training is bit-reproducible only on the same host. On November 2, 2026, an M6 reran an M1's arms with identical rollouts and parent outputs, but its first update already differed, and the children's scores moved by up to 0.17. JS evaluation of two fixed children matched across the tested hosts (400 games). Compare learner arms only against controls trained on the same host.
 - `--decompose-every N` measures policy, value and entropy gradients
   separately (`torch.autograd.grad` on the same graph) on every Nth update,
   with their trunk cosine. The applied step is still the one combined backward
