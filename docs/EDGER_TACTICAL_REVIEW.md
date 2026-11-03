@@ -717,6 +717,67 @@ Evidence: `QB` = `~/edge_royale-runs/20261102-opportunity-bank-v2.noindex/`
   candidate promotion was attempted. Fresh scaling/provenance and the
   accumulated-diff review remain prerequisites.
 
+## Same-host training-run variance — November 3, 2026
+
+**Status: done locally (owner decision, November 3), before any further RL
+recipe comparison.** Evidence: `VP` =
+`~/edge_royale-runs/20261103-variance-pilot.noindex/` (`plan.md`, `FROZEN.txt`,
+`analysis.md`, `posthoc.md`, `README.md`, `SHA256SUMS`). Diagnostic only.
+
+**Design** (frozen in `VP/plan.md` before any output). Six end-to-end runs of
+the old recipe on the M6, at code `16e36b4`.
+- Run rN trains its own BC parent (default recipe, seed 20260718+N, 6 epochs) and then its RL child, using `P`'s unchanged `b0-k0` command with `seed-plan-rN.json`.
+- r0–r2 use `P`'s plans. r3–r5 come from the same generator, which also reproduces r1 and r2 byte for byte. The six training seed sets are disjoint from each other and from the evaluation seeds.
+- The torch seed is shared, as in every earlier design. Fixed-parent (RL-only) variance is not separated.
+- Every parent and child is evaluated on the same development seeds, with `P`'s commands.
+
+**Run.** UTC November 2, 14:27–15:13 (45.6 min, cap 2 h).
+- All 54 steps exited 0, no game had an illegal attempt, and every evaluation was deterministic.
+- All six children pass parity (worst 0.381 of tolerance).
+
+| Run | Parent primary | Child primary [95% over evaluation seeds] | RL gain |
+|---|---|---|---|
+| r0 | 0.487 | 0.803 [0.775, 0.830] | +0.317 |
+| r1 | 0.645 | 0.733 [0.701, 0.763] | +0.087 |
+| r2 | 0.408 | 0.742 [0.712, 0.773] | +0.334 |
+| r3 | 0.425 | 0.829 [0.804, 0.853] | +0.404 |
+| r4 | 0.488 | 0.507 [0.471, 0.543] | +0.018 |
+| r5 | 0.561 | 0.797 [0.768, 0.825] | +0.237 |
+
+- **Spread.** The child primary has mean 0.735 and SD 0.118 (normal-model 95% interval for the SD 0.074–0.289), with a range of 0.507–0.829. The run-level SD is about 8× one child's evaluation-seed SE of 0.015; this compares standard deviations, not variances.
+  - The parent primary has SD 0.088, and the RL gain SD 0.151.
+  - The sample parent–child correlation is r = −0.05. These six runs show no predictive relationship; they do not establish that parent quality is irrelevant.
+- **Shape** (post hoc, `VP/posthoc.md`). Five runs lie within 0.733–0.829 (SD 0.042, close to earlier three-run spreads). r4 barely improved on its parent.
+  - r4's card policy drifted furthest from its parent (card KL 0.89, against 0.14–0.51), and it deploys less in evaluation.
+  - Its sampled training scores did not single it out.
+  - r4 completed cleanly and passed parity. It is a valid low-scoring result, not an engineering failure. Six observations do not establish heavy tails, a separate failure mode or its frequency.
+- **Sizing** (frozen approximation). With s = 0.118, the normal/equal-variance planning model gives approximate differences for α = 0.05 and 80% power of:
+  - 0.36 with 3 runs per arm;
+  - 0.21 with 6;
+  - 0.16 with 10.
+  - At the SD's upper 95% bound these become 0.88, 0.52 and 0.38.
+  - The formula is `s·sqrt(2/n)` with `2n−2` degrees of freedom: it assumes independent training runs across arms. Shared evaluation seeds do not establish a reduction from matching training runs. A matched design instead uses the SD of run-level differences and `n−1` degrees of freedom ([NIST paired observations](https://www.itl.nist.gov/div898/handbook/prc/section3/prc311.htm)).
+  - The SD interval assumes approximately normal run outcomes and is sensitive to non-normality ([NIST SD confidence limits](https://itl.nist.gov/div898/software/dataplot/refman1/auxillar/sdconfli.htm)). Neither it nor the sizing table guarantees coverage or power for a mixture with occasional poor outcomes.
+- **Reading.** Every recipe effect measured in this review (0.03–0.16) is below the three-run model's 80%-power target. Earlier three-run contrasts remain leans, including the β = 1 floor's −0.16; this is not evidence of equivalence or a hard detection limit. The pilot does not estimate the SD of matched recipe differences.
+
+### Decision advice — November 4, 2026 (not yet an owner decision)
+
+Prefer more runs with the mean as primary, rather than switching to the median
+to reduce the influence of r4. A low-scoring but valid run is part of recipe
+reliability. The median answers a different question about the typical run;
+report it as a secondary diagnostic alongside every run, SD and range.
+
+- **Default proposal:** 12 runs per arm for a comparison targeting effects around 0.15. At the pilot SD, independent-run normal-model calculations give an 80%-power difference of 0.141; 24 runs give 0.097 and 90 give 0.050. The exact minimum counts for effects 0.15/0.10/0.05 are 11/23/89, rounded up here for planning. These remain estimates from six runs, not power guarantees. Do not pursue 0.03–0.05 recipe gains with a small comparison at this spread.
+- **Design:** freeze the minimum meaningful effect, run count, host/code/data, training and evaluation seeds, primary statistic, uncertainty calculation, failure handling and stopping rule before output. Use the same evaluation seeds. For RL-only changes, match both arms on each independently chosen BC parent and training plan; analyze the mean of paired run differences, with uncertainty over training replicates. Twelve such pairs have a modeled target of 0.148 if cross-arm covariance is zero; actual paired spread is unmeasured. Do not claim a measured pairing benefit. BC-changing recipes need separate end-to-end parents and an appropriate design.
+- **Completed poor runs:** retain them in the primary mean, including an outcome like r4. No score-based exclusions, replacements or early stopping. Engineering-invalid outcomes must all be reported; an invalid policy blocks a favorable recipe conclusion rather than disappearing from the denominator. Any infrastructure retry rule must be frozen and use identical settings and seeds.
+- **Cheap screening:** fewer runs may guide exploration, but cannot settle these small effects. Choose the statistic and practical decision threshold in advance; do not expand or stop a comparison after inspecting its recipe difference without a valid sequential plan.
+- **Optional six-arm follow-up:** skip it unless conditional RL variance is the immediate question. Six starts from one BC parent measure only variance conditional on that parent, not a BC-versus-RL variance decomposition. Repeats across multiple parents are needed to investigate both components. This does not block recording the pilot.
+- **Docs:** recommend a separate docs-only commit after these qualifications, without waiting for another experiment.
+
+Read-only recalculation: `~/edge_royale-runs/20261104-variance-decision.noindex/`
+(`decision.py`, `analysis.json`, `SHA256SUMS`). It reads the frozen evaluations;
+the pilot files, frozen analysis and post-hoc split are unchanged.
+
 ## Limits
 
 - The corpus is a 160-episode subset, not the production corpus.
@@ -729,6 +790,7 @@ Evidence: `QB` = `~/edge_royale-runs/20261102-opportunity-bank-v2.noindex/`
 - The post-cap continuation is a recorded deviation from the proposal 3 plan; the frozen label at the cap was inconclusive only because outputs were missing.
 - Option 1 tested one coefficient (0.05) and one row mask, with `P`'s parents, seeds and controls; the controls were trained on October 26–27 under code shown to reproduce them.
 - The β = 1 follow-up tested one more coefficient on the same mask. Its same-host controls come from an addendum written after the frozen analysis was read; that addendum changed only the controls' host.
+- Same-host training-run variance was measured once (six old-recipe runs on the M6): the child-primary SD is 0.118, strongly influenced by one valid low-scoring run. Three-run contrasts are below the modeled 80%-power target; paired recipe-difference spread is unmeasured.
 - RL training is bit-reproducible only on the same host (M1 against M6, PyTorch 2.11.0 with Accelerate). Host variation of a six-iteration child (up to 0.17 primary) is as large as most effects in this review, so every RL contrast here carries training-run uncertainty that its intervals do not cover. Future comparisons need same-host controls.
 
 ## Reproduction
@@ -834,4 +896,17 @@ python3 -I host-check/compare.py "$S" "$T" "$P" > host-check/compare.json
 python3 -I host-check/compare2.py "$S" "$T" "$P" > host-check/compare2.json
 bash run-m6.sh                                # addendum, frozen in FROZEN-m6.txt; writes m6/
 python3 -I analyze-m6.py > analysis-m6.md     # addendum analysis
+```
+
+Same-host variance pilot (`VP/README.md` describes every file). `vrepo` is a
+clone of the repository at `16e36b4`. `run.sh` sets its own `PATH` and skips
+finished steps.
+
+```bash
+VP=~/edge_royale-runs/20261103-variance-pilot.noindex
+cd "$VP/vrepo" && node scripts/edger-v2-cadence-experiment.mjs replicate-seeds --base "$VP/seeds/seed-plan-r0.json" --out-dir "$VP/seeds-gen" --replicates r1 r2 r3 r4 r5
+cd "$VP"
+bash run.sh                             # frozen; writes run.log and DONE
+python3 -I analyze.py > analysis.md     # frozen
+python3 -I posthoc.py > posthoc.md      # post hoc, not frozen
 ```
