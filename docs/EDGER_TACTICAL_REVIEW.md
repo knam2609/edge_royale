@@ -760,23 +760,74 @@ the old recipe on the M6, at code `16e36b4`.
   - The SD interval assumes approximately normal run outcomes and is sensitive to non-normality ([NIST SD confidence limits](https://itl.nist.gov/div898/software/dataplot/refman1/auxillar/sdconfli.htm)). Neither it nor the sizing table guarantees coverage or power for a mixture with occasional poor outcomes.
 - **Reading.** Every recipe effect measured in this review (0.03–0.16) is below the three-run model's 80%-power target. Earlier three-run contrasts remain leans, including the β = 1 floor's −0.16; this is not evidence of equivalence or a hard detection limit. The pilot does not estimate the SD of matched recipe differences.
 
-### Decision advice — November 4, 2026 (not yet an owner decision)
+### Comparison rule — owner decision, November 4, 2026
+
+The owner adopted this rule on November 4, 2026, from the advice of the same
+day. It governs every further RL recipe comparison.
 
 Prefer more runs with the mean as primary, rather than switching to the median
 to reduce the influence of r4. A low-scoring but valid run is part of recipe
 reliability. The median answers a different question about the typical run;
 report it as a secondary diagnostic alongside every run, SD and range.
 
-- **Default proposal:** 12 runs per arm for a comparison targeting effects around 0.15. At the pilot SD, independent-run normal-model calculations give an 80%-power difference of 0.141; 24 runs give 0.097 and 90 give 0.050. The exact minimum counts for effects 0.15/0.10/0.05 are 11/23/89, rounded up here for planning. These remain estimates from six runs, not power guarantees. Do not pursue 0.03–0.05 recipe gains with a small comparison at this spread.
+- **Default:** 12 runs per arm for a comparison targeting effects around 0.15. At the pilot SD, independent-run normal-model calculations give an 80%-power difference of 0.141; 24 runs give 0.097 and 90 give 0.050. The exact minimum counts for effects 0.15/0.10/0.05 are 11/23/89, rounded up here for planning. These remain estimates from six runs, not power guarantees. Do not pursue 0.03–0.05 recipe gains with a small comparison at this spread.
 - **Design:** freeze the minimum meaningful effect, run count, host/code/data, training and evaluation seeds, primary statistic, uncertainty calculation, failure handling and stopping rule before output. Use the same evaluation seeds. For RL-only changes, match both arms on each independently chosen BC parent and training plan; analyze the mean of paired run differences, with uncertainty over training replicates. Twelve such pairs have a modeled target of 0.148 if cross-arm covariance is zero; actual paired spread is unmeasured. Do not claim a measured pairing benefit. BC-changing recipes need separate end-to-end parents and an appropriate design.
 - **Completed poor runs:** retain them in the primary mean, including an outcome like r4. No score-based exclusions, replacements or early stopping. Engineering-invalid outcomes must all be reported; an invalid policy blocks a favorable recipe conclusion rather than disappearing from the denominator. Any infrastructure retry rule must be frozen and use identical settings and seeds.
 - **Cheap screening:** fewer runs may guide exploration, but cannot settle these small effects. Choose the statistic and practical decision threshold in advance; do not expand or stop a comparison after inspecting its recipe difference without a valid sequential plan.
-- **Optional six-arm follow-up:** skip it unless conditional RL variance is the immediate question. Six starts from one BC parent measure only variance conditional on that parent, not a BC-versus-RL variance decomposition. Repeats across multiple parents are needed to investigate both components. This does not block recording the pilot.
-- **Docs:** recommend a separate docs-only commit after these qualifications, without waiting for another experiment.
+- **Six-arm follow-up: skipped.** Six starts from one BC parent measure only variance conditional on that parent, not a BC-versus-RL variance decomposition. Repeats across multiple parents are needed to investigate both components. Revisit only if conditional RL variance becomes the immediate question.
+- **Docs:** the pilot and advice were committed separately as docs-only `6e0b6a8`.
 
 Read-only recalculation: `~/edge_royale-runs/20261104-variance-decision.noindex/`
 (`decision.py`, `analysis.json`, `SHA256SUMS`). It reads the frozen evaluations;
-the pilot files, frozen analysis and post-hoc split are unchanged.
+the pilot files, frozen analysis and post-hoc split are unchanged. On November 4
+the table's SD (0.118) and the 12/24/90 sizing figures were recomputed again
+from the evaluations' child primaries and matched.
+
+### First comparison: rollout freshness at equal updates
+
+**Owner-approved November 6, 2026; the frozen plan and evidence are in
+`FR` = `~/edge_royale-runs/20261106-rollout-freshness.noindex/`.** This is the
+first comparison drafted under the rule above. The design below is as approved. It is the first step of the historical league-regression
+attribution (`progress.md`).
+
+**Question.** Does learning from a single parent rollout score worse than the
+on-policy loop that refreshes its rollouts every 64 games? The comparison
+holds games, seeds, opponents and optimizer updates equal. The production
+league stage learns from one rollout per command, while the `train-arm` loop
+reliably improved the parent (cadence replication). This comparison isolates
+that one difference. It does not test:
+- the production learner code path or base-corpus mix;
+- league opponents or the historical scale of about 11,318 updates;
+- the historical legacy rows with behavior probability 1, which current code excludes from V-trace.
+
+**Design.** RL-only and matched by parent.
+- Host and code: the M6 and toolchain of the pilot, using a clean clone at `6e0b6a8`. BC, `train-arm`, export and evaluation code are unchanged since `5aff157`. The cache is `Y/v4/subset-decisions.parquet`.
+- Twelve pairs, r6–r17. Each trains a new BC parent (seed 20260718+N, 6 epochs, default recipe), then two RL children from it:
+  - **A (refreshed):** the pilot's `b0-k0` command (`--iterations 6 --pairs-per-iteration 32`).
+  - **B (single rollout):** the same command with `--iterations 1 --pairs-per-iteration 192`.
+- Both arms play training pairs 0–191 of `seed-plan-rN.json` in the same order, against the same opponents. Each makes 384 one-episode Adam updates with torch seed 20260926. The learner draws no random numbers.
+- The arms should share their first 64 games, which the parent collects in both. They differ only in which policy collects games 65–384. A check on the shared prefix verifies this; it is not part of the estimate.
+- Seeds: generate `replicate-seeds --replicates r1 r2 … r17` from the pilot's `seed-plan-r0.json`. Opponent schedules depend on list position. r1–r5 must reproduce the pilot's plans byte for byte. r6–r17 are then disjoint from every earlier training seed and from the development, probe and confirmation sets.
+- Evaluation: the parent and both children, using the pilot's commands. That is learned cadence, deterministic, on the development seeds: 200 pairs against live v1 and 100 each against the heuristic and aggressive. `V/js-eval.mjs` checks each child's parity.
+
+**Analysis.**
+- **Primary statistic.** For each pair, d = B child primary − A child primary, where the primary score is as in the pilot. The estimate is the mean of the 12 values of d, with a two-sided 95% t interval (11 df) over pairs. The minimum meaningful effect is 0.15.
+- **Labels.** If the interval excludes 0, the label states the direction and whether |mean d| ≥ 0.15. If it lies wholly inside ±0.15, the label is "within ±0.15". Otherwise it is "inconclusive at this size". There are no other labels.
+- **Secondary.** Every pair, the median of d and the SD of d, which is the first measured spread of matched differences and feeds later sizing. Also per-opponent differences, each child's RL gain over its parent, the spread of arm A against the pilot, and Fireball capture diagnostics.
+- **Sample size and stopping.** n = 12 is fixed. The analysis runs once, after all 24 children are evaluated. Progress checks read only counts, timings, exit codes and stop reasons.
+- **Failures.** Settings never change. One infrastructure retry uses the identical command and seeds, frozen in `run.sh`. Every engineering-invalid outcome is reported: illegal attempts, nondeterministic evaluation, failed parity or learner aborts. An invalid child in either arm blocks a conclusion that favors that arm.
+
+**Before freezing.**
+- Run a 2-pair `--iterations 1` plumbing smoke on throwaway seeds outside the evaluation sets.
+- Verify the regenerated r1–r5 plans.
+- Hash `plan.md`, `run.sh` and `analyze.py` into `FROZEN.txt` before any output.
+
+**Cost.** The pilot's step timings were BC about 3 min, an RL arm about 2.4 min and three evaluations of a model about 1 min. A pair therefore takes about 12 min, and the comparison about 2.5 h. The cap is 4 h. The run is local only and the rollouts total about 22 MB per arm.
+
+**What it decides.**
+- If refreshed rollouts are better by at least 0.15, any production league stage needs iterated rollouts at this update scale before a campaign.
+- If the result is within ±0.15, rollout freshness at this scale does not explain the regression. The next attribution step is the production learner path on fixed data, then opponent mix and update scale.
+- "Inconclusive at this size" is reported as such, without a follow-up decided after seeing it.
 
 ## Limits
 
