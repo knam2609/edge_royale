@@ -28,6 +28,9 @@ import { createProductionEngine } from "../src/sim/productionMatch.js";
 import {
   createTrainingEpisode,
   deriveDecisionSequence,
+  loadTrainingEpisode,
+  readDatasetManifest,
+  splitForEpisodeId,
 } from "../scripts/edger-corpus-core.mjs";
 import {
   EDGER_V2_CADENCES,
@@ -41,8 +44,11 @@ import {
   runEdgerV2CadenceMatch,
 } from "../scripts/edger-v2-cadence-core.mjs";
 import {
+  CADENCE_CONVERSION_COLLECTOR,
   buildCadenceSeedPlan,
   buildReplicationSeedPlans,
+  cadenceRowMismatches,
+  cadenceTrainingEpisode,
   exactSignTest,
   frozenSuiteSeeds,
   heldoutCaptureRecord,
@@ -792,6 +798,138 @@ test("the diagnostics command pools one model's opponent evaluations and rejects
     const mixed = run(["diagnostics", "--evaluations", aggressive, other, "--out", path.join(directory, "mixed.json")]);
     assert.notEqual(mixed.status, 0);
     assert.equal(fs.existsSync(path.join(directory, "mixed.json")), false);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("converted episodes reproduce every cadence row and name any field that differs", () => {
+  const model = randomModel(19, 0.3);
+  const item = { seed: 777, candidate_actor: "red", opponent: "aggressive" };
+  const match = runEdgerV2CadenceMatch({
+    seed: item.seed,
+    candidateActor: item.candidate_actor,
+    model,
+    cadence: LEARNED,
+    opponentBotId: item.opponent,
+    mode: "sample",
+    recordRows: true,
+    returnReplay: true,
+  });
+  const episode = cadenceTrainingEpisode({ item, match, model });
+  assert.equal(episode.source.collector, CADENCE_CONVERSION_COLLECTOR);
+  assert.deepEqual(
+    [episode.policies.red.policy_id, episode.policies.red.behavior_probabilities],
+    [model.model_id, "known"],
+  );
+  assert.deepEqual(
+    [episode.policies.blue.policy_id, episode.policies.blue.behavior_probabilities],
+    ["aggressive", "unknown"],
+  );
+  // The labels are fixed, so the episode ID (and with it the split and the
+  // production order) depends only on the regenerated game.
+  assert.equal(cadenceTrainingEpisode({ item, match, model }).episode_id, episode.episode_id);
+  const samples = deriveDecisionSequence(episode).samples;
+  assert.equal(samples.length, match.rows.length);
+  const context = { actor: "red", opponent: "aggressive" };
+  samples.forEach((sample, index) => {
+    assert.deepEqual(cadenceRowMismatches(sample, match.rows[index], context), [], `row ${index}`);
+  });
+  const index = match.rows.findIndex((row) => row.card_index !== 0);
+  assert.ok(index >= 0, "fixture must include a card play");
+  const [sample, row] = [samples[index], match.rows[index]];
+  // Exact equality, no tolerance.
+  assert.deepEqual(cadenceRowMismatches(sample, { ...row, reward: row.reward + 1e-13 }, context), ["reward"]);
+  assert.deepEqual(
+    cadenceRowMismatches(sample, { ...row, global: row.global.map((value, k) => (k === 0 ? value + 1 : value)) }, context),
+    ["global"],
+  );
+  assert.deepEqual(
+    cadenceRowMismatches(sample, { ...row, behavior_log_probability: row.behavior_log_probability - 1e-9 }, context),
+    ["behavior_log_probability"],
+  );
+  assert.deepEqual(
+    cadenceRowMismatches(sample, { ...row, placement_legal: row.placement_legal.slice(1) }, context),
+    ["placement_mask"],
+  );
+  assert.deepEqual(cadenceRowMismatches(sample, row, { ...context, opponent: "edger" }), ["opponent_stratum"]);
+});
+
+test("convert-collection regenerates pruned games into production episodes and fails closed", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "edger-cadence-convert-"));
+  try {
+    const plan = path.join(directory, "plan.json");
+    fs.writeFileSync(plan, JSON.stringify(buildCadenceSeedPlan({ development: 1, probe: 1, training: 1 })));
+    const modelPath = path.join(directory, "model.json");
+    fs.writeFileSync(modelPath, JSON.stringify(randomModel(11)));
+    const script = path.join(ROOT, "scripts", "edger-v2-cadence-experiment.mjs");
+    const run = (argv) => spawnSync(process.execPath, [script, ...argv], { cwd: ROOT, encoding: "utf8" });
+    const collectionPath = path.join(directory, "collection.json");
+    const collected = run([
+      "collect", "--seeds", plan, "--iteration", "0", "--pairs-per-iteration", "1", "--model", modelPath,
+      "--cadence", LEARNED, "--out-dir", path.join(directory, "episodes"), "--out", collectionPath, "--workers", "2",
+    ]);
+    assert.equal(collected.status, 0, collected.stderr);
+    const headers = path.join(directory, "headers");
+    pruneEpisodeBodies(path.join(directory, "episodes"), headers);
+    const collection = JSON.parse(fs.readFileSync(collectionPath, "utf8"));
+
+    const convert = (name, extra = []) => run([
+      "convert-collection", "--collection", collectionPath, "--headers", headers,
+      "--store", path.join(directory, `store-${name}`), "--manifest-out", path.join(directory, `${name}.json`), ...extra,
+    ]);
+    const converted = convert("a");
+    assert.equal(converted.status, 0, converted.stderr);
+    const report = JSON.parse(fs.readFileSync(path.join(directory, "a.json.conversion.json"), "utf8"));
+    assert.equal(report.passed, true);
+    assert.equal(report.model_sha256, collection.model_sha256);
+    assert.equal(report.episodes.length, 2);
+    assert.equal(report.rows, collection.rows);
+    assert.equal(report.row_mismatches, 0);
+    const manifest = readDatasetManifest(path.join(directory, "a.json"));
+    assert.equal(report.manifest_hash, manifest.manifest_hash);
+    assert.deepEqual(
+      manifest.shards.map((shard) => shard.episode_id),
+      report.episodes.map((episode) => episode.episode_id).sort(),
+      "manifest order is episode-ID (hash) order",
+    );
+    for (const shard of manifest.shards) {
+      const episode = loadTrainingEpisode(shard.uri, { verifyReplay: true });
+      const entry = report.episodes.find((item) => item.episode_id === episode.episode_id);
+      assert.equal(episode.source.collector, CADENCE_CONVERSION_COLLECTOR);
+      assert.equal(shard.split, splitForEpisodeId(episode.episode_id));
+      assert.equal(entry.split, shard.split);
+      assert.equal(deriveDecisionSequence(episode).samples.length, entry.rows);
+    }
+    const again = convert("b");
+    assert.equal(again.status, 0, again.stderr);
+    assert.deepEqual(
+      readDatasetManifest(path.join(directory, "b.json")).shards.map((shard) => shard.episode_id),
+      manifest.shards.map((shard) => shard.episode_id),
+      "conversion is deterministic",
+    );
+    const overwrite = convert("a");
+    assert.notEqual(overwrite.status, 0);
+    assert.match(overwrite.stderr, /already exists/);
+
+    // A body that differs from its recorded header stops the conversion: no
+    // manifest, only a failure report.
+    const headerPath = path.join(headers, `${collection.episodes[1].episode_id}.json`);
+    const header = JSON.parse(fs.readFileSync(headerPath, "utf8"));
+    fs.writeFileSync(headerPath, JSON.stringify({ ...header, body_sha256: "0".repeat(64) }));
+    const changedBody = convert("c");
+    assert.notEqual(changedBody.status, 0);
+    assert.match(changedBody.stderr, /regenerated body differs from the recorded header/);
+    assert.equal(fs.existsSync(path.join(directory, "c.json")), false);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(directory, "c.json.conversion.json.failed"), "utf8")).passed, false);
+    fs.writeFileSync(headerPath, JSON.stringify(header));
+
+    // So does a collecting model whose bytes differ from the recorded SHA-256.
+    fs.writeFileSync(modelPath, JSON.stringify(randomModel(12)));
+    const changedModel = convert("d");
+    assert.notEqual(changedModel.status, 0);
+    assert.match(changedModel.stderr, /differs from the collection's recorded SHA-256/);
+    assert.equal(fs.existsSync(path.join(directory, "d.json")), false);
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }

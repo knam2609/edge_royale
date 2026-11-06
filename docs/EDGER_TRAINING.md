@@ -265,6 +265,22 @@ the live bot, the promotion evaluator or campaigns.
   - Pass fraction is reported over all decisions and over choice decisions. Chosen delay is the mean over decisions, plus the fraction of decisions that chose the 1-tick minimum.
   - Aggregation pools decision-weighted means and the population maximum, with p05/p50/p95 of per-game means.
   - These figures are not the parity report's `maximum_legal_logit_magnitude`, which is measured on parity fixtures.
+- `convert-collection --collection <collection.json> [--headers <dir>]
+  --store <dir> --manifest-out <file> [--report-out <file>]` (since November
+  7, 2026) turns one train-arm collection into production
+  `edger_training_episode_v1` episodes for `edger-dataset.mjs` and `vtrace`.
+  Bodies may be pruned. It requires the collecting model's SHA-256 to equal
+  the recorded one and replays every game from model, seed, side and opponent.
+  Each regenerated body must equal its header's checksum, and the production
+  `deriveDecisionSequence` must reproduce every cadence row exactly
+  (observation, masks, action, delay, behavior log-probability, reward,
+  return). Any failure leaves no manifest, only `<report>.failed`. The policy
+  and collector labels (`edger_v2_cadence_conversion_v1`) are fixed in code,
+  because the content-hashed episode IDs set the production split and
+  order. Converting the same collection again gives the same IDs. The
+  production path then differs from train-arm's learner only by its
+  train-split filter, ID (hash) order and balancing weights
+  ([comparison design](EDGER_TACTICAL_REVIEW.md#third-comparison-production-learner-on-fixed-refreshed-data)).
 - Checkpoints use `edger_v2_cadence_diagnostic_checkpoint_v1`, which production
   `load_checkpoint` rejects, and exports are labelled
   `diagnostic_only_not_promotable`. The diagnostic learner records the dirty

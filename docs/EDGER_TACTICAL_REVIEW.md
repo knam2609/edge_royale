@@ -1134,8 +1134,8 @@ games collected by parent `b0-s20260724`), using a clean clone at `b4a0c78`:
 - **"Inconclusive at this size":** reported as such, with no follow-up chosen after seeing it.
 - Every label keeps the refresh requirement. No child is a promotion candidate.
 
-**Before freezing (approval recorded above; checks still pending).**
-- **Code checkpoint:** a `convert-collection` command that implements the prototype, with tests. It regenerates each game, verifies the header checksum, writes the production episodes, checks the derivation, and writes the manifest and a conversion report.
+**Before freezing (approval recorded above).**
+- **Code checkpoint (done November 7):** `convert-collection` in `scripts/edger-v2-cadence-experiment.mjs` implements the prototype, with tests. It regenerates each game, verifies the model and header checksums, writes the production episodes, checks the derivation, and writes the manifest and a conversion report. Its fixed collector label (`edger_v2_cadence_conversion_v1`) differs from the prototype's, so episode IDs and splits differ from the prototype's (`SS` A-r6 iteration 0: 47/7/10 instead of 54/4/6). It still converted 64/64 games with 0 row mismatches. Tests: two new cases in `tests/edger-v2-cadence.test.js`. `PYTHON=/usr/local/bin/python3 npm test`: 244/244.
 - **Smoke:** iterations 0–1 of P for one parent in scratch directories, plus the neutralized check, an export and a 2-pair evaluation.
 - **Dry run:** `analyze.py` on synthetic inputs, covering the complete, blocked, incomplete and reproduction-mismatch paths.
 - **Freeze:** hash `plan.md`, `run.sh`, `analyze.py` and the check scripts into `FROZEN.txt` before any output.

@@ -11,12 +11,23 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 
+import { validateEdgerV2PolicyModel } from "../src/ai/v2/policy.js";
 import { createRng } from "../src/sim/random.js";
+import {
+  buildDatasetManifest,
+  createTrainingEpisode,
+  deriveDecisionSequence,
+  splitForEpisodeId,
+  storeTrainingEpisode,
+  writeDatasetManifest,
+} from "./edger-corpus-core.mjs";
 import {
   EDGER_V2_CADENCES,
   EDGER_V2_POLICY_DIAGNOSTICS_SCHEMA,
   deriveLabelledSeeds,
+  encodeCadenceEpisode,
   lcgSeedPrefix,
+  runEdgerV2CadenceMatch,
 } from "./edger-v2-cadence-core.mjs";
 import { spawnNativePython } from "./python-runtime.mjs";
 
@@ -1035,6 +1046,253 @@ async function commandTrainArm(args) {
   console.log(JSON.stringify({ arm, stop_reason: status.stop_reason, final_model: model }));
 }
 
+// ---------------------------------------------------------------------------
+// Conversion of a train-arm collection to production training episodes
+//
+// The production learner (edger-dataset.mjs cache, edger-v2-training.py
+// vtrace) reads edger_training_episode_v1 episodes, while train-arm keeps
+// compact cadence trajectories whose bodies may be pruned. Conversion
+// regenerates every game from the collection's recorded model, seed, side and
+// opponent, refuses any game whose body differs from the recorded header, and
+// requires the production derivation to reproduce every cadence row exactly.
+// Episode IDs hash the whole episode, policy and collector labels included,
+// and the IDs fix the production split and order; the labels are therefore
+// constants here, never arguments.
+
+export const CADENCE_CONVERSION_SCHEMA = "edger_v2_cadence_conversion_v1";
+export const CADENCE_CONVERSION_COLLECTOR = "edger_v2_cadence_conversion_v1";
+
+function sameValues(left, right) {
+  if (!left || !right || left.length !== right.length) {
+    return false;
+  }
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+export function denseCadenceBoard(row, size) {
+  const board = new Array(size).fill(0);
+  row.board_indices.forEach((cell, index) => {
+    board[cell] = row.board_values[index];
+  });
+  return board;
+}
+
+// Names of the fields in which a production decision sample differs from the
+// cadence row it must reproduce; empty when they agree exactly.
+export function cadenceRowMismatches(sample, row, { actor, opponent }) {
+  const fields = [];
+  const check = (name, same) => {
+    if (!same) {
+      fields.push(name);
+    }
+  };
+  check("tick", sample.tick === row.tick);
+  check("actor", sample.actor === actor);
+  check("opponent_stratum", sample.opponent_stratum === opponent);
+  check("delay_ticks", sample.delay_ticks === row.delay_ticks);
+  check("card_index", sample.selected.card_index === row.card_index);
+  check("placement_index", sample.selected.placement_index === row.placement_index);
+  check("delay_index", sample.selected.delay_index === row.delay_index);
+  check("behavior_log_probability", sample.behavior_log_probability === row.behavior_log_probability);
+  check("vtrace_eligible", sample.vtrace_eligible === true);
+  check("reward", sample.reward === row.reward);
+  check("discounted_return", sample.discounted_return === row.discounted_return);
+  check("board", sameValues(sample.board, denseCadenceBoard(row, sample.board.length)));
+  check("global", sameValues(sample.global, row.global));
+  check("card_mask", sameValues(sample.legal_masks.card, row.card_mask));
+  check("placement_mask", sameValues(
+    sample.legal_masks.placement.flatMap((value, cell) => (value ? [cell] : [])),
+    row.placement_legal,
+  ));
+  // Cadence trajectories carry no delay mask: every delay bin is legal.
+  check("delay_mask", sample.legal_masks.delay.every((value) => value === 1));
+  return fields;
+}
+
+export function cadenceTrainingEpisode({ item, match, model }) {
+  const opponentActor = item.candidate_actor === "blue" ? "red" : "blue";
+  return createTrainingEpisode({
+    seed: item.seed,
+    initialCardState: match.replay.initial_card_state,
+    actions: match.replay.actions,
+    events: match.replay.events,
+    result: match.replay.result,
+    finalStateHash: match.final_state_hash,
+    policies: {
+      [item.candidate_actor]: {
+        policy_id: model.model_id,
+        checkpoint_id: model.training?.checkpoint_id ?? null,
+        behavior_probabilities: "known",
+      },
+      [opponentActor]: { policy_id: item.opponent, behavior_probabilities: "unknown" },
+    },
+    source: { kind: "simulator", collector: CADENCE_CONVERSION_COLLECTOR },
+    decisions: match.rows.map((row) => ({
+      tick: row.tick,
+      actor: item.candidate_actor,
+      action: row.action,
+      delay_ticks: row.delay_ticks,
+      behavior_log_probability: row.behavior_log_probability,
+      opponent_stratum: item.opponent,
+    })),
+  });
+}
+
+function conversionFailure(message, report) {
+  const error = new Error(message);
+  error.report = report;
+  return error;
+}
+
+export function convertCadenceCollection({ collectionPath, headersDir = null, store, manifestOut }) {
+  const started = performance.now();
+  const collection = JSON.parse(fs.readFileSync(collectionPath, "utf8"));
+  if (collection.schema_version !== "edger_v2_cadence_collection_v1") {
+    throw new Error(`${collectionPath} is not a cadence collection`);
+  }
+  const modelSha256 = sha256File(collection.model);
+  const report = {
+    schema_version: CADENCE_CONVERSION_SCHEMA,
+    collector: CADENCE_CONVERSION_COLLECTOR,
+    collection: path.resolve(collectionPath),
+    collection_sha256: sha256File(collectionPath),
+    iteration: collection.iteration,
+    cadence: collection.cadence,
+    model: collection.model,
+    model_sha256: modelSha256,
+    recorded_model_sha256: collection.model_sha256,
+    headers_dir: headersDir ? path.resolve(headersDir) : null,
+    store: path.resolve(store),
+    passed: false,
+    episodes: [],
+  };
+  if (modelSha256 !== collection.model_sha256) {
+    throw conversionFailure(`collecting model ${collection.model} differs from the collection's recorded SHA-256`, report);
+  }
+  const model = validateEdgerV2PolicyModel(JSON.parse(fs.readFileSync(collection.model, "utf8")));
+  const uris = [];
+  for (const item of [...collection.episodes].sort((left, right) => left.match_index - right.match_index)) {
+    const headerPath = headersDir ? path.join(headersDir, `${item.episode_id}.json`) : item.header;
+    const header = JSON.parse(fs.readFileSync(headerPath, "utf8"));
+    const recorded = {
+      episode_id: item.episode_id,
+      seed: item.seed,
+      candidate_actor: item.candidate_actor,
+      opponent: item.opponent,
+      cadence: collection.cadence,
+      mode: "sample",
+      model_sha256: collection.model_sha256,
+    };
+    const headerProblems = Object.entries(recorded).filter(([key, value]) => header[key] !== value).map(([key]) => key);
+    if (headerProblems.length > 0) {
+      throw conversionFailure(`${item.episode_id}: header disagrees with the collection on ${headerProblems.join(", ")}`, report);
+    }
+    const match = runEdgerV2CadenceMatch({
+      seed: item.seed,
+      candidateActor: item.candidate_actor,
+      model,
+      cadence: collection.cadence,
+      opponentBotId: item.opponent,
+      mode: "sample",
+      recordRows: true,
+      returnReplay: true,
+    });
+    const bodySha256 = encodeCadenceEpisode({ rows: match.rows, meta: {} }).header.body_sha256;
+    if (bodySha256 !== header.body_sha256 || match.rows.length !== header.rows) {
+      throw conversionFailure(`${item.episode_id}: regenerated body differs from the recorded header`, report);
+    }
+    const episode = cadenceTrainingEpisode({ item, match, model });
+    const stored = storeTrainingEpisode({ episode, store, verifyReplay: true });
+    uris.push(stored.uri);
+    const samples = deriveDecisionSequence(episode).samples;
+    const mismatchedRows = [];
+    const fieldCounts = {};
+    match.rows.forEach((row, index) => {
+      const fields = index < samples.length
+        ? cadenceRowMismatches(samples[index], row, { actor: item.candidate_actor, opponent: item.opponent })
+        : ["missing"];
+      if (fields.length > 0) {
+        mismatchedRows.push(index);
+        fields.forEach((field) => {
+          fieldCounts[field] = (fieldCounts[field] ?? 0) + 1;
+        });
+      }
+    });
+    report.episodes.push({
+      match_index: item.match_index,
+      cadence_episode: item.episode_id,
+      body_sha256: bodySha256,
+      episode_id: episode.episode_id,
+      split: splitForEpisodeId(episode.episode_id),
+      rows: match.rows.length,
+      derived_samples: samples.length,
+      row_mismatches: mismatchedRows.length + Math.max(0, samples.length - match.rows.length),
+      mismatched_fields: fieldCounts,
+    });
+  }
+  report.rows = report.episodes.reduce((sum, episode) => sum + episode.rows, 0);
+  report.row_mismatches = report.episodes.reduce((sum, episode) => sum + episode.row_mismatches, 0);
+  report.splits = { train: 0, validation: 0, test: 0 };
+  report.split_rows = { train: 0, validation: 0, test: 0 };
+  for (const episode of report.episodes) {
+    report.splits[episode.split] += 1;
+    report.split_rows[episode.split] += episode.rows;
+  }
+  report.wall_seconds = (performance.now() - started) / 1000;
+  if (report.row_mismatches > 0) {
+    throw conversionFailure(`${report.row_mismatches} derived rows differ from the cadence rows`, report);
+  }
+  const manifest = buildDatasetManifest({ episodeUris: uris });
+  const converted = report.episodes.map((episode) => episode.episode_id).sort();
+  if (!sameValues(manifest.shards.map((shard) => shard.episode_id), converted)) {
+    throw conversionFailure("manifest shards differ from the converted episodes", report);
+  }
+  writeDatasetManifest(manifestOut, manifest);
+  report.passed = true;
+  report.manifest = path.resolve(manifestOut);
+  report.manifest_sha256 = sha256File(manifestOut);
+  report.manifest_hash = manifest.manifest_hash;
+  report.wall_seconds = (performance.now() - started) / 1000;
+  return report;
+}
+
+async function commandConvertCollection(args) {
+  const manifestOut = required(args, "manifest-out");
+  const reportOut = args["report-out"] ?? `${manifestOut}.conversion.json`;
+  if (fs.existsSync(manifestOut) || fs.existsSync(reportOut)) {
+    throw new Error(`conversion output already exists: ${fs.existsSync(manifestOut) ? manifestOut : reportOut}`);
+  }
+  let report;
+  try {
+    report = convertCadenceCollection({
+      collectionPath: required(args, "collection"),
+      headersDir: args.headers ?? null,
+      store: required(args, "store"),
+      manifestOut,
+    });
+  } catch (error) {
+    if (error.report) {
+      // A failed check leaves no manifest, only the report that explains it.
+      writeJson(`${reportOut}.failed`, { ...error.report, error: error.message });
+    }
+    throw error;
+  }
+  writeJson(reportOut, report);
+  console.log(JSON.stringify({
+    episodes: report.episodes.length,
+    rows: report.rows,
+    row_mismatches: report.row_mismatches,
+    splits: report.splits,
+    manifest_hash: report.manifest_hash,
+    wall_seconds: report.wall_seconds,
+  }));
+}
+
 async function commandSummarize(args) {
   const inputs = Object.fromEntries(asList(required(args, "condition")).map((entry) => {
     const [label, filePath] = entry.split("=");
@@ -1072,6 +1330,7 @@ const COMMANDS = {
   "train-arm": commandTrainArm,
   summarize: commandSummarize,
   diagnostics: commandDiagnostics,
+  "convert-collection": commandConvertCollection,
 };
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
