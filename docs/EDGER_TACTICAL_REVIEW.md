@@ -889,8 +889,11 @@ same day. The frozen label stands unchanged.
 
 ### Second comparison: staleness at four times the updates
 
-**Status: owner-approved November 6, 2026; not yet run.** This is the
-attribution step the owner chose above. The design below is as approved.
+**Status: done locally (owner-approved November 6, 2026).** Evidence:
+`SS` = `~/edge_royale-runs/20261106-staleness-scale.noindex/` (`plan.md`,
+`FROZEN.txt`, `analysis.md`, `posthoc.md`, `README.md`, `SHA256SUMS`).
+Diagnostic only. This is the attribution step the owner chose above. The design
+below is as approved.
 
 **Question.** Does a stretch without refreshing four times as long make the
 stale child regress below its parent? And how far does it fall behind the
@@ -947,6 +950,74 @@ The cap is 6 h, after which no new step starts. The run is local only, about 0.5
 - **Within ±0.15 or inconclusive:** reported as such, with no follow-up decided after seeing it.
 - **d′:** every label keeps the refresh requirement. d′ records the cost of staleness at this scale.
 
+**Preflight and run.**
+- `SS/vrepo` is a clean clone at `51e5969`. The twelve parents were byte-copied from `FR` and match `FR/SHA256SUMS`.
+- The extended plans were regenerated in `SS`, with the same result as the scratchpad trial (`SS/seeds-check.txt`). Every first-192 prefix equals the `VP`/`FR` plan, and the 19 training sets and 3 evaluation sets are pairwise disjoint.
+- The smoke from the pilot's `b0-s20260718` passed. Both shapes completed, and pair 0's two bodies and first two updates were identical; pairs 1–2 shared seeds and opponents but not bodies (`SS/smoke/smoke-check.txt`).
+- `analyze.py` was dry-run on synthetic inputs built from `FR`'s files, covering the complete, regressed, blocked, incomplete and reproduction-mismatch paths. With `FR`'s children substituted, it reproduced `FR`'s +0.074 and −0.105.
+- `FROZEN.txt` was written at 2026-11-06T03:52:32Z UTC, before any output, and covers 46 files. The runner was launched at 03:52:59Z with `nohup caffeinate -is bash run.sh > runner.out 2>&1`.
+- An unrelated `gridcast` backtest shared the host (about 2.6 of 12 cores at launch). This affects wall time, not results.
+- The runner took 4 h 25 min (03:52:59–08:17:43 UTC) with one launch, inside the 6 h cap. All 156 steps succeeded on the first attempt, and `FROZEN.txt` re-verified 46/46 before the analysis ran once.
+- All 24 arms completed with zero illegal attempts and deterministic evaluations. Two B′ children (r12, r13) failed parity: their worst tolerance ratios were 2.40 and 1.34, with maximum legal logits of 366 and 327. These are engineering-invalid outcomes and stay in the means. They would block any label favoring B′; neither label does.
+- **Every reproduction check passed.**
+  - A′'s first six iterations replayed `FR`'s A child exactly in all 12 pairs: 384/384 episode bodies, 384/384 gradient norms and equal iteration-5 weights.
+  - A′ and B′ shared 64/64 bodies and updates.
+  - Every parent re-evaluation equalled `FR`'s, game by game (points, action streams and final states).
+
+| Pair | Parent | A′ (refreshed) | B′ (single rollout) | g′ = B′ − parent | d′ = B′ − A′ | d at 384 |
+|---|---|---|---|---|---|---|
+| r6 | 0.619 | 0.872 | 0.641 | +0.022 | −0.231 | −0.113 |
+| r7 | 0.634 | 0.854 | 0.843 | +0.209 | −0.011 | +0.015 |
+| r8 | 0.572 | 0.808 | 0.790 | +0.218 | −0.018 | −0.058 |
+| r9 | 0.562 | 0.818 | 0.655 | +0.093 | −0.163 | −0.075 |
+| r10 | 0.523 | 0.836 | 0.691 | +0.167 | −0.145 | −0.177 |
+| r11 | 0.563 | 0.799 | 0.193 | −0.370 | −0.605 | −0.103 |
+| r12 | 0.554 | 0.823 | 0.589 | +0.035 | −0.235 | −0.175 |
+| r13 | 0.454 | 0.823 | 0.748 | +0.294 | −0.074 | −0.225 |
+| r14 | 0.541 | 0.774 | 0.513 | −0.028 | −0.260 | −0.128 |
+| r15 | 0.668 | 0.783 | 0.201 | −0.468 | −0.582 | −0.158 |
+| r16 | 0.661 | 0.832 | 0.174 | −0.487 | −0.657 | +0.018 |
+| r17 | 0.550 | 0.820 | 0.694 | +0.144 | −0.126 | −0.077 |
+
+**Results** (frozen analysis, `SS/analysis.md`).
+- **g′ (stale child against parent):** mean −0.014, 95% t interval [−0.188, +0.160]. Frozen label: **"inconclusive at this size"**. The median is +0.064; g′ was positive in 8 of 12 pairs, with SD 0.274 [0.194, 0.466].
+- **d′ (stale against refreshed):** mean −0.259 [−0.405, −0.113]. Frozen label: **"refreshed better (|mean| ≥ 0.15)"**.
+  - B′ was below A′ in all 12 pairs; the median is −0.197 and the SD 0.229.
+  - Every opponent's interval excludes 0: v1 −0.264, heuristic −0.289, aggressive −0.224.
+- **Scale trend** (pre-registered secondary): d′ − d = −0.154 [−0.311, +0.003] and g′ − g_B = −0.088 [−0.251, +0.075]. Both lean toward staleness costing more at 1,536 updates; neither interval excludes 0.
+- **The refreshed loop kept improving and stayed tight.**
+  - A′ gained +0.245 [+0.204, +0.285] over its parents, positive in 12 of 12. The SD of these paired gains is 0.064; the 0.028 below describes final child scores.
+  - It beat `FR`'s 384-update A child by +0.066 [+0.030, +0.102], also 12 of 12.
+  - Its 12 children have mean 0.820 and SD 0.028.
+  - B′'s children have mean 0.561 and SD 0.240 (range 0.174–0.843).
+- **Fireball:** no A′ child captured a held-out opportunity. One B′ child did: r16, at 0.176 with mean P(Fireball) 0.326. That is the same child whose score collapsed, so it is not a tactical gain.
+
+**Post hoc** (`SS/posthoc.md`, written after the analysis was read; descriptive only).
+- **Children more than 0.15 below their parent:**
+  - B′: 3 of 12 (r11, r15, r16).
+  - None of the 12 A′ children, nor of `FR`'s 12 A or 12 B children.
+  - Without those three, the mean g′ of the other nine is +0.128. The frozen rule retains them.
+- **Degeneration in four B′ children** (r11, r12, r13, r15):
+  - Delay and card entropy fell to 0.00–0.01 by the last 64 updates.
+  - They choose the minimum 1-tick delay at every decision: about 4,000 decisions per game, 99% of them passes, against 27–34 for parents and 62–458 for refreshed children.
+  - Maximum legal logits reached 108–366. Every other child stays at or below 42.
+  - Shared-trunk drift from the parent was 0.40–0.88, against 0.20–0.29 for the other B′ children.
+  - Two of these four still scored above their parents, so the play score alone understates the damage.
+  - r16 collapsed differently: delay 6.9 and Fireball probability up. No refreshed child shows either pattern.
+- These are the heads the historical league damage concentrated in (card and delay; [evaluation diagnosis](EDGER_EVALUATION_DIAGNOSIS.md#training-defect-and-bounded-reproduction)). This is a resemblance noticed after the result, not a tested mechanism.
+
+**Reading** (by the branches fixed before output).
+- **g′ is "inconclusive at this size".** The fixed branch supplies no follow-up; the separate review decision below leaves this label unchanged. The mean-based test at 12 pairs cannot separate "usually improves, sometimes collapses" from no change: the spread of g′ quadrupled from 0.068 at 384 updates to 0.274.
+- **d′ is "refreshed better (|mean| ≥ 0.15)".** The refresh requirement stands. At 1,536 updates, staleness cost 0.259 primary on average and never helped in any pair. The magnitude label describes the observed mean; the interval supports an advantage of 0.113–0.405, so it does not establish a minimum advantage of 0.15.
+- Whether stale learning at the historical scale (about 11,318 updates) regresses on average remains untested. That stale rollouts at 1,536 updates can degenerate a policy (4 of 12 here) is a post-hoc observation and a hypothesis for any later design, not a finding.
+
+**Next-step decision — November 6, 2026 review (after output).**
+- Prepare the production learner path comparison on fixed data (task 4) next. Refreshed rollouts are already required, so testing the learner used by the future pipeline takes priority over resolving mean stale-child regression. This is a separate engineering priority decision; it changes neither frozen label nor the approved analysis.
+- Isolate the learner path: both arms must consume the same frozen, ordered data collected with refreshed policies. Independently recollecting each arm's games would mix learner and data effects. Freeze the collection schedule, data conversion checks, update budget, matched parents, seeds, same-host provenance, sample size, failure handling, stopping rule and cost cap before comparison output. Keep the league opponent mix and base-corpus changes for separate attribution steps.
+- Include routine diagnostics for every future RL child: card/delay choice entropy, decisions per game and maximum legal logit, alongside pass fraction and chosen delay. Define the observation population, masks, entropy units, aggregation and logit heads before the next run. Add reporting in a separate code checkpoint with appropriate tests; these are descriptive measures, with no new exclusion, stopping or promotion threshold inferred from this result.
+- Keep stale-batch breakdown as a hypothesis. Any dedicated comparison needs a separately frozen breakdown endpoint and design; do not extend these 12 pairs after inspecting g′.
+- Checkpoint these results as a local docs-only commit. The next comparison still needs a concrete reviewed design before launch; publication and promotion retain their separate approval requirements.
+
 ## Limits
 
 - The corpus is a 160-episode subset, not the production corpus.
@@ -959,8 +1030,8 @@ The cap is 6 h, after which no new step starts. The run is local only, about 0.5
 - The post-cap continuation is a recorded deviation from the proposal 3 plan; the frozen label at the cap was inconclusive only because outputs were missing.
 - Option 1 tested one coefficient (0.05) and one row mask, with `P`'s parents, seeds and controls; the controls were trained on October 26–27 under code shown to reproduce them.
 - The β = 1 follow-up tested one more coefficient on the same mask. Its same-host controls come from an addendum written after the frozen analysis was read; that addendum changed only the controls' host.
-- Same-host training-run variance was measured once (six old-recipe runs on the M6): the child-primary SD is 0.118, strongly influenced by one valid low-scoring run. Three-run contrasts are below the modeled 80%-power target. Matched-difference spread was measured once, for rollout freshness (SD 0.075 over 12 pairs).
-- Rollout freshness was tested at one scale (384 updates, refresh every 64 games against one 384-game rollout), with one cache, the `train-arm` learner, `train-arm` opponents and development seeds. The production learner path, league opponents and larger updates-per-rollout are untested.
+- Same-host training-run variance was measured once (six old-recipe runs on the M6): the child-primary SD is 0.118, strongly influenced by one valid low-scoring run. Three-run contrasts are below the modeled 80%-power target. Matched-difference spread was measured for rollout freshness at two scales: SD 0.075 at 384 updates and 0.229 at 1,536, each over 12 pairs.
+- Rollout freshness was tested at two scales on the same 12 parents: 384 updates, and 1,536 with a 1,536-game rollout. Both used one refresh interval (64 games), one cache, the `train-arm` learner, `train-arm` opponents and development seeds. The production learner path, league opponents and the historical scale (about 11,318 updates) are untested. The stale-degeneration pattern is post hoc.
 - RL training is bit-reproducible only on the same host (M1 against M6, PyTorch 2.11.0 with Accelerate). Host variation of a six-iteration child (up to 0.17 primary) is as large as most effects in this review, so every RL contrast here carries training-run uncertainty that its intervals do not cover. Future comparisons need same-host controls.
 
 ## Reproduction
@@ -1092,4 +1163,16 @@ cd "$FR"
 nohup caffeinate -is bash run.sh > runner.out 2>&1   # frozen; writes run.log and DONE
 python3 -I analyze.py > analysis.md                    # frozen
 python3 -I posthoc.py > posthoc.md                     # post hoc, not frozen
+```
+
+Staleness-at-scale comparison (`SS/README.md` describes every file). `vrepo` is
+a clone at `51e5969`; the parents are byte copies of `FR`'s.
+
+```bash
+SS=~/edge_royale-runs/20261106-staleness-scale.noindex
+cd "$SS/vrepo" && node scripts/edger-v2-cadence-experiment.mjs replicate-seeds --base "$SS/seeds/seed-plan-r0.json" --out-dir "$SS/seeds-gen" --replicates r1 r2 r3 r4 r5 r6 r7 r8 r9 r10 r11 r12 r13 r14 r15 r16 r17 --training 768
+cd "$SS"
+nohup caffeinate -is bash run.sh > runner.out 2>&1   # frozen; writes run.log and DONE
+/usr/local/bin/python3 -I analyze.py > analysis.md     # frozen
+/usr/local/bin/python3 -I posthoc.py > posthoc.md      # post hoc, not frozen
 ```
