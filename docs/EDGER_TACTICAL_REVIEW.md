@@ -885,7 +885,67 @@ same day. The frozen label stands unchanged.
 - **Next attribution step: longer stretches without refreshing.** Test whether staleness at a larger scale causes regression. Use matched parents, equal total games and updates, and the same learner and opponents. Measure both the refreshed-against-stale gap and each child's change from its parent. Freeze the scale, cost cap and consequences before launch.
 - **The rule's 12-pair default stays.** Eight pairs is a calculation for detecting 0.15 in this design only, whereas this comparison found about 0.10. At the paired SD's upper bound, 0.10 needs about 15 pairs, and the spread at larger scale is unknown.
 - This comparison advances the training diagnosis only. No child captured a held-out Fireball opportunity, and candidate quality remains unresolved.
-- The results were committed as their own docs-only checkpoint.
+- The results were committed as their own docs-only checkpoint (`bb39dea`).
+
+### Second comparison: staleness at four times the updates
+
+**Status: owner-approved November 6, 2026; not yet run.** This is the
+attribution step the owner chose above. The design below is as approved.
+
+**Question.** Does a stretch without refreshing four times as long make the
+stale child regress below its parent? And how far does it fall behind the
+refreshed loop at equal games and updates? The historical production stage
+made about 11,318 updates from one rollout. The first comparison tested 384.
+This one tests 1,536: four times the first comparison's scale, and still about
+a seventh of the historical one.
+
+**Design.** RL-only and matched by parent, otherwise as in the first comparison.
+- **Host and code:** the same M6 and toolchain, with a clean clone at `bb39dea` or a later docs-only commit. Its `src/`, `scripts/`, `tests/` and `package.json` are identical to `d345a49`'s.
+- **Parents:** the first comparison's twelve BC parents `b0-s20260724`–`b0-s20260735` (r6–r17). They are byte-copied from `FR` and checked against `FR/SHA256SUMS`. No new BC training. Matching the parents makes the two scales comparable within each parent.
+- **Seeds:** `replicate-seeds --replicates r1 … r17 --training 768` from the same `seed-plan-r0.json`. A scratchpad trial on November 6 showed that every extended plan's first 192 training seeds and opponents equal the existing r1–r17 plans byte for byte. All 13,056 training seeds were distinct and disjoint from the evaluation seeds. The extended r6–r17 plans are used; r1–r5 serve only as the check.
+- **Arms.** Each parent trains two children, with 1,536 games and 1,536 one-episode Adam updates each:
+  - **A′ (refreshed):** `--iterations 24 --pairs-per-iteration 32`, refreshing every 64 games, the tested baseline.
+  - **B′ (single rollout):** `--iterations 1 --pairs-per-iteration 768`.
+  - Every other `train-arm` setting matches the first comparison's `run.sh`, including torch seed 20260926, held-out cache and `--budget-minutes 150`.
+- **Built-in reproduction checks.** These are not part of the estimate:
+  - A′'s first six iterations should replay `FR`'s A child exactly. The learner reads no iteration count, and seeds and opponents are prefix-equal. The check compares all 384 episode bodies and gradient norms.
+  - A′ and B′ should share their first 64 games and updates.
+  - Each parent is re-evaluated and should equal its `FR` evaluation.
+- **Evaluation:** parent, A′ and B′, with the first comparison's commands and development seeds, plus `V/js-eval.mjs` parity for each child.
+
+**Analysis.**
+- **Primary 1 (regression):** g′ = B′ child primary − parent primary, per pair. Report the mean of 12 values with a two-sided 95% t interval (11 df).
+- **Primary 2 (gap):** d′ = B′ − A′, analyzed the same way.
+- **Labels** are the first comparison's rule, applied to each primary with minimum meaningful effect 0.15:
+  - If the interval excludes 0: the direction ("stale child regressed/improved" for g′; "refreshed/single rollout better" for d′), and whether |mean| ≥ 0.15.
+  - Otherwise "within ±0.15" if the interval lies inside ±0.15.
+  - Otherwise "inconclusive at this size".
+  - The two primaries are labelled separately, without multiplicity adjustment.
+- **Secondary, pre-registered:**
+  - Scale trend per parent: d′ − d and g′ − g_B. Here d and g_B are `FR`'s frozen 384-update values, read-only. Report means with t intervals.
+  - A′'s gain over the parent, and over `FR`'s A child.
+  - Every pair, the median and SD of each primary, per-opponent differences and Fireball capture diagnostics.
+- **Sample size and stopping:** n = 12, fixed (owner rule). The analysis runs once, after all 24 children are evaluated. Progress checks read only counts, timings, exit codes and stop reasons.
+- **Failures:** settings never change, and there is one identical infrastructure retry. Every engineering-invalid outcome is reported. A non-finite learner stop is a recipe outcome, because the historical stale run diverged; it is reported per arm.
+  - A missing or invalid B′ child blocks "stale child improved" and any d′ label favoring B′.
+  - A missing or invalid A′ child blocks any d′ label favoring A′.
+
+**Before freezing.**
+- Run a short plumbing smoke on a throwaway `smoke` replicate generated with `--training 768`: 3 × 1 pair against 1 × 3 pairs from one parent.
+- Verify the parent copies and the plan prefixes.
+- Hash `plan.md`, `run.sh` and `analyze.py` into `FROZEN.txt` before any output.
+
+**Cost.** Estimated from the first comparison's measured steps (a refreshed iteration about 26 s, the single 384-game arm about 62 s, and evaluation plus parity about 92 s per child):
+- about 10.5 min for A′, 4 min for B′, 3 min for the child evaluations and 1.3 min for the parent re-evaluation;
+- so about 19 min per pair and 3.7 h in all.
+
+The cap is 6 h, after which no new step starts. The run is local only, about 0.5 GB with episode bodies pruned; 85 GiB is free.
+
+**What it decides.** Fixed before output.
+- **"Stale child regressed":** staleness alone reproduces a regression at 1,536 updates with the current learner. Record it as an attribution of the historical regression. The production-learner and opponent steps then test only whether they add to it.
+- **"Stale child improved":** staleness up to 1,536 updates does not reproduce the regression, and the next step is the production learner path on fixed data. A larger stale stretch is considered only as a separately approved design. Its motivation would be the pre-registered scale trend, not a follow-up chosen from this result.
+- **Within ±0.15 or inconclusive:** reported as such, with no follow-up decided after seeing it.
+- **d′:** every label keeps the refresh requirement. d′ records the cost of staleness at this scale.
 
 ## Limits
 
