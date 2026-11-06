@@ -93,6 +93,128 @@ export function maskedLogSoftmax(logits, mask) {
   return result;
 }
 
+// ---------------------------------------------------------------------------
+// Routine policy diagnostics (descriptive only)
+//
+// Frozen on November 6, 2026, before the production-learner comparison
+// (docs/EDGER_TACTICAL_REVIEW.md, "Routine policy diagnostics"). They describe
+// the choices a policy makes; they are not exclusion, stopping or promotion
+// thresholds, and computing them never changes a decision.
+// - Population: every decision the candidate makes in the summarized games.
+// - Choice decision: at least one non-PASS card is legal. A forced PASS has
+//   card entropy 0 by construction, so card entropy covers choice decisions.
+// - PASS decision: the card head selected PASS (card index 0).
+// - Entropy: Shannon entropy in nats of the temperature-1 masked softmax over
+//   the legal entries, computed in float64 from the runtime's float32 logits.
+//   Card: legal card actions, PASS included. Delay: the 200 legal delay bins
+//   given the selected card and placement, learned cadence only.
+// - Maximum legal logit: the largest |logit| over legal entries of a head.
+//   Card: every decision. Placement: the selected card's legal cells, on
+//   decisions that select a card. Delay: learned cadence only.
+// - Minimum delay: the chosen delay is one tick.
+export const EDGER_V2_POLICY_DIAGNOSTICS_SCHEMA = "edger_v2_policy_diagnostics_v1";
+
+export function maskedEntropy(logits, mask) {
+  const logProbabilities = maskedLogSoftmax(logits, mask);
+  let entropy = 0;
+  for (let index = 0; index < logits.length; index += 1) {
+    if (mask[index]) {
+      entropy -= Math.exp(logProbabilities[index]) * logProbabilities[index];
+    }
+  }
+  return entropy;
+}
+
+export function maxAbsLegalLogit(logits, mask) {
+  let maximum = null;
+  for (let index = 0; index < logits.length; index += 1) {
+    if (mask[index]) {
+      const magnitude = Math.abs(logits[index]);
+      maximum = maximum === null ? magnitude : Math.max(maximum, magnitude);
+    }
+  }
+  return maximum;
+}
+
+function hasLegalCard(cardMask) {
+  for (let index = 1; index < cardMask.length; index += 1) {
+    if (cardMask[index]) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Diagnostics of one decision returned by decideEdgerV2WithCadence.
+export function edgerV2DecisionDiagnostics(decision) {
+  const choice = hasLegalCard(decision.cardMask);
+  const selectsCard = decision.indices.card_index !== 0;
+  const learned = decision.logits.delay !== null;
+  return {
+    choice,
+    pass: !selectsCard,
+    card_entropy: choice ? maskedEntropy(decision.logits.card, decision.cardMask) : null,
+    delay_entropy: learned ? maskedEntropy(decision.logits.delay, decision.delayMask) : null,
+    max_abs_legal_logit: {
+      card: maxAbsLegalLogit(decision.logits.card, decision.cardMask),
+      placement: selectsCard
+        ? maxAbsLegalLogit(decision.logits.placement, decision.placementMask)
+        : null,
+      delay: learned ? maxAbsLegalLogit(decision.logits.delay, decision.delayMask) : null,
+    },
+  };
+}
+
+// Per-game accumulator; summarizePolicyDiagnostics pools these across games.
+export function emptyPolicyDiagnosticsStats() {
+  return {
+    decisions: 0,
+    pass_decisions: 0,
+    choice_decisions: 0,
+    pass_choice_decisions: 0,
+    card_entropy_sum_given_choice: 0,
+    delay_entropy_decisions: 0,
+    delay_entropy_sum: 0,
+    minimum_delay_decisions: 0,
+    max_abs_legal_logit: { card: null, placement: null, delay: null },
+  };
+}
+
+function maxOrNull(left, right) {
+  if (left === null) {
+    return right;
+  }
+  return right === null ? left : Math.max(left, right);
+}
+
+export function addDecisionDiagnostics(stats, diagnostics, delayTicks) {
+  stats.decisions += 1;
+  if (diagnostics.pass) {
+    stats.pass_decisions += 1;
+  }
+  if (diagnostics.choice) {
+    stats.choice_decisions += 1;
+    stats.card_entropy_sum_given_choice += diagnostics.card_entropy;
+    if (diagnostics.pass) {
+      stats.pass_choice_decisions += 1;
+    }
+  }
+  if (diagnostics.delay_entropy !== null) {
+    stats.delay_entropy_decisions += 1;
+    stats.delay_entropy_sum += diagnostics.delay_entropy;
+  }
+  if (delayTicks === 1) {
+    stats.minimum_delay_decisions += 1;
+  }
+  for (const head of ["card", "placement", "delay"]) {
+    stats.max_abs_legal_logit[head] = maxOrNull(
+      stats.max_abs_legal_logit[head],
+      diagnostics.max_abs_legal_logit[head],
+    );
+  }
+  return stats;
+}
+
 function sampleFromLogProbabilities(logProbabilities, mask, rng) {
   const roll = rng();
   let cumulative = 0;
@@ -174,8 +296,9 @@ export function decideEdgerV2WithCadence({
 
   let delayIndex = 0;
   let delayLogProbability = 0;
+  let delayLogits = null;
   if (cadence === EDGER_V2_CADENCES.LEARNED) {
-    const delayLogits = computeEdgerV2DelayLogits({
+    delayLogits = computeEdgerV2DelayLogits({
       model,
       encodedState,
       cardIndex,
@@ -204,6 +327,14 @@ export function decideEdgerV2WithCadence({
     observation: resolvedObservation,
     cardMask,
     placementMask: selectedMasks.placement,
+    delayMask: selectedMasks.delay,
+    // The runtime's own masked logits, for descriptive diagnostics only. The
+    // delay head is not evaluated under the fixed one-tick cadence.
+    logits: {
+      card: cardLogits,
+      placement: placementLogits,
+      delay: delayLogits,
+    },
     logProbabilities: sampler
       ? {
           card: cardLogProbability,
@@ -334,6 +465,7 @@ export function runEdgerV2CadenceMatch({
     decision_ticks_first: null,
     full_elixir_ticks: 0,
     inference_ms: 0,
+    policy_diagnostics: emptyPolicyDiagnosticsStats(),
   };
   const decisionTicks = [];
 
@@ -355,6 +487,12 @@ export function runEdgerV2CadenceMatch({
         sampler,
       });
       stats.inference_ms += performance.now() - started;
+      // Outside the timed region, so inference timings stay comparable.
+      addDecisionDiagnostics(
+        stats.policy_diagnostics,
+        edgerV2DecisionDiagnostics(decision),
+        decision.delayTicks,
+      );
       stats.decisions += 1;
       decisionTicks.push(tick);
       histogramAdd(stats.chosen_delay_histogram, decision.delayTicks);

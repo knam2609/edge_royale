@@ -14,6 +14,7 @@ import { Worker } from "node:worker_threads";
 import { createRng } from "../src/sim/random.js";
 import {
   EDGER_V2_CADENCES,
+  EDGER_V2_POLICY_DIAGNOSTICS_SCHEMA,
   deriveLabelledSeeds,
   lcgSeedPrefix,
 } from "./edger-v2-cadence-core.mjs";
@@ -455,6 +456,57 @@ function mean(values) {
   return values.length === 0 ? null : values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
+// Pool the per-game policy diagnostics (definitions in edger-v2-cadence-core.mjs).
+// Every decision of every game counts once; per-game means give the spread
+// across games. Descriptive only: no threshold reads these values.
+export function summarizePolicyDiagnostics(results) {
+  if (results.some((result) => !result.stats?.policy_diagnostics)) {
+    throw new Error("results have no policy diagnostics; re-evaluate the model with this code");
+  }
+  const perGame = results.map((result) => result.stats.policy_diagnostics);
+  const total = (key) => perGame.reduce((sum, game) => sum + game[key], 0);
+  const spread = (sumKey, countKey) => {
+    const means = perGame
+      .filter((game) => game[countKey] > 0)
+      .map((game) => game[sumKey] / game[countKey])
+      .sort((a, b) => a - b);
+    return { games: means.length, p05: percentile(means, 0.05), p50: percentile(means, 0.5), p95: percentile(means, 0.95) };
+  };
+  const maximum = (head) => perGame.reduce((best, game) => {
+    const value = game.max_abs_legal_logit[head];
+    return value === null ? best : best === null ? value : Math.max(best, value);
+  }, null);
+  const decisions = total("decisions");
+  const choice = total("choice_decisions");
+  const delayDecisions = total("delay_entropy_decisions");
+  const chosenDelay = histogramQuantiles(results.reduce(
+    (histogram, result) => mergeHistogram(histogram, result.stats.chosen_delay_histogram),
+    {},
+  ));
+  const heads = { card: maximum("card"), placement: maximum("placement"), delay: maximum("delay") };
+  const present = Object.values(heads).filter((value) => value !== null);
+  return {
+    schema_version: EDGER_V2_POLICY_DIAGNOSTICS_SCHEMA,
+    entropy_units: "nats",
+    games: results.length,
+    decisions,
+    decisions_per_game: results.length === 0 ? null : decisions / results.length,
+    choice_decisions: choice,
+    forced_pass_decisions: decisions - choice,
+    pass_fraction_of_decisions: decisions === 0 ? null : total("pass_decisions") / decisions,
+    pass_fraction_of_choice_decisions: choice === 0 ? null : total("pass_choice_decisions") / choice,
+    card_entropy_given_choice: choice === 0
+      ? null
+      : { mean: total("card_entropy_sum_given_choice") / choice, per_game_mean: spread("card_entropy_sum_given_choice", "choice_decisions") },
+    delay_entropy: delayDecisions === 0
+      ? null
+      : { mean: total("delay_entropy_sum") / delayDecisions, per_game_mean: spread("delay_entropy_sum", "delay_entropy_decisions") },
+    chosen_delay_ticks_mean: chosenDelay.mean,
+    minimum_delay_fraction: decisions === 0 ? null : total("minimum_delay_decisions") / decisions,
+    max_abs_legal_logit: { ...heads, any_head: present.length === 0 ? null : Math.max(...present) },
+  };
+}
+
 export function summarizeCondition(results, { bootstrapSeed = 20260926 } = {}) {
   const games = results.length;
   const wins = results.filter((result) => result.candidate_point === 1).length;
@@ -510,6 +562,7 @@ export function summarizeCondition(results, { bootstrapSeed = 20260926 } = {}) {
     inference_ms_per_decision: sum("inference_ms") / Math.max(1, decisions),
     wall_seconds_per_game: mean(results.map((result) => result.wall_seconds)),
     wall_seconds_total: results.reduce((total, result) => total + result.wall_seconds, 0),
+    policy_diagnostics: summarizePolicyDiagnostics(results),
   };
 }
 
@@ -594,6 +647,58 @@ async function commandEvaluate(args) {
     summary: summarizeCondition(results),
     results,
   });
+}
+
+// One model's routine diagnostics over its evaluation files (one per
+// opponent): pooled over every game once, and per opponent.
+export function policyDiagnosticsReport(evaluations, { label = null } = {}) {
+  if (evaluations.length === 0) {
+    throw new Error("--evaluations needs at least one evaluation file");
+  }
+  const [first] = evaluations.map(({ report }) => report);
+  const opponents = new Set();
+  for (const { file, report } of evaluations) {
+    if (report.schema_version !== "edger_v2_cadence_evaluation_v1" || report.deterministic_choices !== true) {
+      throw new Error(`${file} is not a deterministic cadence evaluation`);
+    }
+    if (report.model_sha256 !== first.model_sha256 || report.cadence !== first.cadence) {
+      throw new Error(`${file} evaluates a different model or cadence`);
+    }
+    if (opponents.has(report.opponent)) {
+      throw new Error(`${file} repeats opponent ${report.opponent}`);
+    }
+    opponents.add(report.opponent);
+  }
+  return {
+    schema_version: "edger_v2_policy_diagnostics_report_v1",
+    label,
+    model: first.model,
+    model_sha256: first.model_sha256,
+    cadence: first.cadence,
+    population: "every candidate decision in the listed evaluation games, each counted once",
+    inputs: evaluations.map(({ file, sha256, report }) => ({
+      path: file,
+      sha256,
+      opponent: report.opponent,
+      seed_set: report.seed_selection?.set ?? null,
+      pairs: report.pairs,
+      games: report.results.length,
+    })),
+    pooled: summarizePolicyDiagnostics(evaluations.flatMap(({ report }) => report.results)),
+    by_opponent: Object.fromEntries(evaluations.map(({ report }) => [
+      report.opponent,
+      summarizePolicyDiagnostics(report.results),
+    ])),
+  };
+}
+
+async function commandDiagnostics(args) {
+  const evaluations = asList(required(args, "evaluations")).map((file) => ({
+    file: path.resolve(file),
+    sha256: sha256File(file),
+    report: JSON.parse(fs.readFileSync(file, "utf8")),
+  }));
+  writeJson(required(args, "out"), policyDiagnosticsReport(evaluations, { label: args.label ?? null }));
 }
 
 async function commandProbe(args) {
@@ -966,6 +1071,7 @@ const COMMANDS = {
   collect: commandCollect,
   "train-arm": commandTrainArm,
   summarize: commandSummarize,
+  diagnostics: commandDiagnostics,
 };
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

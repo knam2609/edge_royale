@@ -1018,6 +1018,38 @@ The cap is 6 h, after which no new step starts. The run is local only, about 0.5
 - Keep stale-batch breakdown as a hypothesis. Any dedicated comparison needs a separately frozen breakdown endpoint and design; do not extend these 12 pairs after inspecting g′.
 - Checkpoint these results as a local docs-only commit. The next comparison still needs a concrete reviewed design before launch; publication and promotion retain their separate approval requirements.
 
+### Routine policy diagnostics — November 6, 2026
+
+**Status: implemented as its own code checkpoint**, before the production-learner
+comparison, as the review above required. The schema is
+`edger_v2_policy_diagnostics_v1`, in `scripts/edger-v2-cadence-core.mjs` and
+`scripts/edger-v2-cadence-experiment.mjs`. The measures are descriptive only:
+nothing excludes, stops or promotes a run on them, and no threshold was fitted
+to the staleness results.
+
+**Definitions** (frozen before any comparison output; details in
+[training](EDGER_TRAINING.md#decision-cadence-diagnostic-local-only-never-promotable)).
+- **Population:** every decision a child makes in its deterministic development-seed evaluation games, each counted once. The `diagnostics` command pools a child's three opponent files and also reports each opponent separately.
+- **Choice decision:** at least one non-PASS card is legal. **PASS decision:** the card head selects index 0.
+- **Card entropy:** nats, over the legal card actions, on choice decisions only.
+- **Delay entropy:** nats, over the 200 legal delays, given the selected card and placement, on every learned-cadence decision.
+- **Maximum legal logit:** the largest |logit| over legal entries per head. Placement counts only when a card is selected. This differs from the parity report's fixture-based `maximum_legal_logit_magnitude`.
+- **Also reported:** decisions per game, PASS fraction over all and over choice decisions, mean chosen delay and the fraction of decisions at the 1-tick minimum.
+- **Aggregation:** decision-weighted means and the population maximum, with p05/p50/p95 of per-game means.
+
+**Checks.**
+- Five new tests cover:
+  - the entropy and logit definitions on hand-built inputs;
+  - recomputation from the runtime's own logits;
+  - unchanged decisions;
+  - per-game counts against the existing statistics;
+  - pooling, and the command's refusal of mixed models, repeated opponents and files that predate the diagnostics.
+- `PYTHON=/usr/local/bin/python3 npm test`: 242/242.
+- Trajectories and evaluations are unchanged (read-only checks against `FR`):
+  - Regenerating A-r6's first collection from its parent gave 64/64 bodies identical to the recorded headers.
+  - Re-evaluating `FR`'s A-r6 child against aggressive and the heuristic (100 pairs each) gave 400/400 identical games and identical non-timing statistics.
+- Code sanity check, not a re-analysis: on 20 aggressive games of `SS`'s degenerate B′ r12 child, the measures register the known pattern. Card entropy was about 5e−11 nats, delay entropy about 6e−67, every decision used the 1-tick minimum and the maximum legal logit was 387.
+
 ## Limits
 
 - The corpus is a 160-episode subset, not the production corpus.

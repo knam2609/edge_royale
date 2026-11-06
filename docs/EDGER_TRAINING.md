@@ -250,6 +250,21 @@ the live bot, the promotion evaluator or campaigns.
   suites, every other set in the plan and each `--exclude-seed-plans` file
   (pass the base plan for confirmation, since r0 trained on its seeds).
   Reports record the set, plan schema, excluded-plan checksums and exact seeds.
+- Routine policy diagnostics (`edger_v2_policy_diagnostics_v1`, since
+  November 6, 2026) are descriptive reporting for every RL child. They are not
+  exclusion, stopping or promotion thresholds. Every `evaluate` and `collect`
+  result counts them per game, and every summary pools them under
+  `policy_diagnostics`. `diagnostics --evaluations <files> --out <file>` pools
+  one model's opponent files and refuses files for different models or cadences,
+  repeated opponents, or files that predate the diagnostics. Definitions,
+  frozen before the production-learner comparison:
+  - Population: every decision the candidate makes in the summarized games, each counted once. For a child, that means its deterministic development-seed evaluation games.
+  - A choice decision has at least one legal non-PASS card. A PASS decision selects card index 0.
+  - Card entropy (nats) is the temperature-1 masked softmax over the legal card actions, PASS included, on choice decisions only. Delay entropy (nats) covers the 200 legal delay bins, conditional on the selected card and placement. It covers every learned-cadence decision and is null for the fixed cadence. Both are computed in float64 from the runtime's own float32 logits.
+  - The maximum legal logit is the largest |logit| over legal entries, reported per head. The card head covers every decision; the placement head covers the selected card's legal cells when a card is selected; the delay head covers the learned cadence only.
+  - Pass fraction is reported over all decisions and over choice decisions. Chosen delay is the mean over decisions, plus the fraction of decisions that chose the 1-tick minimum.
+  - Aggregation pools decision-weighted means and the population maximum, with p05/p50/p95 of per-game means.
+  - These figures are not the parity report's `maximum_legal_logit_magnitude`, which is measured on parity fixtures.
 - Checkpoints use `edger_v2_cadence_diagnostic_checkpoint_v1`, which production
   `load_checkpoint` rejects, and exports are labelled
   `diagnostic_only_not_promotable`. The diagnostic learner records the dirty

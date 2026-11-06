@@ -31,9 +31,13 @@ import {
 } from "../scripts/edger-corpus-core.mjs";
 import {
   EDGER_V2_CADENCES,
+  EDGER_V2_POLICY_DIAGNOSTICS_SCHEMA,
   decideEdgerV2WithCadence,
+  edgerV2DecisionDiagnostics,
   encodeCadenceEpisode,
+  maskedEntropy,
   maskedLogSoftmax,
+  maxAbsLegalLogit,
   runEdgerV2CadenceMatch,
 } from "../scripts/edger-v2-cadence-core.mjs";
 import {
@@ -43,8 +47,10 @@ import {
   frozenSuiteSeeds,
   heldoutCaptureRecord,
   pairedContrast,
+  policyDiagnosticsReport,
   pruneEpisodeBodies,
   selectEvaluationSeeds,
+  summarizePolicyDiagnostics,
   trainingOpponentSchedule,
 } from "../scripts/edger-v2-cadence-experiment.mjs";
 import { spawnNativePython } from "../scripts/python-runtime.mjs";
@@ -590,6 +596,205 @@ test("paired contrasts compare identical seed pairs", () => {
   assert.equal(better.pairs_tied, 1);
   assert.equal(exactSignTest(10, 0), 2 / 1024);
   assert.throws(() => pairedContrast(make([1, 1]), control), /identical seed pairs/);
+});
+
+// Independent two-pass entropy: probabilities first, then -sum p ln p.
+function referenceEntropy(logits, mask) {
+  const legal = Array.from(logits).filter((_, index) => mask[index]);
+  const maximum = Math.max(...legal);
+  const weights = legal.map((value) => Math.exp(value - maximum));
+  const total = weights.reduce((sum, value) => sum + value, 0);
+  return weights.reduce((sum, weight) => {
+    const p = weight / total;
+    return p > 0 ? sum - p * Math.log(p) : sum;
+  }, 0);
+}
+
+test("policy diagnostics use nats over legal entries only", () => {
+  const mask = [1, 0, 1, 1, 1, 0, 0, 0, 0];
+  const uniform = [0.5, 900, 0.5, 0.5, 0.5, -900, 0, 0, 0];
+  assert.ok(Math.abs(maskedEntropy(uniform, mask) - Math.log(4)) < 1e-12);
+  assert.equal(maxAbsLegalLogit(uniform, mask), 0.5);
+  const peaked = [-120, 0, 3, 1, 2, 0, 0, 0, 0];
+  assert.equal(maxAbsLegalLogit(peaked, mask), 120);
+  assert.ok(Math.abs(maskedEntropy(peaked, mask) - referenceEntropy(peaked, mask)) < 1e-12);
+  // A single legal entry, or one dominating by far more than float64 range, has entropy 0.
+  assert.equal(maskedEntropy([5, 1], [1, 0]), 0);
+  assert.equal(maskedEntropy([1000, 0], [1, 1]), 0);
+  assert.equal(maxAbsLegalLogit([1, 2], [0, 0]), null);
+});
+
+test("decision diagnostics recompute the runtime's own distributions and never change choices", () => {
+  const model = randomModel();
+  let choices = 0;
+  let forced = 0;
+  let plays = 0;
+  for (const { engine, legalActions } of candidateStates(model, 300)) {
+    const reference = selectEdgerV2PolicyDecision({ model, engine, actor: "red", legalActions });
+    const learned = decideEdgerV2WithCadence({ model, engine, actor: "red", legalActions, cadence: LEARNED });
+    assert.deepEqual(learned.indices, reference.indices);
+    const diagnostics = edgerV2DecisionDiagnostics(learned);
+    const encodedState = encodeEdgerV2PolicyState({
+      model,
+      observation: buildEdgerV2Observation({ engine, actor: "red" }),
+    });
+    const masks = buildEdgerV2LegalMasks({ actor: "red", legalActions, selectedCardIndex: reference.indices.card_index });
+    const cardLogits = computeEdgerV2CardLogits({ model, encodedState, mask: masks.card });
+    const delayLogits = computeEdgerV2DelayLogits({
+      model,
+      encodedState,
+      cardIndex: reference.indices.card_index,
+      placementIndex: reference.indices.placement_index,
+      mask: masks.delay,
+    });
+    const choice = masks.card.slice(1).some(Boolean);
+    assert.equal(diagnostics.choice, choice);
+    assert.equal(diagnostics.pass, reference.indices.card_index === 0);
+    if (choice) {
+      choices += 1;
+      assert.ok(Math.abs(diagnostics.card_entropy - referenceEntropy(cardLogits, masks.card)) < 1e-12);
+      assert.ok(diagnostics.card_entropy <= Math.log(masks.card.filter(Boolean).length) + 1e-12);
+    } else {
+      forced += 1;
+      assert.equal(diagnostics.card_entropy, null);
+    }
+    assert.ok(Math.abs(diagnostics.delay_entropy - referenceEntropy(delayLogits, masks.delay)) < 1e-12);
+    assert.ok(diagnostics.delay_entropy <= Math.log(200) + 1e-12);
+    assert.equal(diagnostics.max_abs_legal_logit.card, maxAbsLegalLogit(cardLogits, masks.card));
+    assert.equal(diagnostics.max_abs_legal_logit.delay, maxAbsLegalLogit(delayLogits, masks.delay));
+    if (reference.indices.card_index === 0) {
+      assert.equal(diagnostics.max_abs_legal_logit.placement, null);
+    } else {
+      plays += 1;
+      const placementLogits = computeEdgerV2PlacementLogits({
+        model,
+        encodedState,
+        cardIndex: reference.indices.card_index,
+        mask: masks.placement,
+      });
+      assert.equal(diagnostics.max_abs_legal_logit.placement, maxAbsLegalLogit(placementLogits, masks.placement));
+    }
+    const fixed = edgerV2DecisionDiagnostics(decideEdgerV2WithCadence({
+      model, engine, actor: "red", legalActions, cadence: FIXED_ONE_TICK,
+    }));
+    assert.equal(fixed.delay_entropy, null);
+    assert.equal(fixed.max_abs_legal_logit.delay, null);
+    assert.equal(fixed.card_entropy, diagnostics.card_entropy);
+  }
+  assert.ok(choices > 0 && forced > 0 && plays > 0, "fixture must cover choice, forced PASS and play decisions");
+});
+
+test("match statistics count every decision once in the policy diagnostics", () => {
+  const model = randomModel(19, 0.3);
+  for (const [cadence, mode] of [[LEARNED, "deterministic"], [LEARNED, "sample"], [FIXED_ONE_TICK, "sample"]]) {
+    const match = runEdgerV2CadenceMatch({
+      seed: 777, candidateActor: "blue", model, cadence, opponentBotId: "aggressive", mode,
+    });
+    const diagnostics = match.stats.policy_diagnostics;
+    assert.equal(diagnostics.decisions, match.stats.decisions);
+    assert.equal(diagnostics.pass_decisions, match.stats.pass_decisions);
+    assert.equal(diagnostics.minimum_delay_decisions, match.stats.chosen_delay_histogram[1] ?? 0);
+    assert.ok(diagnostics.choice_decisions <= diagnostics.decisions);
+    assert.ok(diagnostics.pass_choice_decisions <= diagnostics.choice_decisions);
+    assert.ok(diagnostics.card_entropy_sum_given_choice >= 0);
+    if (cadence === LEARNED) {
+      assert.equal(diagnostics.delay_entropy_decisions, diagnostics.decisions);
+      assert.ok(diagnostics.max_abs_legal_logit.delay > 0);
+    } else {
+      assert.equal(diagnostics.delay_entropy_decisions, 0);
+      assert.equal(diagnostics.max_abs_legal_logit.delay, null);
+      assert.equal(diagnostics.minimum_delay_decisions, diagnostics.decisions);
+    }
+  }
+});
+
+test("pooled policy diagnostics weight every decision once and keep the largest logit", () => {
+  const game = (overrides, histogram) => ({
+    stats: {
+      chosen_delay_histogram: histogram,
+      policy_diagnostics: {
+        decisions: 0, pass_decisions: 0, choice_decisions: 0, pass_choice_decisions: 0,
+        card_entropy_sum_given_choice: 0, delay_entropy_decisions: 0, delay_entropy_sum: 0,
+        minimum_delay_decisions: 0, max_abs_legal_logit: { card: null, placement: null, delay: null },
+        ...overrides,
+      },
+    },
+  });
+  const results = [
+    game({
+      decisions: 10, pass_decisions: 6, choice_decisions: 4, pass_choice_decisions: 1,
+      card_entropy_sum_given_choice: 4, delay_entropy_decisions: 10, delay_entropy_sum: 30,
+      minimum_delay_decisions: 2, max_abs_legal_logit: { card: 3, placement: 7, delay: 5 },
+    }, { 1: 2, 10: 8 }),
+    game({
+      decisions: 30, pass_decisions: 30, choice_decisions: 0, pass_choice_decisions: 0,
+      delay_entropy_decisions: 30, delay_entropy_sum: 30, minimum_delay_decisions: 30,
+      max_abs_legal_logit: { card: 40, placement: null, delay: 2 },
+    }, { 1: 30 }),
+  ];
+  const summary = summarizePolicyDiagnostics(results);
+  assert.equal(summary.schema_version, EDGER_V2_POLICY_DIAGNOSTICS_SCHEMA);
+  assert.equal(summary.entropy_units, "nats");
+  assert.equal(summary.decisions, 40);
+  assert.equal(summary.decisions_per_game, 20);
+  assert.equal(summary.forced_pass_decisions, 36);
+  assert.equal(summary.pass_fraction_of_decisions, 36 / 40);
+  assert.equal(summary.pass_fraction_of_choice_decisions, 1 / 4);
+  assert.equal(summary.card_entropy_given_choice.mean, 1);
+  assert.equal(summary.card_entropy_given_choice.per_game_mean.games, 1, "games without a choice are left out");
+  assert.equal(summary.delay_entropy.mean, 60 / 40, "decision-weighted, not the mean of game means");
+  assert.deepEqual(summary.delay_entropy.per_game_mean, { games: 2, p05: 1, p50: 1, p95: 1 });
+  assert.equal(summary.chosen_delay_ticks_mean, (2 + 80 + 30) / 40);
+  assert.equal(summary.minimum_delay_fraction, 32 / 40);
+  assert.deepEqual(summary.max_abs_legal_logit, { card: 40, placement: 7, delay: 5, any_head: 40 });
+  assert.throws(() => summarizePolicyDiagnostics([{ stats: {} }]), /no policy diagnostics/);
+});
+
+test("the diagnostics command pools one model's opponent evaluations and rejects mixtures", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "edger-cadence-diagnostics-"));
+  try {
+    const base = buildCadenceSeedPlan({ development: 2, probe: 1, training: 2 });
+    const plan = path.join(directory, "plan.json");
+    fs.writeFileSync(plan, JSON.stringify(base));
+    const models = { a: path.join(directory, "a.json"), b: path.join(directory, "b.json") };
+    fs.writeFileSync(models.a, JSON.stringify(randomModel(11)));
+    fs.writeFileSync(models.b, JSON.stringify(randomModel(12)));
+    const script = path.join(ROOT, "scripts", "edger-v2-cadence-experiment.mjs");
+    const run = (argv) => spawnSync(process.execPath, [script, ...argv], { cwd: ROOT, encoding: "utf8" });
+    const evaluate = (model, opponent, out) => {
+      const result = run([
+        "evaluate", "--seeds", plan, "--seed-set", "development", "--pairs", "1", "--cadence", LEARNED,
+        "--opponent", opponent, "--model", model, "--workers", "2", "--out", out,
+      ]);
+      assert.equal(result.status, 0, result.stderr);
+      return out;
+    };
+    const aggressive = evaluate(models.a, "aggressive", path.join(directory, "a-aggressive.json"));
+    const heuristic = evaluate(models.a, "edger_heuristic", path.join(directory, "a-heuristic.json"));
+    const other = evaluate(models.b, "aggressive", path.join(directory, "b-aggressive.json"));
+    const out = path.join(directory, "diagnostics.json");
+    const pooled = run(["diagnostics", "--evaluations", aggressive, heuristic, "--label", "a", "--out", out]);
+    assert.equal(pooled.status, 0, pooled.stderr);
+    const report = JSON.parse(fs.readFileSync(out, "utf8"));
+    const reports = [aggressive, heuristic].map((file) => JSON.parse(fs.readFileSync(file, "utf8")));
+    assert.equal(report.label, "a");
+    assert.deepEqual(report.inputs.map((input) => [input.opponent, input.games]), [["aggressive", 2], ["edger_heuristic", 2]]);
+    assert.equal(report.pooled.games, 4);
+    assert.equal(report.pooled.decisions, reports[0].summary.policy_diagnostics.decisions + reports[1].summary.policy_diagnostics.decisions);
+    assert.deepEqual(report.by_opponent.aggressive, reports[0].summary.policy_diagnostics);
+    assert.equal(
+      report.pooled.max_abs_legal_logit.any_head,
+      Math.max(...reports.map((item) => item.summary.policy_diagnostics.max_abs_legal_logit.any_head)),
+    );
+    const read = (file) => ({ file, sha256: "x", report: JSON.parse(fs.readFileSync(file, "utf8")) });
+    assert.throws(() => policyDiagnosticsReport([read(aggressive), read(other)]), /different model or cadence/);
+    assert.throws(() => policyDiagnosticsReport([read(aggressive), read(aggressive)]), /repeats opponent/);
+    const mixed = run(["diagnostics", "--evaluations", aggressive, other, "--out", path.join(directory, "mixed.json")]);
+    assert.notEqual(mixed.status, 0);
+    assert.equal(fs.existsSync(path.join(directory, "mixed.json")), false);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test("Python cadence learner semantics", () => {
