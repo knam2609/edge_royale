@@ -1052,9 +1052,11 @@ to the staleness results.
 
 ### Third comparison: production learner on fixed refreshed data
 
-**Status: approved November 7, 2026, by delegated owner decision.** The owner
-asked the agent to choose the three design options. Nothing has been launched.
-This is task 4 as the review above chose it. The design follows the comparison
+**Status: done November 7, 2026. Frozen label: "train-arm better (|mean| <
+0.15)"**, d_P −0.098 [−0.159, −0.036]; see "Results" below. The design was
+approved by delegated owner decision: the owner asked the agent to choose the
+three options. Preflight, freeze and launch are recorded under "Preflight and
+run" below. This is task 4 as the review above chose it. The design follows the comparison
 rule and the earlier two comparisons; its outcome branches are fixed here,
 before any output.
 
@@ -1136,9 +1138,9 @@ games collected by parent `b0-s20260724`), using a clean clone at `b4a0c78`:
 
 **Before freezing (approval recorded above).**
 - **Code checkpoint (done November 7):** `convert-collection` in `scripts/edger-v2-cadence-experiment.mjs` implements the prototype, with tests. It regenerates each game, verifies the model and header checksums, writes the production episodes, checks the derivation, and writes the manifest and a conversion report. Its fixed collector label (`edger_v2_cadence_conversion_v1`) differs from the prototype's, so episode IDs and splits differ from the prototype's (`SS` A-r6 iteration 0: 47/7/10 instead of 54/4/6). It still converted 64/64 games with 0 row mismatches. Tests: two new cases in `tests/edger-v2-cadence.test.js`. `PYTHON=/usr/local/bin/python3 npm test`: 244/244.
-- **Smoke:** iterations 0–1 of P for one parent in scratch directories, plus the neutralized check, an export and a 2-pair evaluation.
-- **Dry run:** `analyze.py` on synthetic inputs, covering the complete, blocked, incomplete and reproduction-mismatch paths.
-- **Freeze:** hash `plan.md`, `run.sh`, `analyze.py` and the check scripts into `FROZEN.txt` before any output.
+- **Smoke:** iterations 0–1 of P for one parent in scratch directories, plus the neutralized check, an export and a 2-pair evaluation (done; below).
+- **Dry run:** `analyze.py` on synthetic inputs, covering the complete, blocked, incomplete and reproduction-mismatch paths (done; below).
+- **Freeze:** hash `plan.md`, `run.sh`, `analyze.py` and the check scripts into `FROZEN.txt` before any output (done; below).
 
 **Cost.** Prototype timings, with conversions and caches running 7-wide and the
 twelve learner chains in parallel:
@@ -1148,6 +1150,51 @@ twelve learner chains in parallel:
 
 The cap is 5 hours, after which no new step starts. The run is local only and
 uses about 0.3 GB.
+
+**Preflight and run.** The run directory is `PR` =
+`~/edge_royale-runs/20261107-production-learner.noindex`. It holds a clean
+clone `vrepo` at `f09fccf` and the twelve parents byte-copied from `FR`
+(`parents-check.sums`, 25/25 with the evaluation seed plan). It also holds the
+frozen `plan.md`, which restates this design with exact commands, failure rules
+and the analysis, plus `run.sh`, `analyze.py`, and the step scripts
+`data_job.py`, `p_arm.py` and `neutral.py`.
+- **Smoke** (`PR/smoke/smoke-check.txt`, not evidence), on parent r6, using the frozen step scripts:
+  - **Data, iterations 0–1:** passed with 0 row mismatches, and the cache rows (1,890 and 3,819) equalled the conversions.
+  - **Neutralized check:** passed bit for bit, with 64/64 gradient norms.
+  - **`vtrace` iterations 0–1:** 47 and 50 updates, equal to the train-split episodes, with Adam fresh at iteration 0 and restored at iteration 1.
+  - **Real `vtrace` against emulation:** iteration 0 equals production `train_vtrace_episode` over the train split in hash order with cache weights, bit for bit.
+  - **Exports and evaluations:** the export and held-out capture ran; a 2-pair evaluation, diagnostics and js-eval parity of the smoke model passed, with 0 illegal attempts.
+  - **Re-evaluation:** 2-pair re-evaluations of T and the parent reproduced `SS`'s first two pairs game by game.
+  - **Clone:** stayed clean throughout.
+- **Iteration-1 balancing weights:** sample weights reached 7.83, so the 0.35–3.24 range above describes iteration 0 only.
+- **Dry run** (`PR/dryrun/`): synthetic inputs from `SS` and `FR` files covered the complete, blocked, missing-child, within, incomplete and reproduction-mismatch paths. With `SS`'s B′ children standing in for P, it reproduced `SS`'s published d′ −0.259 [−0.405, −0.113] and g′ −0.014 [−0.188, +0.160].
+- **Freeze and launch:** `SS` (38,908) and `FR` (10,217) `SHA256SUMS` passed in full. `FROZEN.txt` (36 hashes, including the parents, the evaluation seed plan, `js-eval.mjs`, the held-out cache and both runs' `SHA256SUMS`) was written at 2026-11-06T14:44:17Z, before any comparison output. `nohup caffeinate -is bash run.sh > runner.out 2>&1` started at 14:44:22Z.
+- **Shared host:** an unrelated `gridcast` process used about 2.5 cores during the run, so wall times are not cost evidence.
+- **Run:** one launch from 14:44:22Z to 18:24:42Z UTC (3 h 40 min; data 79 min, learners 57 min, evaluation 84 min). Every step succeeded on the first attempt: 288 data steps, 12 P arms, 144 evaluations, 48 parity and 48 diagnostics runs. There were no nonzero exits and the cap was not reached. One parent's caches (r15, 387,595 rows) made its chain the slowest.
+- **Analysis and archive:** `FROZEN.txt` re-verified 36/36, then `/usr/local/bin/python3 -I analyze.py > analysis.md` ran once. `PR/SHA256SUMS` covers 22,257 files (846 MB, mostly per-iteration checkpoints and caches). Afterwards `SS` (38,908) and `FR` (10,217) `SHA256SUMS` still passed.
+
+**Results** (`PR/analysis.md`; primary = equal-weighted mean points against v1, the heuristic and aggressive).
+- **Primary, frozen label "train-arm better (|mean| < 0.15)":** d_P = P − T = **−0.098 [−0.159, −0.036]** (12 pairs, 11 df). P was below T in 10 of 12 pairs, and every opponent's interval excludes 0: v1 −0.117, heuristic −0.112, aggressive −0.063. The d_P SD was 0.096 [0.068, 0.163], with median −0.096 and range −0.280 to +0.046. No child was invalid; every P and T child passed parity.
+- **Pre-set decision:** on identical refreshed data, the production learner path costs play quality. Further attribution steps use the `train-arm` learner. Aligning the production path, or decomposing its three behaviors, becomes a separately designed step. The refresh requirement stands; no child is a promotion candidate. The magnitude label concerns the observed mean; the interval does not exclude a cost of 0.15.
+- **Secondary:**
+  - **Gain over the parent:** g_P = P − parent was +0.147 [+0.079, +0.216] (positive in 11 of 12), against T's re-evaluated +0.245 [+0.204, +0.285]. The production path kept about 60% of the `train-arm` gain.
+  - **Shorter-run check:** d_P384 = P after iteration 5 − `FR`'s A child was −0.088 [−0.165, −0.011], so the cost was already present after the first 384 games.
+  - **Child scores:** mean P 0.722 (SD 0.097) against T 0.820 (SD 0.028), and P5 0.666 against `FR` A 0.754. P's spread is about 3.5 times T's.
+  - **Update counts:** P made 1,209–1,240 updates (mean 1,227) against T's 1,536.
+  - **Balancing weights:** these are recomputed for each 64-game cache, and their per-parent maxima ran from 8.2 to 29.6 (iteration 0's 0.35–3.24 was not typical).
+  - **Fireball:** held-out capture was 0 for nearly every model, parents included. Mean P(Fireball) was lower for P than T in 9 of 12 pairs; this is descriptive only.
+- **Routine diagnostics (descriptive):**
+  - **Collapsed children:** three P children (r14, r16, r17) collapsed to the pattern seen in `SS`'s stale children. They chose the 1-tick minimum at 98–100% of decisions and played 2,476–4,235 decisions per game, with PASS at 0.985–0.990. Two of them also had maximum legal logits of 114 and 129.
+  - **Other children:** a fourth (r10) made 983 decisions per game without minimum delays. No T child exceeded a 1-tick fraction of 0.003 or a logit of 39.7.
+- **Reproduction checks (all passed; not part of the estimate):**
+  - **Data:** 18,432/18,432 games were regenerated with bodies equal to `SS`'s headers and collecting models equal to `SS`'s recorded SHA-256. There were 0 row differences, every cache's rows equalled its cadence rows, and 0 `SS` input files differed from `SS/SHA256SUMS`.
+  - **Neutralized iteration 0:** bit-identical for 12/12 parents, with 64/64 gradient norms each.
+  - **Re-evaluations:** the parents and T reproduced `SS` game by game for 24/24 models.
+- **Post hoc** (`PR/posthoc.py`, `posthoc.md`, written after the analysis; no label changes):
+  - The collapsed children do not account for the mean cost: the other nine average d_P −0.099. The cost is broad, not driven by a few failures.
+  - Collapse does not map onto score: r14 collapsed with d_P −0.019, while r12 (−0.280) and r8 (−0.224) did not collapse.
+  - Validation logits crossed `vtrace`'s 83.9 warning only in r14 (from iteration 14) and r17 (iteration 22).
+  - Which production behavior (split filter, hash order or balancing weights) causes the cost is untested; the three were tested together by design. The resemblance to `SS`'s stale collapse and the large rare-stratum weights are hypotheses, not mechanisms.
 
 ## Limits
 
