@@ -1050,6 +1050,105 @@ to the staleness results.
   - Re-evaluating `FR`'s A-r6 child against aggressive and the heuristic (100 pairs each) gave 400/400 identical games and identical non-timing statistics.
 - Code sanity check, not a re-analysis: on 20 aggressive games of `SS`'s degenerate B′ r12 child, the measures register the known pattern. Card entropy was about 5e−11 nats, delay entropy about 6e−67, every decision used the 1-tick minimum and the maximum legal logit was 387.
 
+### Third comparison: production learner on fixed refreshed data
+
+**Status: approved November 7, 2026, by delegated owner decision.** The owner
+asked the agent to choose the three design options. Nothing has been launched.
+This is task 4 as the review above chose it. The design follows the comparison
+rule and the earlier two comparisons; its outcome branches are fixed here,
+before any output.
+
+**Approved choices.**
+
+- **Scale: 1,536 games per parent**, corresponding to T's 1,536 updates. This is closer to the historical scale at similar estimated cost; the first-384-game comparison remains secondary. P keeps its production train-split filter, so it makes about 1,230 updates. Do not add epochs to equalize update counts.
+- **Production behaviors: all three together.** Test the path the production learner actually uses. Decomposing split filtering, hash order and balancing weights would be a separately designed comparison if this bundle costs play quality.
+- **T controls: reuse `SS`'s refreshed A′ children and re-evaluate them.** Checksum-verified regeneration establishes the shared data, and game-by-game re-evaluation checks compatibility. Retraining would add cost without changing the intended comparison.
+
+Keep the 12 pairs, 0.15 threshold, frozen failure rules and 5-hour local cap.
+The approved sequence is the design checkpoint, converter checkpoint with
+tests, smoke, synthetic analysis dry run, freeze, then launch after those
+checks pass.
+
+**Question.** Given the same fixed rollouts collected by refreshed policies,
+does the production learner path produce children as good as the `train-arm`
+learner? The production path converts games to corpus episodes, builds the
+cache with `edger-dataset.mjs` and trains with `edger-v2-training.py vtrace`.
+The comparison isolates the learner path. It does not test league opponents,
+the base-corpus mix or the historical scale.
+
+**What differs in the production path.** Code reading, plus a scratchpad
+prototype on November 6. The prototype converted `SS`'s A-r6 iteration 0 (64
+games collected by parent `b0-s20260724`), using a clean clone at `b4a0c78`:
+- **Conversion is exact.** Each game was replayed from its recorded collecting model, and all 64 bodies equalled the SHA-256 in `SS`'s headers. The production derivation (`deriveDecisionSequence`) then reproduced every cadence row exactly. This covers observation, masks, selected action, delay, behavior log-probability, reward and return.
+- **The update math is identical.** With three production behaviors neutralized, production `train_vtrace_episode` on the converted Parquet rows reproduced `SS`'s A-r6 iteration-0 weights bit for bit, including all 64 gradient norms. The neutralization used every split, sample weight 1 and play order.
+- **The production path differs only in those three behaviors:**
+  1. **Split filter.** `vtrace` trains only on episodes whose ID hash falls in the train split: 54 of 64 here, about 80% in expectation.
+  2. **Hash order.** Manifests sort episodes by ID, so updates run in content-hash order, not play order.
+  3. **Balancing weights.** `edger-dataset.mjs` weights each row's policy loss by source × opponent × outcome stratum, from 0.35 to 3.24 here; the value loss is unweighted. `train-arm` uses weight 1.
+- **Each behavior matters on its own.** Relative to the `train-arm` weights after one iteration, each behavior alone moved them by 2.8–5.4% (relative L2), and all three together by 5.7%. The real `vtrace` command reproduced the emulation of all three together exactly.
+- **Episode IDs depend on the converted content,** including the policy and collector labels. The converter therefore fixes those labels before output, because they determine the split and order.
+- **Cost per 64-game iteration,** single-threaded: conversion 44 s, cache 16 s and `vtrace` 13 s; about 0.9 MB on disk.
+
+**Design.** RL-only, matched by parent and by data.
+- **Host and code:** the M6 and toolchain of the earlier comparisons. Use a clean clone at the approved commit, which adds a reviewed converter checkpoint (below). The `train-arm` learner is unchanged since `5aff157`. The collector gained only diagnostics (`a8127c1`), and run-time checks verify every regenerated game.
+- **Parents:** the twelve BC parents r6–r17, byte-copied from `FR` and checked against `FR/SHA256SUMS`. No new BC training.
+- **Data:** `SS`'s A′ rollouts, 24 iterations × 64 games = 1,536 games per parent. Each iteration was collected by that iteration's refreshed A′ policy. The bodies were pruned, so each game is regenerated from `SS`'s recorded iteration model and seed plan and must equal its `SS` header checksum. No new seeds or collection policies are used.
+- **Arm T (`train-arm`):** `SS`'s A′ child, which consumed exactly these games in play order with weight 1, in 1,536 updates. It is not retrained. It is re-evaluated with the new code for its diagnostics and must reproduce `SS`'s evaluation game by game.
+- **Arm P (production learner):** for each iteration k = 0…23:
+  - convert that iteration's 64 games to `edger_training_episode_v1`;
+  - build the manifest and the cache with production `edger-dataset.mjs --max-player-fraction 0`, with no base corpus;
+  - run production `vtrace --epochs 1 --batch-size 32 --seed 20260926` from P's previous checkpoint. Iteration 0 starts from the BC parent with fresh Adam; later iterations restore the Adam state, as `train-arm` does.
+- **Update budget:** whatever the production path takes from identical data, which is one epoch over each iteration's train-split episodes. That is about 1,230 updates instead of 1,536, and this difference is part of what is tested.
+- **Exports:** P's final checkpoint and its iteration-5 checkpoint are exported with the cadence `export`, which labels them `diagnostic_only_not_promotable`.
+- **Built-in checks** (not part of the estimate):
+  - every regenerated body equals its `SS` header checksum (18,432 games);
+  - every collecting model equals the SHA-256 in its `SS` collection;
+  - the production derivation reproduces every cadence row exactly;
+  - each cache's row count equals its iteration's cadence rows;
+  - for every parent, the neutralized iteration 0 reproduces `SS`'s A′ iteration-0 weights bit for bit;
+  - re-evaluations of the parents and T children equal `SS` game by game.
+- **Evaluation:** the parent, T and P are evaluated with the earlier commands and development seeds (200 pairs against live v1, 100 each against the heuristic and aggressive). Each also gets `V/js-eval.mjs` parity, routine diagnostics (`diagnostics`) and held-out Fireball capture.
+
+**Analysis.**
+- **Primary statistic:** d_P = P child primary − T child primary, per parent. Report the mean of the 12 values with a two-sided 95% t interval (11 df). The minimum meaningful effect is 0.15.
+- **Labels:** the earlier rule.
+  - If the interval excludes 0: the direction ("train-arm better" or "production better"), and whether |mean| ≥ 0.15.
+  - Otherwise "within ±0.15" if the interval lies inside ±0.15.
+  - Otherwise "inconclusive at this size".
+- **Secondary, pre-registered:**
+  - g_P = P − parent, with a t interval.
+  - Shorter-run check: d_P384 = P after iteration 5 − `FR`'s A child. Both paths receive the same first 384 games, because A′ replays A exactly; P retains its train-split filter.
+  - Per-opponent d_P, the median and SD of d_P, and every pair.
+  - P's update count and sample-weight range per parent.
+  - Routine diagnostics for every model (descriptive), and Fireball capture.
+- **Sample size and stopping:** n = 12, fixed. The analysis runs once, after all P children are evaluated. Progress checks read only counts, timings, exit codes and stop reasons.
+- **Failures:** settings never change, and there is one identical-settings infrastructure retry. Every engineering-invalid outcome is reported.
+  - A failed conversion check stops that parent's P arm before any training.
+  - A non-finite learner stop is a recipe outcome.
+  - A missing or invalid P child blocks "production better" and "within ±0.15".
+  - The T children are already valid (12 of 12 parity passes in `SS`).
+
+**What it decides.** Fixed before output.
+- **"Train-arm better" (either magnitude):** on identical refreshed data, the production learner path costs play quality. Further attribution steps use the `train-arm` learner. Aligning the production path, or decomposing the three behaviors, becomes a separately designed step.
+- **"Within ±0.15" or "production better":** on the 1,536-game refreshed dataset, the production learner path does not account for a play-quality loss of 0.15 in this comparison. The next attribution step is the league opponent mix.
+- **"Inconclusive at this size":** reported as such, with no follow-up chosen after seeing it.
+- Every label keeps the refresh requirement. No child is a promotion candidate.
+
+**Before freezing (approval recorded above; checks still pending).**
+- **Code checkpoint:** a `convert-collection` command that implements the prototype, with tests. It regenerates each game, verifies the header checksum, writes the production episodes, checks the derivation, and writes the manifest and a conversion report.
+- **Smoke:** iterations 0–1 of P for one parent in scratch directories, plus the neutralized check, an export and a 2-pair evaluation.
+- **Dry run:** `analyze.py` on synthetic inputs, covering the complete, blocked, incomplete and reproduction-mismatch paths.
+- **Freeze:** hash `plan.md`, `run.sh`, `analyze.py` and the check scripts into `FROZEN.txt` before any output.
+
+**Cost.** Prototype timings, with conversions and caches running 7-wide and the
+twelve learner chains in parallel:
+- about 3.5 CPU-hours of conversion, 1.3 of caches and 1.0 of `vtrace`;
+- about 1.2 hours of evaluation for 48 models with 7 workers;
+- about 2.5 hours in total.
+
+The cap is 5 hours, after which no new step starts. The run is local only and
+uses about 0.3 GB.
+
 ## Limits
 
 - The corpus is a 160-episode subset, not the production corpus.
