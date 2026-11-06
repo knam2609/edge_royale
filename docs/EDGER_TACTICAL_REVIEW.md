@@ -776,6 +776,7 @@ report it as a secondary diagnostic alongside every run, SD and range.
 - **Cheap screening:** fewer runs may guide exploration, but cannot settle these small effects. Choose the statistic and practical decision threshold in advance; do not expand or stop a comparison after inspecting its recipe difference without a valid sequential plan.
 - **Six-arm follow-up: skipped.** Six starts from one BC parent measure only variance conditional on that parent, not a BC-versus-RL variance decomposition. Repeats across multiple parents are needed to investigate both components. Revisit only if conditional RL variance becomes the immediate question.
 - **Docs:** the pilot and advice were committed separately as docs-only `6e0b6a8`.
+- **After the first matched comparison (November 6):** the owner kept the 12-pair default. The measured matched SD (0.075) comes from one design and one scale ([decision](#first-comparison-rollout-freshness-at-equal-updates)).
 
 Read-only recalculation: `~/edge_royale-runs/20261104-variance-decision.noindex/`
 (`decision.py`, `analysis.json`, `SHA256SUMS`). It reads the frozen evaluations;
@@ -785,10 +786,12 @@ from the evaluations' child primaries and matched.
 
 ### First comparison: rollout freshness at equal updates
 
-**Owner-approved November 6, 2026; the frozen plan and evidence are in
-`FR` = `~/edge_royale-runs/20261106-rollout-freshness.noindex/`.** This is the
-first comparison drafted under the rule above. The design below is as approved. It is the first step of the historical league-regression
-attribution (`progress.md`).
+**Status: done locally (owner-approved November 6, 2026).** Evidence: `FR` =
+`~/edge_royale-runs/20261106-rollout-freshness.noindex/` (`plan.md`,
+`FROZEN.txt`, `analysis.md`, `posthoc.md`, `README.md`, `SHA256SUMS`).
+Diagnostic only. This is the first comparison under the rule above, and the
+first step of the historical league-regression attribution. The design below
+is as approved; results follow it.
 
 **Question.** Does learning from a single parent rollout score worse than the
 on-policy loop that refreshes its rollouts every 64 games? The comparison
@@ -801,7 +804,7 @@ that one difference. It does not test:
 - the historical legacy rows with behavior probability 1, which current code excludes from V-trace.
 
 **Design.** RL-only and matched by parent.
-- Host and code: the M6 and toolchain of the pilot, using a clean clone at `6e0b6a8`. BC, `train-arm`, export and evaluation code are unchanged since `5aff157`. The cache is `Y/v4/subset-decisions.parquet`.
+- Host and code: the M6 and toolchain of the pilot, using a clean clone at `6e0b6a8` or later. The run used `d345a49`, whose `src/`, `scripts/` and `tests/` are identical to the pilot's `16e36b4`. BC, `train-arm`, export and evaluation code are unchanged since `5aff157`. The cache is `Y/v4/subset-decisions.parquet`.
 - Twelve pairs, r6–r17. Each trains a new BC parent (seed 20260718+N, 6 epochs, default recipe), then two RL children from it:
   - **A (refreshed):** the pilot's `b0-k0` command (`--iterations 6 --pairs-per-iteration 32`).
   - **B (single rollout):** the same command with `--iterations 1 --pairs-per-iteration 192`.
@@ -829,6 +832,61 @@ that one difference. It does not test:
 - If the result is within ±0.15, rollout freshness at this scale does not explain the regression. The next attribution step is the production learner path on fixed data, then opponent mix and update scale.
 - "Inconclusive at this size" is reported as such, without a follow-up decided after seeing it.
 
+**Preflight and run.**
+- The regenerated r1–r5 plans equalled the pilot's byte for byte. All 19 training seed sets (r0–r17 and the smoke set) were pairwise disjoint and disjoint from the evaluation sets.
+- The 2-game smoke from the pilot's `b0-s20260718` passed: pair 0's episode bodies and first two updates were identical across the two arm shapes. `FROZEN.txt` was written at 2026-11-05T23:51:06Z UTC, before any output, and covers 20 files.
+- The runner took 2 h 14 min (23:51–02:05 UTC) with one launch. All 168 steps succeeded on the first attempt.
+- All 24 children completed, with zero illegal attempts, deterministic evaluations and parity passes (worst 0.572 of tolerance).
+- In every pair, the first 64 episode bodies and the first 64 update gradient norms were identical across arms.
+
+| Pair | Parent | A (refreshed) | B (single rollout) | d = B − A |
+|---|---|---|---|---|
+| r6 | 0.619 | 0.822 | 0.708 | −0.113 |
+| r7 | 0.634 | 0.768 | 0.783 | +0.015 |
+| r8 | 0.572 | 0.802 | 0.744 | −0.058 |
+| r9 | 0.562 | 0.657 | 0.582 | −0.075 |
+| r10 | 0.523 | 0.674 | 0.497 | −0.177 |
+| r11 | 0.563 | 0.768 | 0.665 | −0.103 |
+| r12 | 0.554 | 0.821 | 0.645 | −0.175 |
+| r13 | 0.454 | 0.800 | 0.575 | −0.225 |
+| r14 | 0.541 | 0.685 | 0.557 | −0.128 |
+| r15 | 0.668 | 0.782 | 0.624 | −0.158 |
+| r16 | 0.661 | 0.727 | 0.744 | +0.018 |
+| r17 | 0.550 | 0.740 | 0.663 | −0.077 |
+
+**Results** (frozen analysis, `FR/analysis.md`).
+- **Primary:** mean d = **−0.105**, 95% t interval [−0.152, −0.057]. Frozen label: **"refreshed better (|mean d| < 0.15)"**.
+- B scored below A in 10 of 12 pairs. The median d is −0.108.
+- Every opponent's interval excludes 0: v1 −0.120 [−0.186, −0.054], heuristic −0.125 [−0.171, −0.079], aggressive −0.069 [−0.115, −0.023].
+- **Spread.** The SD of d is 0.075 [95% chi-square 0.053, 0.127], the first measured spread of a matched RL difference. Independent arms at the earlier pilot SD would give s·√2 = 0.167; that is a planning reference, not an unmatched-arm measurement from this comparison.
+- Arm A's 12 children have mean 0.754 and SD 0.057 [0.041, 0.097]; arm B's have mean 0.649 and SD 0.087. One child's evaluation-seed SE averages 0.015.
+- **Fireball:** no child captured a held-out Fireball opportunity. Both arms lowered the mean Fireball probability from the parent's 0.07–0.12, B further (0.000–0.022) than A (0.006–0.050).
+- The capture diagnostic is "failed" for r13 and r17 in both arms, because those parents captured 0.010 and every child 0.
+
+**Post hoc** (`FR/posthoc.md`, written after the analysis was read).
+- A's RL gain over the parent averaged +0.179 [+0.129, +0.228] and was positive in all 12 pairs.
+- B's gain averaged +0.074 [+0.031, +0.117], with two pairs negative. B's mean gain is 41% of A's.
+- Matched pairs needed for 80% power:
+  - At the measured SD of d (0.075): 5 for 0.15, 7 for 0.10 and 20 for 0.05.
+  - At its upper 95% bound (0.127): 8, 15 and 53.
+
+**Reading.**
+- At equal games, seeds, opponents and updates, refreshing the rollouts every 64 games beat learning from one parent rollout. The point estimate is below the pre-set 0.15 effect. The interval's far end (−0.152) does not exclude it.
+- The result falls between the pre-set decision branches: at least 0.15, within ±0.15, or inconclusive. Its consequence is therefore an owner decision, not an automatic rule (made November 6, below).
+- The single rollout still improved the parent at this scale. Staleness cost more than half of the RL gain, but did not reproduce the historical regression.
+- Whether staleness compounds with more updates per rollout is an untested hypothesis. The production stage made about 11,318 updates from one rollout.
+- A further post-hoc, read-only calculation from the 72 child evaluations gives √(s_A² + s_B²) = 0.104 under independence, using this comparison's own marginal SDs. The paired SD of 0.075 is about 28% lower, with A–B correlation 0.524. Comparing it with the earlier pilot's 0.167 reference also includes differences between experiments; the full reduction cannot be attributed to matching. Another recipe's matched spread may differ.
+- Twelve more runs of the A recipe produced no r4-like outlier. This neither establishes nor rules out the frequency of such runs.
+- Wall time per arm favored B: about 1.1 min against 2.6 min, because one large collection batches better across workers.
+
+**Owner decision, November 6, 2026.** Made from the decision review of the
+same day. The frozen label stands unchanged.
+- **Refreshed rollouts are required** in any future RL or league stage design. This is an engineering decision on the evidence: the 0.105 advantage is clear within this experiment, but the interval does not settle whether it reaches 0.15. Refreshing every 64 games is the tested baseline; the best refresh frequency is unknown.
+- **Next attribution step: longer stretches without refreshing.** Test whether staleness at a larger scale causes regression. Use matched parents, equal total games and updates, and the same learner and opponents. Measure both the refreshed-against-stale gap and each child's change from its parent. Freeze the scale, cost cap and consequences before launch.
+- **The rule's 12-pair default stays.** Eight pairs is a calculation for detecting 0.15 in this design only, whereas this comparison found about 0.10. At the paired SD's upper bound, 0.10 needs about 15 pairs, and the spread at larger scale is unknown.
+- This comparison advances the training diagnosis only. No child captured a held-out Fireball opportunity, and candidate quality remains unresolved.
+- The results were committed as their own docs-only checkpoint.
+
 ## Limits
 
 - The corpus is a 160-episode subset, not the production corpus.
@@ -841,7 +899,8 @@ that one difference. It does not test:
 - The post-cap continuation is a recorded deviation from the proposal 3 plan; the frozen label at the cap was inconclusive only because outputs were missing.
 - Option 1 tested one coefficient (0.05) and one row mask, with `P`'s parents, seeds and controls; the controls were trained on October 26–27 under code shown to reproduce them.
 - The β = 1 follow-up tested one more coefficient on the same mask. Its same-host controls come from an addendum written after the frozen analysis was read; that addendum changed only the controls' host.
-- Same-host training-run variance was measured once (six old-recipe runs on the M6): the child-primary SD is 0.118, strongly influenced by one valid low-scoring run. Three-run contrasts are below the modeled 80%-power target; paired recipe-difference spread is unmeasured.
+- Same-host training-run variance was measured once (six old-recipe runs on the M6): the child-primary SD is 0.118, strongly influenced by one valid low-scoring run. Three-run contrasts are below the modeled 80%-power target. Matched-difference spread was measured once, for rollout freshness (SD 0.075 over 12 pairs).
+- Rollout freshness was tested at one scale (384 updates, refresh every 64 games against one 384-game rollout), with one cache, the `train-arm` learner, `train-arm` opponents and development seeds. The production learner path, league opponents and larger updates-per-rollout are untested.
 - RL training is bit-reproducible only on the same host (M1 against M6, PyTorch 2.11.0 with Accelerate). Host variation of a six-iteration child (up to 0.17 primary) is as large as most effects in this review, so every RL contrast here carries training-run uncertainty that its intervals do not cover. Future comparisons need same-host controls.
 
 ## Reproduction
@@ -960,4 +1019,17 @@ cd "$VP"
 bash run.sh                             # frozen; writes run.log and DONE
 python3 -I analyze.py > analysis.md     # frozen
 python3 -I posthoc.py > posthoc.md      # post hoc, not frozen
+```
+
+Rollout-freshness comparison (`FR/README.md` describes every file). `vrepo` is
+a clone of the repository at `d345a49`. `run.sh` sets its own `PATH` and skips
+finished steps.
+
+```bash
+FR=~/edge_royale-runs/20261106-rollout-freshness.noindex
+cd "$FR/vrepo" && node scripts/edger-v2-cadence-experiment.mjs replicate-seeds --base "$FR/seeds/seed-plan-r0.json" --out-dir "$FR/seeds-gen" --replicates r1 r2 r3 r4 r5 r6 r7 r8 r9 r10 r11 r12 r13 r14 r15 r16 r17
+cd "$FR"
+nohup caffeinate -is bash run.sh > runner.out 2>&1   # frozen; writes run.log and DONE
+python3 -I analyze.py > analysis.md                    # frozen
+python3 -I posthoc.py > posthoc.md                     # post hoc, not frozen
 ```
