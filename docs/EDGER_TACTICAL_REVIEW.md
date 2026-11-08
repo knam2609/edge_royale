@@ -1196,6 +1196,196 @@ and the analysis, plus `run.sh`, `analyze.py`, and the step scripts
   - Validation logits crossed `vtrace`'s 83.9 warning only in r14 (from iteration 14) and r17 (iteration 22).
   - Which production behavior (split filter, hash order or balancing weights) causes the cost is untested; the three were tested together by design. The resemblance to `SS`'s stale collapse and the large rare-stratum weights are hypotheses, not mechanisms.
 
+### Fourth comparison: factorial decomposition of the production learner
+
+**Status: proposed November 8, 2026; approved November 9 with revised outcome
+rules, clarified the same day; not yet frozen or launched.** On
+November 8 the owner chose option (a) of the next-step decision: decompose the
+production path's three behaviors on the same fixed refreshed data, and defer
+the league opponent mix (task 4) until after this ablation. The owner asked to
+keep `train-arm` as the reference and full production as the comparison. If the
+run budget permits, the design should be a paired 2³ factorial that separates
+the three behaviors' effects from their interactions. The estimated cost below
+(about 4.7 local hours) is in line with the earlier comparisons, so this design
+is the full factorial. Its outcome branches are fixed here, before any output.
+
+**Owner decisions, November 9, 2026.** All three proposed choices are
+approved. The outcome rules are revised before freezing.
+
+1. **Full 2³ factorial, with both corners checked through iteration 23:** all eight cells on all 12 parents (about 4.7 h, cap 8 h).
+   - The three cells that each drop one behavior from P show what removing it from production does. The full factorial also shows whether a behavior's effect differs at the other factors' levels.
+   - Checking the corners only through iteration 5 would save about 36 minutes, which is small against the 8-hour cap. Full checks verify that the runner reproduces the checkpoints behind the reused T and P scores.
+   - Training only the three drop-one cells was rejected, because it cannot separate interactions.
+2. **Minimum meaningful effect 0.05,** instead of the rule's default 0.15. It is the threshold for judging practical size, not direction.
+   - 0.05 is about half the measured d_P (−0.098). At 0.15, every behavior would probably fall below the threshold, whether it carries all of the cost or none.
+   - The quoted 91% power is to exclude 0 when the true effect is 0.05, under the equal-variance planning model. At the SD's upper bound it is about 49% (sizing below).
+   - To establish a cost of at least 0.05, the interval's upper endpoint must be below −0.05. An observed mean beyond −0.05 is not enough.
+3. **Pointwise labels guide attribution.** Labels come from unadjusted 95% intervals, as in the earlier comparisons. Bonferroni-adjusted intervals over the seven effects are reported beside them, so readers can tell an individual signal from a conclusion supported across the set.
+   - Pointwise labels fit this step. It reuses the parents and data that revealed the gap, and every branch keeps `train-arm` for the league opponent comparison.
+   - Labelling from the adjusted intervals would lower the power to exclude 0 at a true 0.05 from about 0.91 to 0.63 at the measured spread (0.49 to 0.18 at the upper bound).
+   - Any proposed production change is a separate decision, based on the relevant recipe comparison.
+4. **Direction, practical size and recipe choice are separate** (labels and decisions below).
+   - The proposed rules required a production change for any cost whose interval excluded 0. An estimate of −0.02 [−0.03, −0.01] would have triggered that, although the whole interval lies inside ±0.05.
+   - A small average effect can also hide a substantial effect at the production corner. Concrete recipe changes are therefore assessed from pre-specified corner contrasts, even when the interaction intervals include 0.
+5. **Clarifications, also November 9,** before the design commit:
+   - attribution statements describe the average effect only, and the drop-one contrast answers what happens at the production corner;
+   - a missing required score makes every contrast that uses it incomplete, with no labels;
+   - the smoke and the synthetic dry run are the go/no-go for freeze and launch.
+   - The owner accepted that the corner contrasts may be inconclusive: the seven factorial effects still answer the attribution question that justifies the run.
+
+**Question.** On the third comparison's fixed refreshed data, how much of the
+production path's cost does each of its three behaviors cause, and do they
+interact?
+
+**Factors.** Each has two levels: 0 is `train-arm`'s and 1 is production's.
+Everything else is as in the third comparison.
+- **S, split filter.** 0 trains on all 64 episodes of each iteration. 1 trains only on the train split, as `vtrace` does: about 80%, or 1,209–1,240 updates instead of 1,536.
+- **O, episode order.** 0 uses play order (the conversion report's match index), as `train-arm` does. 1 uses episode-ID order, as the production manifest and cache do.
+- **W, balancing weights.** 0 weights every row 1. 1 applies the cache's `sample_weight` to the policy loss.
+  - The value loss is unweighted at both levels.
+  - Each cache's weights average exactly 1 over all its rows, all splits included, but not over the train split alone (0.83 in r6's iteration 10).
+- **Cells** are written in S O W order. `000` is T (`SS`'s A′ child), and `111` is P (`PR`'s P child). The six new cells are `100`, `010`, `001`, `110`, `101` and `011`.
+
+**Feasibility.** A prototype ran on November 8 in `PF0` =
+`~/edge_royale-runs/20261108-production-factorial-prototype.noindex/`. It is not
+evidence: no intermediate cell was trained and no checkpoint was kept.
+- **Runner.** A run-directory script calls production `train_vtrace_episode` from `PR`'s clean clone at `f09fccf`, one episode at a time, with the three behaviors as switches.
+  - Like `run_vtrace`, each iteration reseeds, restores Adam from the previous checkpoint with the learning rate reset, and writes a checkpoint.
+  - It reads each cache in 256-row groups, as production does.
+- **Both corners reproduce exactly** for parent r6, iterations 0–2:
+  - `111` equalled `PR`'s P checkpoints bit for bit (weights and Adam state), with the same update counts.
+  - `000` equalled `SS`'s A′ checkpoints bit for bit, and all 64 per-update gradient norms of each iteration matched.
+- **Largest cache** (r15 iteration 11, 33,712 rows): starting from P's iteration-10 checkpoint, `111` reproduced P's iteration 11 bit for bit. A rerun of real `vtrace` did too.
+- **Cost of that iteration** (one process each, lightly loaded host): the runner took 109 s, with a 1.7 GB peak; real `vtrace` took 206 s and 2.1 GB. The same step took 402 s in `PR`'s run, alongside 11 other chains and an unrelated process.
+
+**Design.** RL-only, matched by parent and by data.
+- **Host and code:** the M6 and toolchain of the earlier comparisons.
+  - Use a clean clone at the approved design commit, whose `src/`, `scripts/`, `tests/` and `package.json` equal `f09fccf`'s.
+  - There are no repository code changes. The runner (`cell.py`) and the checks are frozen run-directory scripts, like `PR`'s `neutral.py`.
+- **Parents:** the twelve BC parents r6–r17, byte-copied from `FR` and checked against `FR/SHA256SUMS`.
+- **Data:** `PR`'s 288 caches and conversion reports (24 iterations × 12 parents, 1,536 games per parent).
+  - They are read in place and verified against `PR/SHA256SUMS` before launch and after the analysis.
+  - No game is regenerated or collected.
+- **Chains:** 8 cells × 12 parents = 96 chains of 24 iterations, with `PR`'s settings: seed 20260926, learning rate 1e-3, 32-row microbatches, value-loss weight 0.5, entropy bonus 0.001 and gradient clip 1.0. Iteration 0 starts from the BC parent with fresh Adam.
+- **Corner check (the instrument):** after every iteration, 0 through 23, `000` must equal `SS`'s A′ checkpoint (weights, Adam state and per-update gradient norms), and `111` must equal `PR`'s P checkpoint (weights and Adam state).
+  - A mismatch stops new steps. The analysis then reports an instrument failure and issues no labels.
+  - If all 24 final corner checkpoints are identical, the corner children are T and P themselves. `PR`'s evaluations of T, P and the parents are then reused after a checksum check, not rerun.
+- **New children:** each of the 72 final checkpoints is:
+  - exported with the cadence `export` (`diagnostic_only_not_promotable`) and given held-out Fireball capture;
+  - evaluated with `PR`'s commands and development seeds: 200 pairs against live v1, and 100 each against the heuristic and aggressive;
+  - checked with `V/js-eval.mjs` parity and routine diagnostics.
+
+**Analysis.**
+- **Score:** each child's primary, as before: the equal-weighted mean points against v1, the heuristic and aggressive.
+- **Primary: the seven factorial effects.** Per parent, each effect is ¼ Σ ±y over the eight cells, with the standard 2³ signs and the production level as +.
+  - A main effect, such as S's, is the mean of the four cells with S at production minus the mean of the four at `train-arm`.
+  - A two-factor interaction, such as SW, is half the difference between W's effect with S at production and with S at `train-arm`, averaged over O. A negative SW means that each behavior's production level costs more, or helps less, when the other is also at production. The three-factor SOW follows the same pattern.
+  - Each effect is reported as its mean over the 12 parents, with a two-sided 95% t interval (11 df).
+- **Primary: six corner contrasts,** for recipe choice. Each is a per-parent difference of two cells, reported as its mean with a two-sided 95% t interval (11 df).
+  - Dropping one behavior from P: `111` − `011` (S), `111` − `101` (O) and `111` − `110` (W).
+  - Adding one behavior to T: `100` − `000` (S), `010` − `000` (O) and `001` − `000` (W).
+  - As for the effects, each is the production level minus the `train-arm` level, so a negative value means the production level scores lower.
+- **P − T as a built-in check:** per parent, d_P = E_S + E_O + E_W + E_SOW exactly, because the two-factor interactions cancel between the corners. This is an identity, not a separate test; the analysis checks it against `PR`'s frozen d_P values.
+- **Labels.** Each of the seven effects and six corner contrasts gets a direction label and a size label from its unadjusted 95% interval (decision 3). The minimum meaningful effect is 0.05 (decision 2).
+  - **Direction,** from the interval against 0:
+    - for main effects and corner contrasts, "production level better" (interval above 0), "train-arm level better" (below 0) or "direction unresolved" (interval contains 0);
+    - for interactions, "positive interaction", "negative interaction" or "direction unresolved".
+  - **Size,** from the interval against ±0.05:
+    - "at least 0.05" if the lower endpoint is above +0.05 or the upper endpoint is below −0.05;
+    - "below 0.05" if both endpoints lie strictly between −0.05 and +0.05;
+    - "size unresolved" otherwise.
+  - The observed mean is reported as the estimate. It does not set a size label on its own.
+  - For example, −0.02 [−0.03, −0.01] is "train-arm level better, below 0.05". −0.08 [−0.12, −0.04] is "train-arm level better, size unresolved".
+  - **Across the set:** each factorial effect's two labels are also computed from its Bonferroni-adjusted simultaneous interval over the seven effects (t = 3.295). Each label is reported as "holds across the set" or "individual signal only". The corner contrasts are not adjusted.
+- **Secondary, pre-registered:**
+  - Every parent's eight scores; each cell's mean, SD, median and range; per-opponent effects; each cell's gain over the parent.
+  - Update counts and sample-weight ranges per cell.
+  - Routine diagnostics per child (descriptive). These include the number of children per cell whose pooled 1-tick fraction is at least 0.9. That threshold separates `PR`'s three collapsed P children (0.98–1.00) from every T child (at most 0.003); it was chosen after seeing `PR` and is descriptive only.
+  - Held-out Fireball capture.
+- **Sample size and stopping:**
+  - n = 12 parents, fixed by the data.
+  - The analysis runs once, after every new child is evaluated or after the cap stops the run.
+  - Progress checks read only counts, timings, exit codes, stop reasons and corner-check results.
+- **Failures:** settings never change. A failed step gets one identical retry, resuming from its last completed iteration, which is bit-identical by construction.
+  - A non-finite learner stop is a recipe outcome. The final model is then the last good checkpoint, or the parent if there is none.
+  - Every engineering-invalid outcome is reported: illegal attempts, a nondeterministic evaluation or a parity failure.
+  - Such a child blocks the "below 0.05" label of every contrast that uses its cell (every factorial effect uses all eight cells). It also blocks any direction or "at least 0.05" label whose higher-scoring side includes its cell.
+  - **Missing scores:** a required score is the primary score of one cell for one parent: the 72 new children's evaluations and the 24 reused corner scores.
+    - If any required score is absent after the retry or the cap, every contrast that uses that cell is marked "incomplete" and gets no labels. Every factorial effect uses all eight cells, so a single missing score makes all seven effects incomplete.
+    - The planned analysis is the 12-parent one. Partial results over the parents with complete scores may be reported only in a separate section, marked partial, with means and ranges but no intervals or labels.
+
+**Sizing** (planning model, not a power guarantee).
+- `PR`'s d_P is a difference of two cells, with SD 0.096 [0.068, 0.163].
+- If each cell's deviation within a parent were independent, with equal variance, a factorial effect's SD would be half that: 0.048 [0.034, 0.082].
+- At 12 parents, using the noncentral t with two-sided α = 0.05, this gives:
+
+| Contrast | Interval half-width | 80% power to exclude 0 at | Power to exclude 0 at a true 0.05 | Power for "at least 0.05" at a true 0.098 | Chance of "below 0.05" at a true 0 |
+|---|---|---|---|---|---|
+| Factorial effect, unadjusted | 0.030 (0.052) | 0.043 (0.072) | 0.91 (0.49) | 0.88 (0.46) | 0.81 (0.13) |
+| Factorial effect, Bonferroni over 7 | 0.046 (0.078) | 0.059 (0.100) | 0.63 (0.18) | 0.58 (0.17) | 0.35 (0.01) |
+| Corner contrast, unadjusted | 0.061 (0.104) | 0.085 (0.145) | 0.38 (0.16) | 0.35 (0.15) | 0.04 (0.00) |
+
+Values in parentheses use the SD's upper bound. A true 0.098 is a behavior that
+carries all of d_P. The last column was simulated (400,000 draws per cell); the
+others use the noncentral t.
+- The equal-variance assumption is optimistic. P's children varied more than T's (SD 0.097 against 0.028), and any parent-by-behavior interaction adds spread.
+- The corner contrasts are much less precise than the factorial effects. At the measured spread their interval is wider than ±0.05, so "below 0.05" is out of reach unless their observed spread is smaller. A drop-one contrast that carries all of d_P would exclude 0 with power about 0.90 (0.48 at the upper bound).
+- The intervals themselves use each contrast's own observed spread, so they do not depend on this model.
+
+**Cost** (estimate).
+- **Learners:** `PR`'s twelve P chains took 390 chain-minutes under load.
+  - Scale that by the runner's measured speed (about 0.53 of real `vtrace`), and by 1.25 for chains that train on every split.
+  - The 96 chains then need about 31 chain-hours: about 2.6 hours on 12 parallel slots.
+- **Evaluation:** evaluation, parity, diagnostics and held-out capture for the 72 new children, scaled from `PR`, take about 2.1 hours.
+- **Total:** about 4.7 hours. The cap is 8 hours, after which no new step starts.
+- **Storage:** local only, about 1.3 GB, mostly per-iteration checkpoints; 76 GiB is free.
+
+**What it decides.** Fixed before output. The comparison attributes the cost;
+it does not choose a recipe.
+- **Attribution, from each behavior's main effect.** Each statement concerns the average effect over the other two behaviors' levels on this data. What happens at the production corner is answered by the drop-one contrast (below).
+  - "Train-arm level better, at least 0.05": the average effect is a cost of at least 0.05.
+  - "Train-arm level better, size unresolved": the average effect is a cost; whether it reaches 0.05 is unresolved at this size.
+  - "Train-arm level better, below 0.05": the average effect is a cost within ±0.05.
+  - "Production level better", at any size: the average effect is favorable.
+  - "Direction unresolved, below 0.05": the average effect is within ±0.05.
+  - "Direction unresolved, size unresolved": inconclusive at this size. It is reported as such, with no follow-up chosen after seeing it.
+- **Interactions:** an interaction with a resolved direction means that the behaviors involved are attributed jointly, from the corner contrasts and cell means, not from their main effects alone. An unresolved interaction is not evidence that the behaviors are additive.
+- **Production corner:** each drop-one contrast is reported with its labels, whatever the interaction labels say, because a small average effect can hide a substantial effect at the production corner. When a behavior's main effect and its drop-one contrast are labelled differently, both are reported. The drop-one contrast describes what removing that behavior from production did on this data.
+- **Recipe choice is outside this comparison:** no outcome changes the production learner by itself.
+  - Any proposed production change is a separate owner decision, based on the relevant recipe comparison. Removing one behavior from production rests on its drop-one contrast; adding one to `train-arm` rests on its add-one contrast.
+  - Any replacement, such as capped weights, needs its own tested design.
+  - If S were removed, the purpose of the held-out splits (validation and the test bank) would have to be met another way, again by a separate design.
+- **Across the set:** the report states which factorial-effect labels hold under the Bonferroni intervals. A label that holds only pointwise is described as an individual signal.
+- **Every outcome:**
+  - Further attribution keeps the `train-arm` learner, and the league opponent mix (task 4) follows this comparison.
+  - The refresh requirement stands, and no child is a promotion candidate.
+
+**Limits** (known before output).
+- There is one dataset per parent, at one scale (1,536 games). Base-corpus mixes, league data and longer runs are untested.
+- The learner draws no random numbers, so each cell is a deterministic function of its parent and data. The parent is the replicate; a cell has no spread of its own.
+- The corners are already known, and the identity reproduces d_P from them. The new information is how d_P divides among the behaviors. These are the parents and data whose cost prompted this step, so the effects' sum inherits any selection in d_P.
+- S drops a hash-selected fifth of each iteration's games. It does not separate "fewer updates" from "which games are dropped".
+- W tests the production weights only. Their size depends on the stratum counts of each 64-game cache.
+- Thirteen contrasts get pointwise labels. If the seven effects were independent and none were real, at least one spurious direction label among them would have about a 30% chance; the six corner contrasts add more. The Bonferroni intervals cover the seven effects only.
+- The corner contrasts are imprecise (half-width about 0.061 at the measured spread), so many may stay "size unresolved".
+
+**Before freezing.**
+1. Commit the approved design as a docs-only checkpoint.
+2. Set up the run directory `PF`, with a clean clone and the parent copies.
+3. Smoke: run all eight cells for iterations 0–1 on parent r6, with the corner checks.
+   - No intermediate cell is evaluated.
+   - One corner export gets a 2-pair evaluation.
+4. Dry-run `analyze.py` on synthetic inputs. Cover:
+   - the complete, blocked, missing-score (incomplete), instrument-failure and identity-mismatch paths;
+   - every direction and size label state, and the across-the-set labels;
+   - a drop-one contrast labelled differently from its main effect.
+5. **Go/no-go for freeze and launch.** All of the following are required; any failure stops before the freeze.
+   - Both smoke corners match bit for bit at iterations 0–1.
+   - The corner export's evaluation passes: deterministic, with zero illegal attempts, and passing parity.
+   - The dry run gives the expected labels and failure handling on every synthetic path.
+6. Hash `plan.md`, `run.sh`, `analyze.py`, `cell.py`, the check scripts, the parents and `PR/SHA256SUMS` into `FROZEN.txt` before any output.
+7. Launch.
+
 ## Limits
 
 - The corpus is a 160-episode subset, not the production corpus.
