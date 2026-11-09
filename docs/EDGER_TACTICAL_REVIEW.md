@@ -1194,12 +1194,13 @@ and the analysis, plus `run.sh`, `analyze.py`, and the step scripts
   - The collapsed children do not account for the mean cost: the other nine average d_P −0.099. The cost is broad, not driven by a few failures.
   - Collapse does not map onto score: r14 collapsed with d_P −0.019, while r12 (−0.280) and r8 (−0.224) did not collapse.
   - Validation logits crossed `vtrace`'s 83.9 warning only in r14 (from iteration 14) and r17 (iteration 22).
-  - Which production behavior (split filter, hash order or balancing weights) causes the cost is untested; the three were tested together by design. The resemblance to `SS`'s stale collapse and the large rare-stratum weights are hypotheses, not mechanisms.
+  - Which production behavior (split filter, hash order or balancing weights) causes the cost was not separable here, because the three were tested together by design. The fourth comparison (below) tested them separately; attribution is unresolved. The resemblance to `SS`'s stale collapse and the large rare-stratum weights are hypotheses, not mechanisms.
 
 ### Fourth comparison: factorial decomposition of the production learner
 
 **Status: proposed November 8, 2026; approved November 9 with revised outcome
-rules, clarified the same day; not yet frozen or launched.** On
+rules, clarified the same day; frozen, run and analysed November 9 (results
+below); owner decisions November 10.** On
 November 8 the owner chose option (a) of the next-step decision: decompose the
 production path's three behaviors on the same fixed refreshed data, and defer
 the league opponent mix (task 4) until after this ablation. The owner asked to
@@ -1386,6 +1387,115 @@ it does not choose a recipe.
 6. Hash `plan.md`, `run.sh`, `analyze.py`, `cell.py`, the check scripts, the parents and `PR/SHA256SUMS` into `FROZEN.txt` before any output.
 7. Launch.
 
+**Preflight, freeze and launch (November 9, 2026).** The run directory is `PF` =
+`~/edge_royale-runs/20261109-production-factorial.noindex`, with a clean clone
+at `a03fd12` and parents copied from `FR` (25/25 against `FR/SHA256SUMS`).
+- **Smoke** (`PF/smoke/smoke-check.txt`, not evidence):
+  - All eight cells ran on r6 for iterations 0–1. Intermediate cells trained only; none was exported or evaluated.
+  - Both corners matched bit for bit at both iterations: weights, Adam state and every gradient norm for `000`; weights, Adam state, update counts and gradient-norm extremes for `111`.
+  - The `111` export passed a 2-pair evaluation against each opponent (deterministic, zero illegal attempts), diagnostics and parity (worst ratio 0.191). Its aggressive games equal `PR`'s smoke P model's, game by game.
+  - Resuming in a new process reproduced the iteration-1 checkpoint byte for byte, and a present `INSTRUMENT_FAILURE` file stopped a chain before training.
+  - Peak memory was 0.85–0.99 GB per chain.
+  - The first attempt found two runner bugs, both fixed before the passing smoke: a relative `--root` broke the export path, and the runner's checkpoints lacked the `checkpoint_id` that `export` needs. Neither bug touched model or Adam state.
+- **Dry run** (`PF/dryrun/check.txt`, not evidence): `analyze.py` was compared with an independent recomputation that uses the textbook effect definitions. It ran on nine synthetic scenarios built around `PR`'s real corner evaluations, and all nine passed:
+  - three complete scenarios, plus blocked, missing-score, capped, instrument-failure, identity-mismatch and not-finished;
+  - all eight direction-and-size states, all three interaction directions and both across-the-set outcomes;
+  - blocking, incomplete contrasts with partial results, a non-finite learner stop and a drop-one contrast labelled differently from its main effect.
+- **Go/no-go:** every criterion held. Before the freeze, `shasum -a 256 -c SHA256SUMS` passed in `PR` (22,257/22,257), `SS` (38,908/38,908) and `FR` (10,217/10,217).
+- **Freeze and launch:** `FROZEN.txt` was written at 2026-11-09T03:03:14Z UTC and holds 41 hashes, covering the plan, the runner, the analysis, the preflight scripts, the parents and the three runs' `SHA256SUMS`. `nohup caffeinate -is bash run.sh > runner.out 2>&1` started at 03:03:22Z.
+- **Run:** one launch, from 03:03:22Z to 08:20:00Z UTC (5 h 17 min; learners 2 h 46 min, evaluation 2 h 31 min).
+  - All 96 chains completed 24 iterations on the first pass, with no non-finite stop.
+  - All 216 evaluations, 72 parity runs and 72 diagnostics runs succeeded on the first attempt. There were no nonzero exits, the cap was not reached, and the clone stayed clean.
+- **Instrument:** all 576 corner iterations (24 chains × 24) matched bit for bit.
+  - `000` matched `SS`'s A′ in weights, Adam state, every gradient norm and the update count.
+  - `111` matched `PR`'s P in weights, Adam state, the update count and the gradient-norm extremes.
+  - `PR`'s T, P and parent evaluations were therefore reused.
+- **Analysis and archive:**
+  - `FROZEN.txt` re-verified 41/41, then `/usr/local/bin/python3 -I analyze.py --json analysis.json > analysis.md` ran once.
+  - Afterwards, `SHA256SUMS` still passed in `PR` (22,257), `SS` (38,908) and `FR` (10,217); the logs are in `PF/postcheck/`.
+  - `PF/SHA256SUMS` covers 8,741 files: every file except `vrepo/.git` (2.3 GB, mostly per-iteration checkpoints and the dry run's synthetic copies).
+
+**Results** (`PF/analysis.md`; the primary score is the equal-weighted mean
+points against v1, the heuristic and aggressive; 12 parents, 11 df). All 96
+required scores were present, and all 13 contrasts were labelled.
+
+- **Engineering-invalid children:** five new children failed parity, so the pre-set rule marks them engineering-invalid. They keep their scores and block labels as specified.
+  - The five are `c011-r8`, `c110-r9`, `c010-r13`, `c110-r13` and `c010-r15`. Their worst tolerance ratios were 1.144–1.250 against the approved contract, max(1e-5, 4 float32 ULP).
+  - The largest logit differences were 3.1e-5–6.1e-5, at legal-logit magnitudes of 173–376. Tie sets agreed and no margin was fragile on any fixture.
+  - All five look collapsed in the diagnostics: PASS on 0.975–0.990 of decisions, 1,181–4,297 decisions per game and maximum legal logits of 189–399. All are in cells with O at production.
+  - No other engineering check failed for any child.
+- **Primary: the seven factorial effects** (production level minus `train-arm` level). Blocked labels show the label they replaced. The across-the-set column is "—" wherever the pointwise label is unresolved or blocked.
+
+| Effect | Mean [95% t] | Direction | Size | Bonferroni interval (t = 3.295) | Across the set |
+|---|---|---|---|---|---|
+| S | +0.015 [−0.028, +0.059] | direction unresolved | size unresolved | [−0.050, +0.081] | — |
+| O | −0.028 [−0.063, +0.006] | direction unresolved | size unresolved | [−0.080, +0.024] | — |
+| W | −0.037 [−0.080, +0.006] | direction unresolved | size unresolved | [−0.102, +0.027] | — |
+| SO | +0.019 [−0.023, +0.060] | direction unresolved | size unresolved | [−0.044, +0.081] | — |
+| SW | +0.005 [−0.032, +0.041] | direction unresolved | blocked (was "below 0.05"): invalid children in `010`, `110`, `011` | [−0.050, +0.060] | — |
+| OW | +0.014 [−0.008, +0.036] | direction unresolved | blocked (was "below 0.05"): invalid children in `010`, `110`, `011` | [−0.018, +0.046] | — |
+| SOW | −0.047 [−0.077, −0.017] | blocked (was "negative interaction"): invalid children in `110` and `011`, on the higher-scoring side | size unresolved | [−0.092, −0.002] | — |
+
+- **Primary: corner contrasts** (unadjusted). None of these labels was blocked. No resolved label had an invalid child on its higher-scoring side, and no contrast was "below 0.05".
+
+| Contrast | Mean [95% t] | Direction | Size |
+|---|---|---|---|
+| drop S from P (`111` − `011`) | −0.009 [−0.112, +0.095] | direction unresolved | size unresolved |
+| drop O from P (`111` − `101`) | −0.043 [−0.085, −0.001] | train-arm level better | size unresolved |
+| drop W from P (`111` − `110`) | −0.066 [−0.137, +0.006] | direction unresolved | size unresolved |
+| add S to T (`100` − `000`) | −0.055 [−0.104, −0.006] | train-arm level better | size unresolved |
+| add O to T (`010` − `000`) | −0.108 [−0.175, −0.042] | train-arm level better | size unresolved |
+| add W to T (`001` − `000`) | −0.103 [−0.157, −0.050] | train-arm level better | size unresolved (upper endpoint −0.0497) |
+
+- **Pre-set decisions:**
+  - **Attribution (average effects):** S, O and W are each "direction unresolved, size unresolved", which is inconclusive at this size. No follow-up is chosen after seeing it.
+  - **Interactions:** no interaction has a direction label. SO, SW and OW are unresolved, and SOW's label is blocked, so the joint-attribution rule does not apply. The unresolved and blocked interactions are not evidence that the behaviors are additive.
+  - **Production corner:** dropping O from P is "train-arm level better, size unresolved". On this data, P with play order (`101`) scored 0.043 [0.001, 0.085] higher than P with episode-ID order. Dropping S or W was inconclusive.
+  - **Listed disagreement:** O's main effect is "direction unresolved", while its drop-one contrast is "train-arm level better".
+  - **Recipe choice** is outside this comparison. Removing O from production would rest on the drop-O contrast and is a separate owner decision. No production learner change follows from this result by itself.
+  - **Across the set:** no factorial-effect label holds across the set. Every unblocked label is unresolved, so there is nothing to qualify. SOW's Bonferroni interval excludes 0, but its direction label is blocked.
+  - **Every outcome:** further attribution keeps the `train-arm` learner, and the league opponent mix (task 4) follows. The refresh requirement stands, and no child is a promotion candidate.
+- **Secondary:**
+  - **Cell means (SD):**
+
+    | Cell | `000` (T) | `100` | `010` | `110` | `001` | `101` | `011` | `111` (P) |
+    |---|---|---|---|---|---|---|---|---|
+    | Mean | 0.820 | 0.765 | 0.712 | 0.788 | 0.717 | 0.766 | 0.731 | 0.722 |
+    | SD | 0.028 | 0.077 | 0.114 | 0.065 | 0.091 | 0.067 | 0.119 | 0.097 |
+
+    Every cell gained over its parent, by +0.137 to +0.245, with every interval above 0. Every new cell's SD was 2.3–4.3 times T's.
+  - **Per-opponent effects (descriptive):** SOW's interval excluded 0 against every opponent, and W's against v1 (−0.054 [−0.102, −0.006]). Every other per-opponent interval included 0.
+  - **Updates and weights:** cells with S at production made 1,209–1,240 updates per parent (mean 1,227), and the others 1,536. Cells with W at production had sample weights of 0.32–29.63.
+  - **Children with a pooled 1-tick fraction of at least 0.9:**
+    - `010`: two (r9, r15);
+    - `110`: two (r9, r15);
+    - `111`: three (r14, r16, r17), the same children as in `PR`;
+    - every other cell: none.
+  - **Fireball:** held-out capture was 0 for every model except two r17 children, `c010` (0.069) and `c110` (0.010), and the r13 and r17 parents (0.010 each).
+- **Reproduction checks (all passed; not part of the estimate):**
+  - 2,304/2,304 iterations trained on caches that matched `PR/SHA256SUMS`.
+  - The identity E_S + E_O + E_W + E_SOW = P − T held exactly for 12/12 parents, and P − T matched `PR`'s frozen d_P within 0.0005 for 12/12.
+- **Post hoc, descriptive** (written after the analysis; no label changes):
+  - O and W added alone to T each cost about as much as all three together: −0.108 and −0.103, against P − T −0.098. S added alone cost −0.055.
+  - Every two-behavior cell scored at least as high as each one-behavior cell inside it: `110` 0.788, `101` 0.766 and `011` 0.731, against `100` 0.765, `010` 0.712 and `001` 0.717.
+  - These cell means suggest a hypothesis: the costs overlap rather than add. No label supports it, because the only interaction that would have had a resolved direction (SOW) is blocked. Which behavior causes the cost was tested; attribution is unresolved.
+  - The five parity failures sit in the collapsed tail: they exceed the 4-ULP contract at logit magnitudes above 170, with tie sets agreeing. Whether the parity contract should cover such magnitudes differently was an owner question (decided November 10, below); it changes no label here.
+
+**Owner decisions, November 10, 2026.** No label changes.
+
+1. **League opponent mix: design work approved.** It is the next comparison under the frozen rule ("Every outcome", above).
+   - Keep the `train-arm` learner, refreshed rollouts, matched parents and seeds, equal updates and the same evaluation. Vary only the training opponent mix.
+   - The owner reviews the design before authorizing the run.
+2. **Episode order: deferred.** Restoring play order at the production corner gained +0.043 [0.001, 0.085] (drop O from P, with the sign reversed).
+   - That resolves direction under the frozen pointwise rule, while leaving practical size unresolved. No production learner change follows now.
+   - If a future campaign needs the production learner, run a separate paired comparison on fresh parents and rollouts, holding the split filter and weights fixed.
+3. **Parity: keep the 4-ULP rule,** max(1e-5, 4 float32 ULP).
+   - The tolerance already scales with logit magnitude.
+   - All five failures came from near-always-PASS policies (PASS on at least 0.975 of decisions), and move agreement (identical legal tie sets) held on every checked fixture, 53–54 per child.
+   - The reference-host re-measurement of k, already required before a campaign relies on it, assesses the rule for future campaigns.
+   - The three frozen labels stay blocked: SW's and OW's "below 0.05" and SOW's "negative interaction".
+4. **Record:** the preflight, launch, results and these decisions are committed as one docs-only results commit.
+
 ## Limits
 
 - The corpus is a 160-episode subset, not the production corpus.
@@ -1399,7 +1509,7 @@ it does not choose a recipe.
 - Option 1 tested one coefficient (0.05) and one row mask, with `P`'s parents, seeds and controls; the controls were trained on October 26–27 under code shown to reproduce them.
 - The β = 1 follow-up tested one more coefficient on the same mask. Its same-host controls come from an addendum written after the frozen analysis was read; that addendum changed only the controls' host.
 - Same-host training-run variance was measured once (six old-recipe runs on the M6): the child-primary SD is 0.118, strongly influenced by one valid low-scoring run. Three-run contrasts are below the modeled 80%-power target. Matched-difference spread was measured for rollout freshness at two scales: SD 0.075 at 384 updates and 0.229 at 1,536, each over 12 pairs.
-- Rollout freshness was tested at two scales on the same 12 parents: 384 updates, and 1,536 with a 1,536-game rollout. Both used one refresh interval (64 games), one cache, the `train-arm` learner, `train-arm` opponents and development seeds. The production learner path, league opponents and the historical scale (about 11,318 updates) are untested. The stale-degeneration pattern is post hoc.
+- Rollout freshness was tested at two scales on the same 12 parents: 384 updates, and 1,536 with a 1,536-game rollout. Both used one refresh interval (64 games), one cache, the `train-arm` learner, `train-arm` opponents and development seeds. The production learner path was tested on fixed refreshed data in the third and fourth comparisons: it cost about 0.1, and attribution among its three behaviors is unresolved. League opponents and the historical scale (about 11,318 updates) are untested. The stale-degeneration pattern is post hoc.
 - RL training is bit-reproducible only on the same host (M1 against M6, PyTorch 2.11.0 with Accelerate). Host variation of a six-iteration child (up to 0.17 primary) is as large as most effects in this review, so every RL contrast here carries training-run uncertainty that its intervals do not cover. Future comparisons need same-host controls.
 
 ## Reproduction
