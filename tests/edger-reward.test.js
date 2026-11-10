@@ -11,6 +11,8 @@ import { createTroop } from "../src/sim/entities.js";
 import { createRng } from "../src/sim/random.js";
 import { createProductionEngine } from "../src/sim/productionMatch.js";
 import {
+  EDGER_REWARD_V2_ELIXIR_SCALE,
+  EDGER_REWARD_V2_TERM_WEIGHTS,
   EDGER_REWARD_VERSIONS,
   counterCredit,
   elixirPhaseFactor,
@@ -135,6 +137,23 @@ test("reward v2 is exactly antisymmetric between blue and red", () => {
   }
 });
 
+test("frozen v2 weights: R is reported but carries weight 0", () => {
+  assert.deepEqual({ ...EDGER_REWARD_V2_TERM_WEIGHTS }, { material: 1, threat: 1, readiness: 0, support: 1 });
+  assert.ok(Object.isFrozen(EDGER_REWARD_V2_TERM_WEIGHTS));
+  let nonzeroReadiness = 0;
+  for (const [seed, ticks] of [[5, 600], [6, 1500], [7, 2700], [8, 3300]]) {
+    const engine = playedEngine(seed, ticks);
+    for (const actor of ["blue", "red"]) {
+      const v2 = potentialForActor(engine, actor, V2);
+      const expected = v2.phase_factor * v2.material + v2.threat + v2.support;
+      assert.equal(v2.position, expected, `seed ${seed} ${actor}`);
+      assert.equal(v2.total, v2.v1 + expected / EDGER_REWARD_V2_ELIXIR_SCALE);
+      nonzeroReadiness += v2.readiness !== 0 ? 1 : 0;
+    }
+  }
+  assert.ok(nonzeroReadiness > 0, "readiness is still computed");
+});
+
 test("material counts the bank, troops by HP and pending cards, scaled by elixir refill speed", () => {
   assert.equal(elixirPhaseFactor("normal"), 1);
   assert.equal(elixirPhaseFactor("double"), 0.5);
@@ -197,26 +216,35 @@ test("threat grows from own side to across the bridge to locked on a tower", () 
   assert.equal(sidePositionTerms(engine, "red").threat, 0.25 * 3 * 0.75 + 1 * 4 * 0.5 * 0.75);
 });
 
-test("answer readiness credits counters in hand, next in queue and by affordability", () => {
+test("answer readiness charges unanswered threats; counters in hand, next in queue and affordability reduce the charge", () => {
   const readiness = ({ hand, next = "arrows", elixir = 5, giantHp = 1 }) => {
     const engine = emptyBoard({ blueHand: hand, blueElixir: elixir });
     engine.state.card_state.blue.draw_pile = [next];
     addTroop(engine, { cardId: "giant", team: "red", x: 4, y: 18, hpFraction: giantHp });
     return sidePositionTerms(engine, "blue").readiness;
   };
-  // 0.5 x cost 5 x tier 1 x urgency x credit.
-  assert.equal(readiness({ hand: ["mini_pekka", "arrows"] }), 2.5);
-  assert.equal(readiness({ hand: ["arrows"], next: "mini_pekka" }), 1.25);
-  assert.equal(readiness({ hand: ["archers", "arrows"] }), 1.25, "partial counter");
-  assert.equal(readiness({ hand: ["mini_pekka", "arrows"], elixir: 2 }), 1.25);
-  assert.equal(readiness({ hand: ["mini_pekka", "arrows"], elixir: 1 }), 0.625);
-  assert.equal(readiness({ hand: ["mini_pekka", "arrows"], giantHp: 0.5 }), 1.25);
-  assert.equal(readiness({ hand: ["arrows", "fireball"] }), 0, "no counter");
+  // -(0.5 x cost 5 x tier 1 x urgency) x (1 - credit).
+  assert.equal(readiness({ hand: ["mini_pekka", "arrows"] }), 0, "answered: no charge");
+  assert.equal(readiness({ hand: ["arrows"], next: "mini_pekka" }), -1.25);
+  assert.equal(readiness({ hand: ["archers", "arrows"] }), -1.25, "partial counter");
+  assert.equal(readiness({ hand: ["mini_pekka", "arrows"], elixir: 2 }), -1.25);
+  assert.equal(readiness({ hand: ["mini_pekka", "arrows"], elixir: 1 }), -1.875);
+  assert.equal(readiness({ hand: ["archers", "arrows"], giantHp: 0.5 }), -0.625);
+  assert.equal(readiness({ hand: ["arrows", "fireball"] }), -2.5, "no counter: full charge");
+  // Being attacked never raises readiness: an answered threat adds nothing,
+  // an unanswered one (Mini PEKKA; no Goblins, Knight, Archers or Musketeer
+  // available) adds its full charge, 0.5 x 4 x 1 x 1.
+  const attacked = emptyBoard({ blueHand: ["mini_pekka", "arrows"], blueElixir: 5 });
+  attacked.state.card_state.blue.draw_pile = ["arrows"];
+  addTroop(attacked, { cardId: "giant", team: "red", x: 4, y: 18 });
+  assert.equal(sidePositionTerms(attacked, "blue").readiness, 0);
+  addTroop(attacked, { cardId: "mini_pekka", team: "red", x: 6, y: 18 });
+  assert.equal(sidePositionTerms(attacked, "blue").readiness, -2);
 
   // Troop cards in the enemy hand count at half urgency; Fireball is a
   // partial answer to Musketeer.
   const engine = emptyBoard({ blueHand: ["fireball"], redHand: ["musketeer", "arrows"], blueElixir: 4 });
-  assert.equal(sidePositionTerms(engine, "blue").readiness, 0.5 * 4 * 1 * 0.5 * 0.5);
+  assert.equal(sidePositionTerms(engine, "blue").readiness, -(0.5 * 4 * 1 * 0.5) * (1 - 0.5));
   assert.equal(counterCredit({ hand: ["arrows"], nextInQueue: null, elixir: 10 }, "goblins"), 1);
   assert.equal(counterCredit({ hand: ["giant"], nextInQueue: null, elixir: 10 }, "goblins"), 0);
 });

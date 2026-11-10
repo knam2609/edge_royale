@@ -9,16 +9,24 @@
 // - v1 (edger_potential_reward_v1): crowns and tower HP only.
 // - v2 (edger_potential_reward_v2): v1 plus position terms, in elixir units,
 //   divided by 75, so 1 elixir is worth about 400 tower HP:
-//     Phi_v2 = Phi_v1 + (f(phase) * M + T + R + S) / 75, each term ours - theirs
-//   M material, T threat, R answer readiness, S tank support. The new terms
+//     Phi_v2 = Phi_v1 + (f(phase) * M + T + 0 * R + S) / 75, each term ours - theirs
+//   M material, T threat, S tank support. R (answer readiness: minus the
+//   enemy threat value a side cannot answer) is computed and reported for
+//   diagnostics but has weight 0 (EDGER_REWARD_V2_TERM_WEIGHTS). The new terms
 //   are 0 at game end, which is standard potential-based shaping with
 //   Phi(terminal) = 0, so they guide learning without changing what winning
 //   is worth. Owner design: November 10, 2026 (docs/EDGER_REWARD.md).
 //
-// Status: the counter table was frozen by the owner on November 10, 2026,
-// after the counter duels (scripts/edger-reward-duels.mjs). The weights stay
-// a draft until the data check. Once any training run uses v2, a change to
-// any constant below needs a new reward version.
+// Status: frozen. The counter table was frozen by the owner on November 10,
+// 2026, after the counter duels (scripts/edger-reward-duels.mjs). The data
+// check RC found that R's first form, credit for answers held
+// (value x credit), made winner prediction worse: it rose whenever enemy
+// threats were on the board. The owner redesigned R as a charge for
+// unanswered threats, value x (1 - credit). The re-check RC2 found that this
+// form helps alone but still hurts given M and T, which it mostly duplicates.
+// The owner then froze the weights on November 11, 2026, with R at weight 0
+// (docs/EDGER_REWARD.md). Any change to a constant below needs a new reward
+// version.
 
 import { ELIXIR_REGEN_TICKS, getMatchPhase } from "../src/sim/config.js";
 import { CARD_STATS } from "../src/sim/stats.js";
@@ -39,6 +47,16 @@ export function assertRewardVersion(version) {
 
 // Elixir units per reward unit: 1 elixir = 30,000 / 75 = 400 tower HP.
 export const EDGER_REWARD_V2_ELIXIR_SCALE = 75;
+
+// Term weights in Phi_v2 (owner decision, November 11, 2026, after the data
+// checks RC and RC2). R has weight 0: removing it improved winner prediction
+// in both runs. It is still computed and reported, for diagnostics.
+export const EDGER_REWARD_V2_TERM_WEIGHTS = Object.freeze({
+  material: 1,
+  threat: 1,
+  readiness: 0,
+  support: 1,
+});
 
 // T: how much a troop threatens towers, per unit cost at full HP.
 export const EDGER_REWARD_V2_THREAT_TIER = Object.freeze({
@@ -234,7 +252,11 @@ function threatsAgainst(engine, team) {
   return threats;
 }
 
-// How ready `team` is to answer the enemy's threats.
+// R for one side: minus the enemy threat value `team` cannot answer. Each
+// threat is worth 0.5 x cost x tier x urgency, times (1 - best counter
+// credit): nothing when a strong counter is in hand and affordable, its full
+// value when no counter is available. Holding an answer is neutral, so being
+// attacked never raises R (owner redesign, November 10, 2026).
 function sideReadiness(engine, team) {
   const context = {
     hand: engine.getHand(team),
@@ -245,7 +267,7 @@ function sideReadiness(engine, team) {
   for (const threat of threatsAgainst(engine, team)) {
     const card = CARD_STATS[threat.cardId];
     const tier = EDGER_REWARD_V2_THREAT_TIER[threat.cardId] ?? 0;
-    total += EDGER_REWARD_V2_READINESS.scale * card.cost * tier * threat.urgency * counterCredit(context, threat.cardId);
+    total -= EDGER_REWARD_V2_READINESS.scale * card.cost * tier * threat.urgency * (1 - counterCredit(context, threat.cardId));
   }
   return total;
 }
@@ -309,7 +331,9 @@ export function potentialForActor(engine, actor, version = EDGER_REWARD_VERSIONS
   const threat = sideThreat(state, actor, entityById) - sideThreat(state, enemy, entityById);
   const readiness = sideReadiness(engine, actor) - sideReadiness(engine, enemy);
   const support = sideSupport(state, actor) - sideSupport(state, enemy);
-  const position = phaseFactor * material + threat + readiness + support;
+  const weights = EDGER_REWARD_V2_TERM_WEIGHTS;
+  const position = weights.material * phaseFactor * material + weights.threat * threat +
+    weights.readiness * readiness + weights.support * support;
   return {
     version,
     total: v1 + position / EDGER_REWARD_V2_ELIXIR_SCALE,
