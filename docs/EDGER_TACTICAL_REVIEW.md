@@ -1496,6 +1496,10 @@ required scores were present, and all 13 contrasts were labelled.
    - The three frozen labels stay blocked: SW's and OW's "below 0.05" and SOW's "negative interaction".
 4. **Record:** the preflight, launch, results and these decisions are committed as one docs-only results commit.
 
+**Owner decision, later on November 10, 2026: reward work first.** The training reward gets a position-aware version before any more learner comparisons ([reward design](EDGER_REWARD.md)).
+- The league opponent mix design (decision 1) is **parked** until the reward comparison is done. It will then run under whichever reward that comparison favors.
+- The reward v2 comparison follows the same frozen rule. The owner reviews its design before any run.
+
 ## Limits
 
 - The corpus is a 160-episode subset, not the production corpus.

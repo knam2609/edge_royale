@@ -65,7 +65,7 @@ Decision derivation replays the exact JavaScript simulator and records:
 - relative-side observation
 - legal card, placement, and delay masks
 - selected action and delay
-- versioned potential-shaped reward
+- versioned potential-shaped reward ([reward versions](EDGER_REWARD.md))
 - behavior log-probability
 - opponent stratum
 - source and V-trace eligibility
@@ -162,7 +162,7 @@ The critic:
 
 - receives opponent stratum only in its training-only branch
 - uses terminal `+1/0/−1`
-- uses `edger_potential_reward_v1` crown/tower potential shaping
+- uses `edger_potential_reward_v1` crown/tower potential shaping (v2, which adds position terms, is opt-in for the cadence diagnostic only; see [EDGER_REWARD.md](EDGER_REWARD.md))
 - discounts by `0.9997^Δtick`
 
 Offline improvement freezes the BC reference and critic:

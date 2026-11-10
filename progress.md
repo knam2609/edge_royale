@@ -1,5 +1,12 @@
 # Current State
 
+- November 10, 2026: the owner made the training reward the top priority ([design](docs/EDGER_REWARD.md)).
+  - Reward `edger_potential_reward_v2` (opt-in) adds four position terms to the v1 crown/tower potential: material (elixir bank, troops by HP and pending cards, scaled by refill speed), tower threat (tier × HP × position), answer readiness against a counter table, and tank support.
+  - The terms are divided by 75 (1 elixir ≈ 400 tower HP) and are 0 at game end. They guide learning only; winning stays the objective.
+  - The default stays v1, bit for bit.
+  - The counter table was frozen after the counter duels (`RD`); the weights still need the data check. No training has used v2.
+  - The league opponent mix design is parked until the reward comparison is done.
+- November 10 finding: bots, Edger included, can place troops at only four cells (the three bridge-front cells and the back center), plus pocket cells after a crown tower falls. Recorded as a follow-up task; nothing changed.
 - November 4, 2026: the owner adopted the comparison rule ([rule](docs/EDGER_TACTICAL_REVIEW.md#comparison-rule--owner-decision-november-4-2026)). It is mean-primary, normally 12 runs per arm for effects around 0.15 and about 24 for 0.10. Every valid poor run is retained, the median is secondary, and sizing, failure handling and stopping are frozen before output. The six-arm single-parent pilot is skipped. Sizes are model-based planning estimates, not power guarantees. The pilot report and advice were committed docs-only as `6e0b6a8`.
 - November 6, 2026: the owner-approved rollout-freshness comparison is done ([results](docs/EDGER_TACTICAL_REVIEW.md#first-comparison-rollout-freshness-at-equal-updates)). There were 12 new BC parents (r6–r17), each with two RL children matched on games, seeds, opponents and 384 updates. Frozen label: **refreshed better (|mean d| < 0.15)**. Refreshing every 64 games beat learning from one 384-game parent rollout by 0.105 primary [0.057, 0.152], with B lower in 10 of 12 pairs and every opponent's interval excluding 0. The result fell between the pre-set decision branches. On November 6 the owner therefore decided ([decision](docs/EDGER_TACTICAL_REVIEW.md#first-comparison-rollout-freshness-at-equal-updates)):
   - require refreshed rollouts in future RL/league designs, as an engineering decision (the frozen label stands; every 64 games is the tested baseline);
@@ -42,7 +49,7 @@
     - Further attribution keeps `train-arm`, and the league opponent mix follows. The refresh requirement stands, and no child is a promotion candidate.
   - Post hoc, descriptive only: O or W alone cost about as much as all three together, and every two-behavior cell scored at least as high as its one-behavior cells. These cell means suggest a hypothesis that the costs overlap rather than add; no interaction label supports it.
 - November 10, 2026: owner decisions on the factorial ([decisions](docs/EDGER_TACTICAL_REVIEW.md#fourth-comparison-factorial-decomposition-of-the-production-learner)), with no label changes:
-  - League opponent mix: design work approved as the next comparison under the frozen rule. Keep `train-arm`, refreshed rollouts, matched parents and seeds, equal updates and the same evaluation; vary only the training opponent mix. The owner reviews the design before authorizing the run.
+  - League opponent mix: design work approved as the next comparison under the frozen rule. Keep `train-arm`, refreshed rollouts, matched parents and seeds, equal updates and the same evaluation; vary only the training opponent mix. The owner reviews the design before authorizing the run. Later the same day, the owner parked it behind the reward work (above).
   - Episode order: deferred. Restoring play order at the production corner gained +0.043 [0.001, 0.085], which resolves direction under the frozen pointwise rule but leaves practical size unresolved. If a future campaign needs the production learner, run a separate paired comparison on fresh parents and rollouts, holding the split filter and weights fixed.
   - Parity: keep the 4-ULP rule. The tolerance already scales with logit magnitude, all five failures came from near-always-PASS policies, and tie sets agreed on every checked fixture. The required reference-host re-measurement assesses the rule for future campaigns. The three frozen labels stay blocked.
   - The preflight, launch, results and these decisions are one docs-only results commit.
@@ -58,6 +65,7 @@
 
 # Source of Truth
 
+- Reward: [reward design](docs/EDGER_REWARD.md). Counter duels `RD` = `~/edge_royale-runs/20261110-reward-duels.noindex/`: `duels.json`, `duels.md`, copies of the script and module, `base-commit.txt`, `README.md`, `SHA256SUMS` (6 files).
 - Product/workflow: `AGENTS.md`, [README](README.md), [bot spec](docs/BOT_LEVELS.md), [training](docs/EDGER_TRAINING.md), [roadmap](docs/IMPLEMENTATION_PLAN.md), [backlog](docs/SPRINT_BACKLOG.md).
 - Pilot `VP` = `~/edge_royale-runs/20261103-variance-pilot.noindex/`: clean clone `vrepo` (`16e36b4`), r0–r5 seed plans/generator, frozen `plan.md`, `run.sh`, `analyze.py`, `FROZEN.txt`, parents/children, 36 evaluations, parity/tactical checks, `analysis.md`, explicitly post-hoc `posthoc.py`/`posthoc.md`, logs, `README.md`, 2,775-file `SHA256SUMS`.
 - Freshness comparison `FR` = `~/edge_royale-runs/20261106-rollout-freshness.noindex/`: clean clone `vrepo` (`d345a49`), r6–r17 seed plans/generator, preflight `smoke/`, frozen `plan.md`, `run.sh`, `analyze.py`, `FROZEN.txt` (20 files), 12 parents and 24 children, 108 evaluations, parity checks, `analysis.md`, post-hoc `posthoc.py`/`posthoc.md`, logs, `README.md`, 10,217-file `SHA256SUMS`.
@@ -75,6 +83,7 @@
 
 # What Works
 
+- Reward v2 (`scripts/edger-reward-core.mjs`): `collect`/`train-arm --reward edger_potential_reward_v2`. The learner refuses mixed versions within a collection or an arm; `convert-collection` accepts v1 only. With the default reward, `FR` A-r6 iteration 0 reproduced 64/64 bodies. `scripts/edger-reward-duels.mjs` is deterministic.
 - `convert-collection` (`f09fccf`) converts a train-arm collection, with pruned bodies, into production episodes and a manifest. It fails closed, with no manifest, on any model, header-body or derived-row mismatch, and the labels that set the split and order are fixed in code ([training doc](docs/EDGER_TRAINING.md#decision-cadence-diagnostic-local-only-never-promotable)).
 - Routine policy diagnostics (`a8127c1`): every cadence `evaluate`/`collect` summary carries `policy_diagnostics`. `diagnostics --evaluations <files> --out <file>` pools one model's opponent files and refuses mixed models or cadences, repeated opponents and files that predate the diagnostics.
 - All 50 synthetic floors are reachable by legal actions. Blue mirrors have identical canonical observations; 4–8 center-column placements per pair differ because of the existing grid. Timing retains its original five states.
@@ -84,6 +93,11 @@
 
 # Known Gaps
 
+- Reward v2 is untested in training:
+  - the weights lack the data check, and playstyle diagnostics don't exist yet;
+  - the duel evidence is single engagements, with supported pushes tested only for Musketeer and Archers behind a Giant;
+  - readiness can credit one counter against several threats.
+- Bot troop placement is limited to four cells (plus pockets). This caps defensive play and how much the tank-support term can matter.
 - Candidate quality remains unresolved. Expanded synthetic aggregate: v1 0.522 versus heuristic 0.852; v1 fails spell/finishing/pocket floors. Neither baseline passes the real-state capture gate. Scores/corpus selection changed, without policy improvement.
 - Eighty one-decision states are bounded local evidence, correlated within episodes. Interception is a geometric time proxy; capture uses decision-time geometry without projectile forecasting or strategic value. Production corpus coverage/cloud wiring remain unvalidated end to end.
 - The pilot measures one old recipe, cache and host with shared torch seed. Other recipes, conditional RL-only variance and poor-run frequency are unmeasured. Matched-difference SD is known for rollout freshness only (0.075 at 384 updates, 0.229 at 1,536). Freshness was tested at two scales with the `train-arm` learner and opponents. Mean stale regression at 1,536 is unresolved at 12 pairs, and the degeneration pattern is post hoc. The production learner path costs about 0.1 on identical refreshed data at 1,536 games. The factorial (`PF`) tested its three behaviors (split filter, ID order, balancing weights); attribution is unresolved. All three average effects were inconclusive at this size, and SOW's interaction label was blocked by five parity failures. Four corner contrasts resolved a direction (drop O and all three add-one contrasts), each favoring the `train-arm` level, with size unresolved. League opponents and the historical scale (about 11,318 updates) are untested. Training scores did not distinguish r4. Cross-host shifts (−0.166 to +0.080) are separate; evaluation-seed intervals omit training-run uncertainty.
@@ -92,18 +106,41 @@
 
 # Next Tasks
 
-1. Draft the league opponent mix comparison design for owner review. Design work was approved on November 10; the run is not authorized until the owner reviews the design. It continues the historical league-regression attribution under the factorial's frozen rule. Keep the `train-arm` learner, refreshed rollouts, matched parents and seeds, equal updates and the same evaluation, and vary only the training opponent mix. Use one host and pairs sized by the rule, and freeze before output. Do not extend completed comparisons after seeing their output; the factorial's inconclusive effects get no follow-up chosen after seeing them. Stale-batch breakdown and the balancing weights (up to 30) remain hypotheses, each needing its own design and pre-set endpoint.
-2. Optional: repeat warm-up headed at DPR 2. Mobile/120 Hz need separate measurement. Protect decision-preserving speed-ups for review/fresh provenance; no forced-PASS shortcuts.
-3. Prepare timing-only `c7g.4xlarge` packet for separate approval: exact launch/SSM/download/termination, verified bundle, current official price ceiling, ≤60-minute lifetime/storage/cleanup. Cloud admission is pending the A$10/month whole-account budget. Keep existing-method p95 ≤5 ms.
-4. Re-scope September 21 BC-control/architecture ablations; do not judge by held-out cross-entropy alone. Candidates must satisfy capture and match-quality gates.
-5. Review the full accumulated diff against `main`, including protected runtime/parity commits and proposal 4, before publication. Obtain explicit push/PR approval; record full SHA/manifest hashes.
-6. Prepare fresh BC/scaling provenance and a new immutable campaign prefix. Freeze the compatible test bank before candidate evaluation. Never resume/retarget failed recovery or bypass its protected-runtime guard.
-7. Deferred (owner, November 10): if a future campaign needs the production learner, first run a separate paired episode-order comparison on fresh parents and rollouts, holding the split filter and weights fixed. The factorial's drop-O contrast resolved direction only. Any production change remains a separate owner decision; S's held-out splits would need another way to keep their purpose if S were ever removed.
-8. After local prerequisites/review, seek approval for a bounded reference-host pilot, separate from production learning/full evaluation. Re-measure parity k on that PyTorch/BLAS and use it to assess the kept 4-ULP rule for future campaigns; preserve smoke/production isolation, gates and cleanup. Timing-only profiling remains separate.
-9. Consider manual promotion only with a matching passed full-evaluation marker and separate approval; use an unmerged review PR and preserve live v1 until accepted.
-10. Standardize browser smoke: retain assertion diagnostics, investigate recurrence of iCloud/refetch/watchdog failures, and add group/KILL cleanup to the 120 s watchdog. M6 install/smoke passes; the original October 4 193/196 cause is unconfirmed. Preserve verified outside-iCloud freeze gates.
+1. **Reward v2 data check** ([design](docs/EDGER_REWARD.md#remaining-steps-before-v2-trains)). Write and freeze the plan, generator and analysis in a new run directory before any output.
+   - Games: about 2,000 fresh games on seeds disjoint from training and evaluation: the heuristic against aggressive, defender, random and itself; live v1 against the heuristic; and the `SS` A′ children against the heuristic.
+   - Record Φ_v1 and the Φ_v2 components every 10 s.
+   - Pre-set checks: Φ_v2 predicts the winner no worse than Φ_v1 at each checkpoint and better on average; removing any one term does not improve prediction. Report reward magnitudes.
+   - The owner may adjust the weights once, then they are frozen.
+2. **Playstyle diagnostics:** add descriptive `playstyle_diagnostics` to `evaluate` summaries: wasted elixir, counter responses, Giant plays into an affordable answer, and M/T/R at 60 s and 120 s. Games must stay bit-identical (checked as for `a8127c1`).
+3. **Fifth comparison design (reward v2 against v1)** for owner review, under the frozen rule:
+   - the 12 `FR` parents, `SS`'s seed plans, `train-arm`, refreshed every 64 games, 1,536 updates;
+   - an identical critic-only warm-up in both arms;
+   - the primary endpoint is the existing match-result primary score.
+
+   No run until the owner approves.
+4. **Parked (owner, November 10): the league opponent mix comparison design.** It resumes after the reward comparison, under whichever reward that comparison favors. Design work was approved on November 10; the run is not authorized until the owner reviews the design. It continues the historical league-regression attribution under the factorial's frozen rule. Keep the `train-arm` learner, refreshed rollouts, matched parents and seeds, equal updates and the same evaluation, and vary only the training opponent mix. Use one host and pairs sized by the rule, and freeze before output. Do not extend completed comparisons after seeing their output; the factorial's inconclusive effects get no follow-up chosen after seeing them. Stale-batch breakdown and the balancing weights (up to 30) remain hypotheses, each needing its own design and pre-set endpoint.
+5. **Follow-up (owner, November 10): bot troop placement.** Bots can deploy troops at only four cells. Investigate after the reward comparison; widening it changes the action space for every trained model, so it needs its own design.
+6. Optional: repeat warm-up headed at DPR 2. Mobile/120 Hz need separate measurement. Protect decision-preserving speed-ups for review/fresh provenance; no forced-PASS shortcuts.
+7. Prepare timing-only `c7g.4xlarge` packet for separate approval: exact launch/SSM/download/termination, verified bundle, current official price ceiling, ≤60-minute lifetime/storage/cleanup. Cloud admission is pending the A$10/month whole-account budget. Keep existing-method p95 ≤5 ms.
+8. Re-scope September 21 BC-control/architecture ablations; do not judge by held-out cross-entropy alone. Candidates must satisfy capture and match-quality gates.
+9. Review the full accumulated diff against `main`, including protected runtime/parity commits and proposal 4, before publication. Obtain explicit push/PR approval; record full SHA/manifest hashes.
+10. Prepare fresh BC/scaling provenance and a new immutable campaign prefix. Freeze the compatible test bank before candidate evaluation. Never resume/retarget failed recovery or bypass its protected-runtime guard.
+11. Deferred (owner, November 10): if a future campaign needs the production learner, first run a separate paired episode-order comparison on fresh parents and rollouts, holding the split filter and weights fixed. The factorial's drop-O contrast resolved direction only. Any production change remains a separate owner decision; S's held-out splits would need another way to keep their purpose if S were ever removed.
+12. After local prerequisites/review, seek approval for a bounded reference-host pilot, separate from production learning/full evaluation. Re-measure parity k on that PyTorch/BLAS and use it to assess the kept 4-ULP rule for future campaigns; preserve smoke/production isolation, gates and cleanup. Timing-only profiling remains separate.
+13. Consider manual promotion only with a matching passed full-evaluation marker and separate approval; use an unmerged review PR and preserve live v1 until accepted.
+14. Standardize browser smoke: retain assertion diagnostics, investigate recurrence of iCloud/refetch/watchdog failures, and add group/KILL cleanup to the 120 s watchdog. M6 install/smoke passes; the original October 4 193/196 cause is unconfirmed. Preserve verified outside-iCloud freeze gates.
 
 # Validation
+
+November 10, 2026: reward v2 code, counter duels and docs. Training tooling only; there was no gameplay, Edger runtime, heuristic or client change. Nothing is committed yet.
+
+- `PYTHON=/usr/local/bin/python3 npm test`: 252/252, including 8 new tests in `tests/edger-reward.test.js`.
+- `/usr/local/bin/python3 -m pytest -q tests/test_edger_v2_cadence.py`: 19/19, 1 new.
+- Default-reward reproduction (read-only):
+  - `node scripts/edger-v2-cadence-experiment.mjs collect --seeds $FR/seeds/seed-plan-r6.json --iteration 0 --pairs-per-iteration 32 --model $FR/models/b0-s20260724.json --cadence learned --out-dir <scratchpad>/episodes --out <scratchpad>/collection.json` gave 64/64 body SHA-256 values and reward versions equal to `FR/arms/A-r6/iter0/episode-headers`.
+  - Afterwards `FR` `shasum -a 256 -c SHA256SUMS` passed 10,217/10,217.
+- Duels: `node scripts/edger-reward-duels.mjs --out ~/edge_royale-runs/20261110-reward-duels.noindex`. After the frozen table moved into the module, the report regenerated byte for byte. `RD` `shasum -a 256 -c SHA256SUMS` passes 6/6.
+- The bot benchmark and browser smoke were not run: Edger's runtime, the heuristic and the client are unchanged.
 
 November 10, 2026: owner decisions and the factorial results commit (docs only; no repository code, run directory or frozen evidence changed).
 
@@ -180,6 +217,9 @@ November 7, 2026: converter code checkpoint, then preflight, run and frozen anal
 
 # Risks / Notes
 
+- Reward v2 is hand-designed shaping. In theory potential-based shaping leaves the best policy unchanged, but with limited training it can still steer learning toward the owner's model of good play. The comparison, judged on match results rather than the reward, decides.
+  - The counter table encodes engine-specific duel facts, for example that Fireball (688) cannot kill a 721-HP Musketeer.
+  - The reward v2 work is uncommitted in the working tree.
 - Capture requirements reuse existing synthetic category numbers as new rate gates, not equivalent metrics or thresholds fitted to baselines. Freeze/review future banks before candidate comparisons; never tune bank selection against candidate scores. Q4's schema v1 bank remains evidence and is rejected as input.
 - Host-specific kernels are a hypothesis, not an isolated cause. Pin host, Node and Python/BLAS provenance. Plain `npm test` selects Homebrew Python without torch/pyarrow and fails 11 tests here.
 - Cloud budget, orphan endpoint/EIP/support case, Project B/default-VPC preservation, historical disk/iCloud conditions, display ownership and cleanup limits remain unresolved in [local constraints](docs/EDGER_LOCAL_CONSTRAINTS.md). No AWS calls or cleanup occurred.

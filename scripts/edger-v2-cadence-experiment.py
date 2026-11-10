@@ -51,6 +51,11 @@ DIAGNOSTIC_CHECKPOINT_SCHEMA = "edger_v2_cadence_diagnostic_checkpoint_v1"
 PROMOTION_STATUS = "diagnostic_only_not_promotable"
 DELAY_MODES = ("learned", "fixed_one_tick")
 LOSS_MODES = ("full", "critic_only", "value_detached")
+# Training reward potentials (scripts/edger-reward-core.mjs). Every episode in
+# a collection, and every iteration of an arm, must use one version; files
+# written before v2 existed carry v1 or no version at all.
+REWARD_VERSIONS = ("edger_potential_reward_v1", "edger_potential_reward_v2")
+DEFAULT_REWARD_VERSION = REWARD_VERSIONS[0]
 # Rows the card KL penalty covers: every row, or only Fireball opportunity rows
 # (tactical review proposal 3, option 1, the targeted floor).
 CARD_KL_ROWS = ("all", "opportunity")
@@ -645,6 +650,9 @@ def run_train_iteration(args: argparse.Namespace) -> None:
         raise ValueError(f"--delay-mode must be one of {DELAY_MODES}")
     if args.loss_mode not in LOSS_MODES:
         raise ValueError(f"--loss-mode must be one of {LOSS_MODES}")
+    reward_version = getattr(args, "reward_version", DEFAULT_REWARD_VERSION)
+    if reward_version not in REWARD_VERSIONS:
+        raise ValueError(f"--reward-version must be one of {REWARD_VERSIONS}")
     training.seed_everything(args.seed)
     checkpoint, model = load_any_checkpoint(args.checkpoint)
     _, parent = load_any_checkpoint(args.parent)
@@ -661,9 +669,15 @@ def run_train_iteration(args: argparse.Namespace) -> None:
             raise ValueError("card KL coefficient changed within an arm")
         if checkpoint.get("card_kl_rows", "all") != args.card_kl_rows:
             raise ValueError("card KL rows changed within an arm")
+        if checkpoint.get("reward_version", DEFAULT_REWARD_VERSION) != reward_version:
+            raise ValueError("reward version changed within an arm")
         optimizer.load_state_dict(checkpoint["optimizer_state"])
         optimizer_restored = True
     collection = json.loads(Path(args.collection).read_text())
+    if collection.get("reward_version", DEFAULT_REWARD_VERSION) != reward_version:
+        raise ValueError(
+            f"collection reward version {collection.get('reward_version')} is not {reward_version}"
+        )
     episode_paths = [Path(item["header"]) for item in sorted(collection["episodes"], key=lambda item: item["match_index"])]
 
     updates = []
@@ -675,6 +689,10 @@ def run_train_iteration(args: argparse.Namespace) -> None:
     started = time.perf_counter()
     for index, path in enumerate(episode_paths):
         episode = load_cadence_episode(path)
+        if episode["header"].get("reward_version", DEFAULT_REWARD_VERSION) != reward_version:
+            raise ValueError(
+                f"episode {path} reward version {episode['header'].get('reward_version')} is not {reward_version}"
+            )
         stratum = vocab.get(episode["header"]["opponent"], 0)
         update = train_cadence_episode(
             model,
@@ -723,6 +741,7 @@ def run_train_iteration(args: argparse.Namespace) -> None:
         "arm": args.arm,
         "delay_mode": args.delay_mode,
         "loss_mode": args.loss_mode,
+        "reward_version": reward_version,
         "decompose_every": args.decompose_every,
         "iteration": args.iteration,
         "learning_rate": args.learning_rate,
@@ -850,6 +869,7 @@ def run_train_iteration(args: argparse.Namespace) -> None:
         "arm": args.arm,
         "delay_mode": args.delay_mode,
         "loss_mode": args.loss_mode,
+        "reward_version": reward_version,
         "card_kl_coefficient": args.card_kl_coefficient,
         "card_kl_rows": args.card_kl_rows,
         "iteration": args.iteration,
@@ -1068,6 +1088,7 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--value-loss-weight", type=float, default=0.5)
     train.add_argument("--entropy-bonus", type=float, default=0.001)
     train.add_argument("--loss-mode", default="full", choices=LOSS_MODES)
+    train.add_argument("--reward-version", default=DEFAULT_REWARD_VERSION, choices=REWARD_VERSIONS)
     train.add_argument(
         "--card-kl-coefficient", type=float, default=0.0,
         help="weight of KL(parent || model) over the card head (0 = the production update)",

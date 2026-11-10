@@ -35,6 +35,13 @@ import {
   cloneProductionInitialCardState,
   createProductionEngine,
 } from "../src/sim/productionMatch.js";
+import {
+  EDGER_REWARD_VERSIONS,
+  assertRewardVersion,
+  potentialForActor,
+  terminalPotentialForActor,
+  v1PotentialForActor,
+} from "./edger-reward-core.mjs";
 
 export const EDGER_V2_CADENCE_EPISODE_SCHEMA = "edger_v2_cadence_episode_v1";
 export const EDGER_V2_CADENCES = Object.freeze({
@@ -44,7 +51,8 @@ export const EDGER_V2_CADENCES = Object.freeze({
 export const EDGER_V2_CADENCE_MAX_TICKS = 6040;
 // Must match scripts/edger-corpus-core.mjs; the tests compare the two paths.
 export const EDGER_V2_CADENCE_PER_TICK_GAMMA = 0.9997;
-export const EDGER_V2_CADENCE_REWARD_VERSION = "edger_potential_reward_v1";
+// The default reward. Version v2 is opt-in (scripts/edger-reward-core.mjs).
+export const EDGER_V2_CADENCE_REWARD_VERSION = EDGER_REWARD_VERSIONS.V1;
 export const EDGER_V2_BOARD_SIZE =
   EDGER_V2_BOARD_HEIGHT * EDGER_V2_BOARD_WIDTH * EDGER_V2_BOARD_CHANNELS;
 
@@ -346,14 +354,9 @@ export function decideEdgerV2WithCadence({
   };
 }
 
-// Same potential and terminal reward as deriveDecisionSequence.
+// Same potential and terminal reward as deriveDecisionSequence (reward v1).
 export function scorePotentialForActor(engine, actor) {
-  const score = engine.getScore();
-  const ownCrowns = actor === "blue" ? score.blue_crowns : score.red_crowns;
-  const enemyCrowns = actor === "blue" ? score.red_crowns : score.blue_crowns;
-  const ownHp = actor === "blue" ? score.blue_tower_hp : score.red_tower_hp;
-  const enemyHp = actor === "blue" ? score.red_tower_hp : score.blue_tower_hp;
-  return (ownCrowns - enemyCrowns) * 0.25 + (ownHp - enemyHp) / 30_000;
+  return v1PotentialForActor(engine, actor);
 }
 
 export function terminalRewardForActor(result, actor) {
@@ -441,8 +444,10 @@ export function runEdgerV2CadenceMatch({
   probeStride = 0,
   returnReplay = false,
   maxTicks = EDGER_V2_CADENCE_MAX_TICKS,
+  rewardVersion = EDGER_V2_CADENCE_REWARD_VERSION,
 }) {
   assertCadence(cadence);
+  assertRewardVersion(rewardVersion);
   if (mode !== "deterministic" && mode !== "sample") {
     throw new Error(`unknown cadence match mode ${mode}`);
   }
@@ -515,7 +520,7 @@ export function runEdgerV2CadenceMatch({
           behavior_card_log_probability: decision.logProbabilities?.card ?? null,
           behavior_placement_log_probability: decision.logProbabilities?.placement ?? null,
           behavior_delay_log_probability: decision.logProbabilities?.delay ?? null,
-          potential: scorePotentialForActor(engine, candidateActor),
+          potential: potentialForActor(engine, candidateActor, rewardVersion).total,
         });
       }
       if (probeStride > 0 && (stats.decisions - 1) % probeStride === 0) {
@@ -599,7 +604,7 @@ export function runEdgerV2CadenceMatch({
   if (recordRows) {
     assignDecisionRewards({
       rows,
-      finalPotential: scorePotentialForActor(engine, candidateActor),
+      finalPotential: terminalPotentialForActor(engine, candidateActor, rewardVersion),
       result,
       actor: candidateActor,
     });
@@ -701,7 +706,8 @@ function offsetsFor(rows, key) {
   return offsets;
 }
 
-export function encodeCadenceEpisode({ rows, meta }) {
+export function encodeCadenceEpisode({ rows, meta, rewardVersion = EDGER_V2_CADENCE_REWARD_VERSION }) {
+  assertRewardVersion(rewardVersion);
   for (const row of rows) {
     if (row.global.length !== EDGER_V2_GLOBAL_FEATURES || row.card_mask.length !== EDGER_V2_CARD_ACTIONS.length) {
       throw new Error("cadence row has the wrong global/card-mask width");
@@ -748,7 +754,7 @@ export function encodeCadenceEpisode({ rows, meta }) {
     card_actions: EDGER_V2_CARD_ACTIONS.length,
     delay_bins: EDGER_V2_DELAY_BINS,
     per_tick_gamma: EDGER_V2_CADENCE_PER_TICK_GAMMA,
-    reward_version: EDGER_V2_CADENCE_REWARD_VERSION,
+    reward_version: rewardVersion,
     little_endian: true,
     body_sha256: createHash("sha256").update(body).digest("hex"),
     arrays: layout,

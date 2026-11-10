@@ -23,12 +23,14 @@ import {
 } from "./edger-corpus-core.mjs";
 import {
   EDGER_V2_CADENCES,
+  EDGER_V2_CADENCE_REWARD_VERSION,
   EDGER_V2_POLICY_DIAGNOSTICS_SCHEMA,
   deriveLabelledSeeds,
   encodeCadenceEpisode,
   lcgSeedPrefix,
   runEdgerV2CadenceMatch,
 } from "./edger-v2-cadence-core.mjs";
+import { assertRewardVersion } from "./edger-reward-core.mjs";
 import { spawnNativePython } from "./python-runtime.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -736,7 +738,17 @@ async function commandProbe(args) {
   });
 }
 
-export function collectionSpecs({ plan, iteration, pairsPerIteration, modelPath, modelSha256, cadence, outDir }) {
+export function collectionSpecs({
+  plan,
+  iteration,
+  pairsPerIteration,
+  modelPath,
+  modelSha256,
+  cadence,
+  outDir,
+  rewardVersion = EDGER_V2_CADENCE_REWARD_VERSION,
+}) {
+  assertRewardVersion(rewardVersion);
   const start = iteration * pairsPerIteration;
   const seeds = plan.training.slice(start, start + pairsPerIteration);
   if (seeds.length !== pairsPerIteration) {
@@ -752,13 +764,24 @@ export function collectionSpecs({ plan, iteration, pairsPerIteration, modelPath,
       episode_id: `it${iteration}-pair${start + pairIndex}-${actor}`,
       out_dir: outDir,
       model_sha256: modelSha256,
+      reward_version: rewardVersion,
     }),
   });
 }
 
-async function collect({ plan, iteration, pairsPerIteration, modelPath, cadence, outDir, workers, out }) {
+async function collect({
+  plan,
+  iteration,
+  pairsPerIteration,
+  modelPath,
+  cadence,
+  outDir,
+  workers,
+  out,
+  rewardVersion = EDGER_V2_CADENCE_REWARD_VERSION,
+}) {
   const specs = collectionSpecs({
-    plan, iteration, pairsPerIteration, modelPath, modelSha256: sha256File(modelPath), cadence, outDir,
+    plan, iteration, pairsPerIteration, modelPath, modelSha256: sha256File(modelPath), cadence, outDir, rewardVersion,
   });
   const started = Date.now();
   const results = await runCadenceSpecs(specs, { workers, onResult: progress(`collect it${iteration} ${cadence}`) });
@@ -766,6 +789,7 @@ async function collect({ plan, iteration, pairsPerIteration, modelPath, cadence,
     schema_version: "edger_v2_cadence_collection_v1",
     iteration,
     cadence,
+    reward_version: rewardVersion,
     model: path.resolve(modelPath),
     model_sha256: sha256File(modelPath),
     sampling_temperature: 1,
@@ -805,6 +829,7 @@ async function commandCollect(args) {
     outDir: required(args, "out-dir"),
     workers: Number(args.workers ?? 7),
     out: required(args, "out"),
+    rewardVersion: assertRewardVersion(String(args.reward ?? EDGER_V2_CADENCE_REWARD_VERSION)),
   });
 }
 
@@ -874,6 +899,7 @@ async function commandTrainArm(args) {
   const cardKlRows = String(args["card-kl-rows"] ?? "all");
   const decomposeEvery = String(args["decompose-every"] ?? "0");
   const torchSeed = String(args["torch-seed"] ?? "20260926");
+  const rewardVersion = assertRewardVersion(String(args.reward ?? EDGER_V2_CADENCE_REWARD_VERSION));
   // Episodes may live outside the work directory (e.g. off a synced or nearly
   // full volume); pruning deletes bodies after a successful update and keeps
   // the headers, whose body checksums pin what the learner consumed.
@@ -891,6 +917,7 @@ async function commandTrainArm(args) {
     card_kl_rows: cardKlRows,
     decompose_every: Number(decomposeEvery),
     torch_seed: Number(torchSeed),
+    reward_version: rewardVersion,
     seeds_file: path.resolve(args.seeds),
     seeds_file_sha256: sha256File(args.seeds),
     episodes_root: episodesRoot,
@@ -936,6 +963,7 @@ async function commandTrainArm(args) {
       outDir: episodesDir,
       workers,
       out: path.join(iterationDir, "collection.json"),
+      rewardVersion,
     });
     const record = {
       iteration,
@@ -972,6 +1000,7 @@ async function commandTrainArm(args) {
       "--card-kl-rows", cardKlRows,
       "--decompose-every", decomposeEvery,
       "--seed", torchSeed,
+      "--reward-version", rewardVersion,
     ], logPath);
     record.learner_wall_seconds = (Date.now() - learnerStarted) / 1000;
     if (train.status !== 0) {
@@ -1154,6 +1183,11 @@ export function convertCadenceCollection({ collectionPath, headersDir = null, st
   const collection = JSON.parse(fs.readFileSync(collectionPath, "utf8"));
   if (collection.schema_version !== "edger_v2_cadence_collection_v1") {
     throw new Error(`${collectionPath} is not a cadence collection`);
+  }
+  // The production derivation computes reward v1 only.
+  const collectionReward = collection.reward_version ?? EDGER_V2_CADENCE_REWARD_VERSION;
+  if (collectionReward !== EDGER_V2_CADENCE_REWARD_VERSION) {
+    throw new Error(`${collectionPath} uses ${collectionReward}; convert-collection supports ${EDGER_V2_CADENCE_REWARD_VERSION} only`);
   }
   const modelSha256 = sha256File(collection.model);
   const report = {

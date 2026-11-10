@@ -5,6 +5,7 @@ import { parentPort } from "node:worker_threads";
 
 import { validateEdgerV2PolicyModel } from "../src/ai/v2/policy.js";
 import {
+  EDGER_V2_CADENCE_REWARD_VERSION,
   encodeCadenceEpisode,
   runEdgerV2CadenceMatch,
 } from "./edger-v2-cadence-core.mjs";
@@ -32,6 +33,7 @@ export function runCadenceSpec(spec) {
     mode: spec.kind === "collect" ? "sample" : "deterministic",
     recordRows: spec.kind === "collect",
     probeStride: spec.kind === "probe" ? spec.probe_stride : 0,
+    rewardVersion: spec.reward_version ?? EDGER_V2_CADENCE_REWARD_VERSION,
   });
   const { rows, probes, ...summary } = match;
   const output = {
@@ -43,6 +45,7 @@ export function runCadenceSpec(spec) {
   if (spec.kind === "collect") {
     const { header, body } = encodeCadenceEpisode({
       rows,
+      rewardVersion: spec.reward_version ?? EDGER_V2_CADENCE_REWARD_VERSION,
       meta: {
         episode_id: spec.episode_id,
         seed: spec.seed,

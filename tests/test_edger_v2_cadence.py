@@ -589,6 +589,74 @@ class CadenceLearnerTests(unittest.TestCase):
             self.assertEqual(metrics["effective_update_l2"]["per_group_mean"]["card"], 0.0)
             self.assertGreater(metrics["effective_update_l2"]["per_group_mean"]["trunk"], 0.0)
 
+    def test_train_iteration_refuses_mixed_reward_versions(self) -> None:
+        import json
+        import tempfile
+        from types import SimpleNamespace
+        from unittest import mock
+
+        v1, v2 = cadence.REWARD_VERSIONS
+        episodes = {
+            f"ep{index}": synthetic_episode(12, mode="fixed_one_tick", seed=70 + index)[1]
+            for index in range(2)
+        }
+        for episode_id, episode in episodes.items():
+            episode["header"] = {**episode["header"], "episode_id": episode_id, "reward_version": v2}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            model = seeded_policy()
+            torch.save({
+                "schema_version": cadence.DIAGNOSTIC_CHECKPOINT_SCHEMA, "checkpoint_id": "parent",
+                "delay_mode": "fixed_one_tick", "loss_mode": "critic_only", "reward_version": v2,
+                "model_state": model.state_dict(),
+                "optimizer_state": torch.optim.Adam(model.parameters(), lr=1e-3).state_dict(),
+                "opponent_stratum_vocabulary": VOCAB,
+            }, root / "parent.pt")
+
+            def write_collection(version: str | None) -> None:
+                collection = {"episodes": [
+                    {"match_index": index, "header": str(root / f"{name}.json")}
+                    for index, name in enumerate(episodes)
+                ]}
+                if version is not None:
+                    collection["reward_version"] = version
+                (root / "collection.json").write_text(json.dumps(collection))
+
+            arguments = dict(
+                checkpoint=str(root / "parent.pt"), parent=str(root / "parent.pt"),
+                collection=str(root / "collection.json"), delay_mode="fixed_one_tick",
+                arm="test", iteration=0, out=str(root / "out.pt"),
+                metrics_out=str(root / "metrics.json"), learning_rate=1e-3, batch_size=16,
+                value_loss_weight=0.5, entropy_bonus=0.001, loss_mode="critic_only",
+                card_kl_coefficient=0.0, card_kl_rows="all", decompose_every=0, seed=1,
+                reward_version=v2,
+            )
+            loader = lambda path: episodes[Path(path).stem]
+            with mock.patch.object(cadence, "load_cadence_episode", loader), \
+                    mock.patch("builtins.print"):
+                # A collection without a version is v1, so it does not match a v2 arm.
+                write_collection(None)
+                with self.assertRaisesRegex(ValueError, "collection reward version"):
+                    cadence.run_train_iteration(SimpleNamespace(**arguments))
+                # Episodes must all carry the arm's version.
+                write_collection(v2)
+                episodes["ep1"]["header"]["reward_version"] = v1
+                with self.assertRaisesRegex(ValueError, "episode .* reward version"):
+                    cadence.run_train_iteration(SimpleNamespace(**arguments))
+                episodes["ep1"]["header"]["reward_version"] = v2
+                cadence.run_train_iteration(SimpleNamespace(**arguments))
+                saved = torch.load(root / "out.pt", weights_only=False)
+                self.assertEqual(saved["reward_version"], v2)
+                self.assertEqual(json.loads((root / "metrics.json").read_text())["reward_version"], v2)
+                # The version is fixed for the whole arm.
+                with self.assertRaisesRegex(ValueError, "reward version changed within an arm"):
+                    cadence.run_train_iteration(SimpleNamespace(**{
+                        **arguments, "checkpoint": str(root / "out.pt"), "iteration": 1,
+                        "out": str(root / "out1.pt"), "reward_version": v1,
+                    }))
+                with self.assertRaisesRegex(ValueError, "--reward-version must be one of"):
+                    cadence.run_train_iteration(SimpleNamespace(**{**arguments, "reward_version": "nope"}))
+
     def test_vtrace_discount_follows_recorded_intervals(self) -> None:
         values = [0.2, -0.1, 0.4]
         result = cadence.vtrace_recursion(
