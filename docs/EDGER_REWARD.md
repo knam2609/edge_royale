@@ -212,7 +212,7 @@ Not covered by the checks:
 
 ## Remaining steps before v2 trains
 
-1. **Playstyle diagnostics** in evaluation summaries (descriptive): wasted elixir, counter responses, Giant plays into an affordable answer, and M/T/R at 60 s and 120 s.
+1. **Playstyle diagnostics** in evaluation summaries (descriptive): **done November 11, 2026** (`edger_v2_playstyle_diagnostics_v1`; [definitions](EDGER_TRAINING.md#decision-cadence-diagnostic-local-only-never-promotable)). They cover wasted elixir, counter responses, Giant plays into an affordable answer, and M/T/R/S at 60 s and 120 s. Games are unchanged: `FR`'s r6 iteration-0 collection regenerated 64/64 bodies, and re-evaluating `FR`'s A-r6 child gave 400/400 identical games.
 2. **Fifth comparison** (v2 against v1), under the frozen comparison rule:
    - the same 12 parents and seeds, the `train-arm` learner, refreshed rollouts and 1,536 updates;
    - an identical critic-only warm-up in both arms;

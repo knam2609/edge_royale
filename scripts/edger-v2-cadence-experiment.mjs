@@ -31,6 +31,14 @@ import {
   runEdgerV2CadenceMatch,
 } from "./edger-v2-cadence-core.mjs";
 import { assertRewardVersion } from "./edger-reward-core.mjs";
+import {
+  EDGER_V2_PLAYSTYLE_DIAGNOSTICS_SCHEMA,
+  PLAYSTYLE_CHECKPOINT_TICKS,
+  PLAYSTYLE_RESPONSE_CLASSES,
+  PLAYSTYLE_RESPONSE_WINDOW_TICKS,
+  emptyResponseCounts,
+} from "./edger-playstyle-core.mjs";
+import { TICK_RATE } from "../src/sim/config.js";
 import { spawnNativePython } from "./python-runtime.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -520,6 +528,104 @@ export function summarizePolicyDiagnostics(results) {
   };
 }
 
+function spreadOf(values) {
+  const sorted = [...values].sort((a, b) => a - b);
+  return { mean: mean(sorted), p05: percentile(sorted, 0.05), p50: percentile(sorted, 0.5), p95: percentile(sorted, 0.95) };
+}
+
+function responseShares(counts) {
+  return {
+    threats: counts.threats,
+    shares: Object.fromEntries(PLAYSTYLE_RESPONSE_CLASSES.map((kind) => [
+      kind,
+      counts.threats === 0 ? null : counts[kind] / counts.threats,
+    ])),
+  };
+}
+
+function addResponseCounts(target, source) {
+  for (const key of ["threats", ...PLAYSTYLE_RESPONSE_CLASSES]) {
+    target[key] += source[key];
+  }
+  return target;
+}
+
+// Pool the per-game playstyle diagnostics (definitions in
+// edger-playstyle-core.mjs). Counts are pooled over every game; per-game
+// values give the spread across games. Descriptive only: no threshold reads
+// these values.
+export function summarizePlaystyleDiagnostics(results) {
+  if (results.some((result) => !result.stats?.playstyle_diagnostics)) {
+    throw new Error("results have no playstyle diagnostics; re-evaluate the model with this code");
+  }
+  const perGame = results.map((result) => result.stats.playstyle_diagnostics);
+  const minutes = results.reduce((total, result) => total + result.tick, 0) / (60 * TICK_RATE);
+  const wasted = perGame.map((game) => game.wasted_elixir);
+  const totalWasted = wasted.reduce((total, value) => total + value, 0);
+
+  const responses = { ...emptyResponseCounts(), censored: 0, counter_delay_ticks_sum: 0 };
+  const inHand = emptyResponseCounts();
+  const byCard = {};
+  for (const game of perGame) {
+    const counts = game.counter_responses;
+    addResponseCounts(responses, counts);
+    responses.censored += counts.censored;
+    responses.counter_delay_ticks_sum += counts.counter_delay_ticks_sum;
+    addResponseCounts(inHand, counts.strong_counter_in_hand);
+    for (const [card, cardCounts] of Object.entries(counts.by_threat_card)) {
+      byCard[card] ??= emptyResponseCounts();
+      addResponseCounts(byCard[card], cardCounts);
+    }
+  }
+  const counterResponses = responses.strong + responses.partial;
+
+  const giant = { plays: 0, into_affordable_strong_answer: 0, into_affordable_answer: 0, opponent_counter_credit_sum: 0 };
+  for (const game of perGame) {
+    for (const key of Object.keys(giant)) {
+      giant[key] += game.giant_plays[key];
+    }
+  }
+
+  const checkpoints = Object.fromEntries(Object.entries(PLAYSTYLE_CHECKPOINT_TICKS).map(([label, tick]) => {
+    const reached = perGame.map((game) => game.checkpoints[label]).filter((parts) => parts !== null);
+    return [label, {
+      tick,
+      games: reached.length,
+      terms: reached.length === 0
+        ? null
+        : Object.fromEntries(["v1", "material", "threat", "readiness", "support", "position"].map((term) => [
+            term,
+            spreadOf(reached.map((parts) => parts[term])),
+          ])),
+    }];
+  }));
+
+  return {
+    schema_version: EDGER_V2_PLAYSTYLE_DIAGNOSTICS_SCHEMA,
+    games: results.length,
+    wasted_elixir: {
+      per_game: results.length === 0 ? null : spreadOf(wasted),
+      per_minute: minutes === 0 ? null : totalWasted / minutes,
+    },
+    counter_responses: {
+      window_ticks: PLAYSTYLE_RESPONSE_WINDOW_TICKS,
+      ...responseShares(responses),
+      censored: responses.censored,
+      counter_response_delay_ticks_mean: counterResponses === 0 ? null : responses.counter_delay_ticks_sum / counterResponses,
+      given_strong_counter_in_hand: responseShares(inHand),
+      by_threat_card: Object.fromEntries(Object.keys(byCard).sort().map((card) => [card, responseShares(byCard[card])])),
+    },
+    giant_plays: {
+      plays: giant.plays,
+      plays_per_game: results.length === 0 ? null : giant.plays / results.length,
+      into_affordable_strong_answer_fraction: giant.plays === 0 ? null : giant.into_affordable_strong_answer / giant.plays,
+      into_affordable_answer_fraction: giant.plays === 0 ? null : giant.into_affordable_answer / giant.plays,
+      opponent_counter_credit_mean: giant.plays === 0 ? null : giant.opponent_counter_credit_sum / giant.plays,
+    },
+    checkpoints,
+  };
+}
+
 export function summarizeCondition(results, { bootstrapSeed = 20260926 } = {}) {
   const games = results.length;
   const wins = results.filter((result) => result.candidate_point === 1).length;
@@ -576,6 +682,7 @@ export function summarizeCondition(results, { bootstrapSeed = 20260926 } = {}) {
     wall_seconds_per_game: mean(results.map((result) => result.wall_seconds)),
     wall_seconds_total: results.reduce((total, result) => total + result.wall_seconds, 0),
     policy_diagnostics: summarizePolicyDiagnostics(results),
+    playstyle_diagnostics: summarizePlaystyleDiagnostics(results),
   };
 }
 
@@ -701,6 +808,29 @@ export function policyDiagnosticsReport(evaluations, { label = null } = {}) {
     by_opponent: Object.fromEntries(evaluations.map(({ report }) => [
       report.opponent,
       summarizePolicyDiagnostics(report.results),
+    ])),
+    playstyle: playstyleReport(evaluations),
+  };
+}
+
+// Playstyle diagnostics came after the policy diagnostics. Evaluations that
+// predate them still pool their policy diagnostics, with playstyle null; a
+// mixture of older and newer files is refused.
+function playstyleReport(evaluations) {
+  const hasPlaystyle = evaluations.map(({ report }) =>
+    report.results.length > 0 && report.results.every((result) => result.stats?.playstyle_diagnostics));
+  if (hasPlaystyle.every((value) => !value)) {
+    return null;
+  }
+  const missing = evaluations.filter((_, index) => !hasPlaystyle[index]).map(({ file }) => file);
+  if (missing.length > 0) {
+    throw new Error(`${missing.join(", ")} predate the playstyle diagnostics; re-evaluate every opponent with this code`);
+  }
+  return {
+    pooled: summarizePlaystyleDiagnostics(evaluations.flatMap(({ report }) => report.results)),
+    by_opponent: Object.fromEntries(evaluations.map(({ report }) => [
+      report.opponent,
+      summarizePlaystyleDiagnostics(report.results),
     ])),
   };
 }

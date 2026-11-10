@@ -42,6 +42,12 @@ import {
   terminalPotentialForActor,
   v1PotentialForActor,
 } from "./edger-reward-core.mjs";
+import {
+  createPlaystyleTracker,
+  finishPlaystyle,
+  playstyleAfterStep,
+  playstyleBeforeStep,
+} from "./edger-playstyle-core.mjs";
 
 export const EDGER_V2_CADENCE_EPISODE_SCHEMA = "edger_v2_cadence_episode_v1";
 export const EDGER_V2_CADENCES = Object.freeze({
@@ -473,6 +479,8 @@ export function runEdgerV2CadenceMatch({
     policy_diagnostics: emptyPolicyDiagnosticsStats(),
   };
   const decisionTicks = [];
+  // Descriptive playstyle diagnostics; the tracker only reads engine state.
+  const playstyle = createPlaystyleTracker(candidateActor);
 
   while (engine.state.tick < maxTicks && !engine.getMatchResult()) {
     const tick = engine.state.tick + 1;
@@ -592,10 +600,12 @@ export function runEdgerV2CadenceMatch({
       }
     }
     actionStream.push(...actions);
+    playstyleBeforeStep(playstyle, engine, actions);
     engine.step(actions);
     if (engine.shouldStartOvertime()) {
       engine.setOvertime(true);
     }
+    playstyleAfterStep(playstyle, engine);
   }
   const result = engine.getMatchResult();
   if (!result) {
@@ -652,6 +662,7 @@ export function runEdgerV2CadenceMatch({
       realized_interval_histogram: realizedIntervals,
       deployment_interval_histogram: deploymentIntervals,
       deployments_by_card: deploymentsByCard,
+      playstyle_diagnostics: finishPlaystyle(playstyle),
     },
     action_stream_hash: actionStreamHash(actionStream),
     final_state_hash: engine.getStateHash(),

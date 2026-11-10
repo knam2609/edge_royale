@@ -792,9 +792,29 @@ test("the diagnostics command pools one model's opponent evaluations and rejects
       report.pooled.max_abs_legal_logit.any_head,
       Math.max(...reports.map((item) => item.summary.policy_diagnostics.max_abs_legal_logit.any_head)),
     );
+    assert.equal(report.playstyle.pooled.games, 4);
+    assert.deepEqual(report.playstyle.by_opponent.aggressive, reports[0].summary.playstyle_diagnostics);
+    assert.equal(
+      report.playstyle.pooled.counter_responses.threats,
+      reports[0].summary.playstyle_diagnostics.counter_responses.threats +
+        reports[1].summary.playstyle_diagnostics.counter_responses.threats,
+    );
     const read = (file) => ({ file, sha256: "x", report: JSON.parse(fs.readFileSync(file, "utf8")) });
     assert.throws(() => policyDiagnosticsReport([read(aggressive), read(other)]), /different model or cadence/);
     assert.throws(() => policyDiagnosticsReport([read(aggressive), read(aggressive)]), /repeats opponent/);
+    // Evaluations from before the playstyle diagnostics still pool their
+    // policy diagnostics; a mixture of older and newer files is refused.
+    const older = (file) => {
+      const input = read(file);
+      for (const result of input.report.results) {
+        delete result.stats.playstyle_diagnostics;
+      }
+      return input;
+    };
+    const legacy = policyDiagnosticsReport([older(aggressive), older(heuristic)]);
+    assert.equal(legacy.playstyle, null);
+    assert.deepEqual(legacy.pooled, report.pooled);
+    assert.throws(() => policyDiagnosticsReport([read(aggressive), older(heuristic)]), /predate the playstyle diagnostics/);
     const mixed = run(["diagnostics", "--evaluations", aggressive, other, "--out", path.join(directory, "mixed.json")]);
     assert.notEqual(mixed.status, 0);
     assert.equal(fs.existsSync(path.join(directory, "mixed.json")), false);

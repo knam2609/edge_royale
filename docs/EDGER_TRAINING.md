@@ -275,6 +275,27 @@ the live bot, the promotion evaluator or campaigns.
   - Pass fraction is reported over all decisions and over choice decisions. Chosen delay is the mean over decisions, plus the fraction of decisions that chose the 1-tick minimum.
   - Aggregation pools decision-weighted means and the population maximum, with p05/p50/p95 of per-game means.
   - These figures are not the parity report's `maximum_legal_logit_magnitude`, which is measured on parity fixtures.
+- Playstyle diagnostics (`edger_v2_playstyle_diagnostics_v1`, since November
+  11, 2026) describe how a candidate plays, for the reward comparison
+  ([reward doc](EDGER_REWARD.md)). Like the policy diagnostics, they are not
+  exclusion, stopping or promotion thresholds, and computing them changes no
+  game: the tracker (`scripts/edger-playstyle-core.mjs`) only reads engine
+  state. Every `evaluate` and `collect` result counts them per game under
+  `stats.playstyle_diagnostics`, and every summary pools them under
+  `playstyle_diagnostics`. The `diagnostics` report adds them as `playstyle`
+  (pooled and per opponent). That field is null when every input predates the
+  playstyle diagnostics, and the report is refused when only some inputs do.
+  Definitions, set before the fifth comparison. The population is the candidate side of each game.
+  - Wasted elixir: each tick that starts with the candidate at the 10-elixir cap loses that tick's regeneration: 1/56 elixir in normal time, 1/28 in double elixir, 1/20 in overtime. These are the ticks counted by `full_elixir_ticks`. Reported per game (mean, p05/p50/p95) and per minute of play.
+  - Counter responses:
+    - A threat is an opponent play of a troop in the frozen reward counter table: all six troops, no spells.
+    - The response is the best class among the candidate's plays in the 100 ticks (5 s) after the threat, counting later ticks only: strong counter, partial counter, other card, or none.
+    - Only the card is checked, not the lane: center cells split formations between lanes.
+    - A threat whose window would run past the game's end is censored and left out.
+    - Shares are reported overall, per threat card, and for threats where the candidate held a strong counter at the end of the threat's tick (at any elixir).
+    - The response delay runs from the threat to the first strong or partial counter.
+  - Giant plays into an answer: for each candidate Giant play, the opponent's hand and elixir in the state the candidate decided on. An affordable strong answer is Mini PEKKA, Goblins or Musketeer in hand with enough elixir. An affordable answer also counts Archers and Knight. The mean counter credit uses R's rule.
+  - Checkpoints: the candidate's v2 potential parts at 60 s and 120 s (ticks 1200 and 2400, after the step, if the game is still in progress). These are Φ_v1, M (before the phase factor), T, R (weight 0, reported), S and the weighted position sum, each ours − theirs, in elixir units except Φ_v1. Reported as mean and p05/p50/p95, with the number of games still in progress. This is the checkpoint convention of the reward data checks.
 - `convert-collection --collection <collection.json> [--headers <dir>]
   --store <dir> --manifest-out <file> [--report-out <file>]` (since November
   7, 2026) turns one train-arm collection into production
