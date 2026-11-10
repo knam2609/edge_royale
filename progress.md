@@ -10,6 +10,18 @@
     - C3 failed in both: R hurt prediction given M and T. As credit for answers it mirrored enemy pressure; after the owner's redesign as an unanswered-threat charge, it mostly duplicated M and T.
     - The frozen v2 is the "v2 minus R" score both checks measured. It beat the full v2 by 0.0036 and 0.0046 nats.
   - The league opponent mix design is parked until the reward comparison is done.
+- November 11, 2026: the **fifth comparison (reward v2 against v1) design is approved with revisions** ([design](docs/EDGER_TACTICAL_REVIEW.md#fifth-comparison-reward-v2-against-v1)). It is not frozen, nothing has run, and there is no code change yet.
+  - Each of the 12 `FR` parents gets two arms, A1 (v1) and A2 (v2). Each is `SS`'s A′ command after a critic-head-only warm-up under its own reward: 256 parent games from new seed plans `w6`–`w17`, with trunk and actor bit for bit the parent's. The primary is d_2 = A2 − A1 at 1,536 updates.
+  - The labels follow the factorial: direction against 0, size against ±0.05. Evaluations after iteration 5 are secondary only.
+  - **Carry-forward rule:** v2 goes into the league comparison, with its warm-up, only if d_2's interval is above 0 and its mean is at least 0.05. Otherwise v1 is kept, without a warm-up.
+  - **Owner revisions:**
+    - the smoke scores the parent's critic and the warmed critics on the same held-out parent games (the smoke's RL iteration 0);
+    - the critic diagnostic reports residual variance beside MSE;
+    - game-identity checks compare `reward` and `discounted_return` separately, and require every other array plus the action-stream and final-state hashes to match, including at RL iteration 0.
+  - **Correction:** shifting the critic by −Φx leaves V-trace's advantages identical even with clipped ratios (verified on the local recursion, max difference 1.1e-15). v2 can act only through how closely the critic tracks the shift, and through the shared trunk.
+  - Power to resolve the direction of a true 0.05 gain is about 0.38 at the closest measured spread, so an inconclusive result is plausible.
+  - **Needs one reviewed code checkpoint:** a `critic_head` loss mode, `train-arm --initial-checkpoint`, and collections that record each game's action-stream and final-state hashes.
+  - Estimate: about 7 h one arm at a time, or 4.5–5 h with each parent's arms side by side; cap 9 h.
 - November 11, 2026: playstyle diagnostics (`edger_v2_playstyle_diagnostics_v1`, [definitions](docs/EDGER_TRAINING.md#decision-cadence-diagnostic-local-only-never-promotable)) are in every cadence `evaluate`/`collect` summary and in the `diagnostics` report. They cover wasted elixir, counter responses within 5 s, Giant plays into an affordable answer, and the v2 parts M/T/R/S at 60 s and 120 s. They are descriptive only, and games are unchanged. Committed as a code checkpoint after `4bcd5dd` (owner, November 11).
 - November 10 finding: bots, Edger included, can place troops at only four cells (the three bridge-front cells and the back center), plus pocket cells after a crown tower falls. Recorded as a follow-up task; nothing changed.
 - November 4, 2026: the owner adopted the comparison rule ([rule](docs/EDGER_TACTICAL_REVIEW.md#comparison-rule--owner-decision-november-4-2026)). It is mean-primary, normally 12 runs per arm for effects around 0.15 and about 24 for 0.10. Every valid poor run is retained, the median is secondary, and sizing, failure handling and stopping are frozen before output. The six-arm single-parent pilot is skipped. Sizes are model-based planning estimates, not power guarantees. The pilot report and advice were committed docs-only as `6e0b6a8`.
@@ -108,6 +120,8 @@
 
 - Reward v2 is untested in training:
   - the data checks measure winner prediction, not learning value. The frozen v2 (without R) was not run through C1 as its own score, and at this sample size C1 cannot show "no worse" at the last overtime checkpoints;
+  - whether Φx adds information beyond a learned critic is unmeasured. The design's read-only critic diagnostic measures it on the warm-up games and the held-out RL iteration-0 games. In `SS`'s A′ iterations, the critic explained a median 0.36 of its target variance;
+  - the spread of a difference between two refreshed arms is unmeasured. The design's sizing uses reference SDs of 0.040–0.163;
   - the playstyle diagnostics are new and descriptive. Counter responses check the card, not the lane, and count the best of any plays within 5 s, so a frequent player scores "other" often;
   - the duel evidence is single engagements, with supported pushes tested only for Musketeer and Archers behind a Giant;
   - R, now diagnostic only, lets one counter reduce the charge of several threats.
@@ -120,13 +134,13 @@
 
 # Next Tasks
 
-1. **Fifth comparison design (reward v2 against v1)** for owner review, under the frozen rule:
-   - the 12 `FR` parents, `SS`'s seed plans, `train-arm`, refreshed every 64 games, 1,536 updates;
-   - an identical critic-only warm-up in both arms;
-   - the primary endpoint is the existing match-result primary score;
-   - the playstyle diagnostics as descriptive secondary output.
-
-   No run until the owner approves.
+1. **Fifth comparison (approved with revisions, November 11)** ([design](docs/EDGER_TACTICAL_REVIEW.md#fifth-comparison-reward-v2-against-v1)), in this order:
+   1. commit the design docs-only;
+   2. the code checkpoint, with tests: a `critic_head` loss mode, `train-arm --initial-checkpoint`, and the per-game hashes in collections;
+   3. replay `SS`'s A′-r6 iteration 0 at default settings;
+   4. the smoke on `b0-s20260718` and the `smoke`/`smoke-w` plans, including the held-out critic check (return to the owner if the warmed v2 critic is not better than the parent's);
+   5. the synthetic `analyze.py` dry run;
+   6. freeze, then launch.
 2. **Parked (owner, November 10): the league opponent mix comparison design.** It resumes after the reward comparison, under whichever reward that comparison favors. Design work was approved on November 10; the run is not authorized until the owner reviews the design. It continues the historical league-regression attribution under the factorial's frozen rule. Keep the `train-arm` learner, refreshed rollouts, matched parents and seeds, equal updates and the same evaluation, and vary only the training opponent mix. Use one host and pairs sized by the rule, and freeze before output. Do not extend completed comparisons after seeing their output; the factorial's inconclusive effects get no follow-up chosen after seeing them. Stale-batch breakdown and the balancing weights (up to 30) remain hypotheses, each needing its own design and pre-set endpoint.
 3. **Follow-up (owner, November 10): bot troop placement.** Bots can deploy troops at only four cells. Investigate after the reward comparison; widening it changes the action space for every trained model, so it needs its own design.
 4. Optional: repeat warm-up headed at DPR 2. Mobile/120 Hz need separate measurement. Protect decision-preserving speed-ups for review/fresh provenance; no forced-PASS shortcuts.
@@ -140,6 +154,15 @@
 12. Standardize browser smoke: retain assertion diagnostics, investigate recurrence of iCloud/refetch/watchdog failures, and add group/KILL cleanup to the 120 s watchdog. M6 install/smoke passes; the original October 4 193/196 cause is unconfirmed. Preserve verified outside-iCloud freeze gates.
 
 # Validation
+
+November 11, 2026: fifth comparison design and owner revisions (docs only: `docs/EDGER_TACTICAL_REVIEW.md`, `docs/EDGER_REWARD.md`, this file). No test run was needed.
+- Inputs were read-only:
+  - `SS/run.log` timings;
+  - the critic and importance-ratio statistics over `SS`'s 288 A′ `learner-metrics.json` files;
+  - the seed plan builder (`buildReplicationSeedPlans`) and the episode format (`ARRAY_SPECS`, collection entries);
+  - the sizing table (noncentral t, `scipy`, in a scratch heredoc).
+- The shift identity was checked by calling `vtrace_recursion` from `scripts/edger-v2-cadence-experiment.py`, in a scratch heredoc. In 2,000 random episodes (31,064 rows with ratio below 1), the max advantage difference was 1.1e-15, and the max target deviation from v1 − Φx was 1.0e-15.
+- Nothing was trained, collected or evaluated, and no run directory was written.
 
 November 11, 2026: playstyle diagnostics (training/evaluation tooling only; no gameplay, Edger runtime, heuristic or client change).
 
@@ -268,6 +291,7 @@ November 7, 2026: converter code checkpoint, then preflight, run and frozen anal
   - The counter table encodes engine-specific duel facts, for example that Fireball (688) cannot kill a 721-HP Musketeer.
   - The reward v2 code was committed as `4ec6098` (November 10). The R redesign, the frozen weights and both data-check records are one checkpoint commit (owner, November 10–11).
   - Dropping R removes the cycle idea from the reward; R stays in the breakdown so playstyle diagnostics can watch it. A term that adds no winner prediction could still change learning; only the fifth comparison, judged on match results, tests that.
+  - In the `train-arm` learner, v2's return differs from v1's only by −Φx at the decision. A critic shifted by the same −Φx leaves V-trace's advantages identical, even with clipped ratios. The critic warm-up absorbs part of the shaping before RL starts. A null fifth-comparison result therefore tests learning value through this learner only; it does not retract the measured winner prediction.
 - Capture requirements reuse existing synthetic category numbers as new rate gates, not equivalent metrics or thresholds fitted to baselines. Freeze/review future banks before candidate comparisons; never tune bank selection against candidate scores. Q4's schema v1 bank remains evidence and is rejected as input.
 - Host-specific kernels are a hypothesis, not an isolated cause. Pin host, Node and Python/BLAS provenance. Plain `npm test` selects Homebrew Python without torch/pyarrow and fails 11 tests here.
 - Cloud budget, orphan endpoint/EIP/support case, Project B/default-VPC preservation, historical disk/iCloud conditions, display ownership and cleanup limits remain unresolved in [local constraints](docs/EDGER_LOCAL_CONSTRAINTS.md). No AWS calls or cleanup occurred.

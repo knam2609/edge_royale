@@ -218,4 +218,6 @@ Not covered by the checks:
    - an identical critic-only warm-up in both arms;
    - the primary endpoint is the existing match-result primary score.
 
-   The owner reviews the design before any run.
+   **Design approved November 11, 2026, with revisions** ([design](EDGER_TACTICAL_REVIEW.md#fifth-comparison-reward-v2-against-v1)). It is not yet frozen, and nothing has run.
+   - Shifting the critic by −Φx leaves V-trace's advantages identical, even with clipped ratios. So v2 can act only through how closely the learned critic tracks that shift, and through the value loss's pull on the shared trunk.
+   - v2 is carried into the league comparison only if d_2's interval is above 0 and its mean is at least 0.05.

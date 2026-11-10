@@ -1500,6 +1500,155 @@ required scores were present, and all 13 contrasts were labelled.
 - The league opponent mix design (decision 1) is **parked** until the reward comparison is done. It will then run under whichever reward that comparison favors.
 - The reward v2 comparison follows the same frozen rule. The owner reviews its design before any run.
 
+### Fifth comparison: reward v2 against v1
+
+**Status: proposed November 11, 2026, and approved by the owner the same day
+with revisions (below). Not yet frozen; nothing has run.** This is the
+comparison the reward work leads to
+([remaining steps](EDGER_REWARD.md#remaining-steps-before-v2-trains)). The
+outcome branches are fixed here, before any output. The league opponent mix
+stays parked until this comparison is done.
+
+**Question.** With the `train-arm` learner and refreshed rollouts, does
+training on the frozen reward v2 give better children than v1, at equal games,
+seeds, opponents and updates? Children are judged on match results only, as
+always. The comparison does not test the production learner, league opponents
+or the historical scale.
+
+**Owner decisions, November 11, 2026.** All four proposed choices are
+approved. The smoke and the rule for carrying v2 forward are tightened, and two
+corrections are made before the design commit.
+
+1. **Warm-up: the critic head only, on 256 parent games, one update per game.**
+   - Only the value head and its opponent-stratum embedding learn. The shared trunk and every actor head stay bit for bit the parent's. Both arms then start RL from the same actor and differ only in their critic, and A1 against `SS`'s A′ is a clean check of the v1 warm-up.
+   - Both arms need the warm-up. BC fitted the parent's critic to v1 returns of teacher games, not to the parent's own games under either reward.
+   - Games: pairs 0–127 of new warm-up seed plans `w6`–`w17` (below), played by the parent. Settings: learning rate 1e-3 with its own Adam, value-loss weight 0.5, torch seed 20260926. The RL phase then starts with fresh Adam, as it does from a BC parent.
+   - The size is a planning choice, not tuned on comparison output: 256 single-episode updates equal four refreshed iterations.
+   - **Revision:** the smoke scores the parent's critic and the warmed critics on the same held-out parent games, each against its own reward's returns. The smoke's first RL batch is played by the parent and serves as that holdout. The read-only critic diagnostic reports residual variance alongside mean squared error, to separate reduced variance from corrected bias.
+   - Rejected alternative: the existing `critic_only` mode, where value gradients also move the shared trunk, so the actor would change during the warm-up, differently in each arm.
+2. **Minimum meaningful effect 0.05, with the factorial's two labels** (direction judged against 0, size against ±0.05), instead of the rule's default 0.15 with one label.
+   - The interval can resolve a direction while leaving practical size uncertain.
+   - `SS`'s A′ children averaged 0.820, so a gain of 0.15 would put children near 0.97.
+   - At the closest measured spread (0.096), power to resolve the direction of a true 0.05 gain is only 0.38 (sizing below). An inconclusive result is a plausible outcome.
+3. **Evaluations after iteration 5** (384 updates), about 40 minutes more, because faster learning is a plausible benefit of shaping. They are secondary: the 1,536-update result decides the reward.
+4. **"Direction unresolved" keeps v1 for the league design.** **Revision:** v2 is carried into the league comparison only if the valid final interval is above 0 *and* the estimated gain is at least 0.05. That makes 0.05 a practical decision threshold, while the size label still requires the whole interval to clear it. If v2 qualifies, its critic warm-up is carried forward too.
+5. **Corrections before the commit:**
+   - Clipped traces preserve the cancellation when the critic shifts by the same potential (math, below). The earlier draft listed cut traces as a separate channel; they are not.
+   - The game-identity checks compare the two reward-derived arrays, `reward` and `discounted_return`, separately. Every other array, and the action-stream and final-state hashes, must match, including at RL iteration 0. Matching headers and results alone could miss trajectory drift.
+
+**What the learner's math predicts.** This is reasoning written before any
+output; it changes no rule.
+- v2 adds terms to Φ only, and they are 0 at game end. Under v2, a decision's discounted return is therefore its v1 return minus Φx(now) = (f(phase)·M + T + S)/75, taken at that decision.
+- Shift the critic by the same −Φx, and the V-trace recursion ([Espeholt et al., 2018](https://proceedings.mlr.press/v80/espeholt18a.html)) gives identical actor advantages and value targets shifted by exactly −Φx, even where importance ratios are clipped.
+  - Checked on November 11 against the local `vtrace_recursion`: 2,000 random episodes with 31,064 clipped rows. The largest advantage difference was 1.1e-15.
+  - This is the known equivalence of potential-based shaping to a different starting value function. Subtracting a function of the state alone also leaves the expected policy gradient unchanged.
+- v2 can therefore act only through two channels:
+  - **how closely the learned critic tracks that shift.** Its error enters the advantages directly, and counts for more where clipped traces bootstrap from it. Φx may explain part of the return the critic misses, which lowers the advantages' variance, or it may add variance where it explains nothing.
+  - **the shared trunk,** which the value loss trains toward the shifted targets during RL.
+- Both are open in this learner. Across `SS`'s 288 A′ iterations:
+  - the critic explained a median 0.36 of its target variance (10th–90th percentile 0.16–0.54);
+  - a median 10% of rows had an importance ratio below 0.5 (1–33%).
+- The data checks showed that Φ_v2 predicts the winner better than Φ_v1, not better than a learned critic. The read-only critic diagnostic (secondary, below) measures that directly.
+- A null result would not show that the terms carry no information. A positive one would not show which channel carried the effect.
+
+**Design.** RL-only, matched by parent.
+- **Host and code:** the M6 and toolchain of the earlier comparisons. Use a clean clone at the commit with the reviewed code checkpoint (below). With default settings, collection and `train-arm` must reproduce `SS` exactly; the preflight checks this.
+- **Parents:** `FR`'s twelve BC parents r6–r17 (`b0-s20260724`–`b0-s20260735`), byte-copied and checked against `FR/SHA256SUMS`.
+- **Seeds:** one command, `replicate-seeds --replicates r1 … r17 w6 … w17 smoke smoke-w --training 768`, from `seed-plan-r0.json`.
+  - RL games use the r6–r17 plans, which must equal `SS`'s files byte for byte.
+  - Warm-up games use pairs 0–127 of the `w6`–`w17` plans. Replicates appended after r17 leave r1–r17 unchanged, and their seeds are derived excluding every r-plan seed.
+  - The preflight also checks the warm-up seeds against the evaluation and confirmation sets, and against the `RC`, `RC2` and duel seeds.
+  - `smoke` (RL games) and `smoke-w` (warm-up games) are throwaway plans for the smoke only.
+- **Arms.** Each parent trains two children. Each child plays 1,536 RL games and makes 1,536 one-episode Adam updates, with exactly `SS`'s A′ command: `--iterations 24 --pairs-per-iteration 32`, learning rate 1e-3, torch seed 20260926, the held-out cache and a 150-minute budget. The differences are:
+  - **A1 (reward v1)** starts from its v1 warm-up.
+  - **A2 (reward v2)** starts from its v2 warm-up and uses `--reward edger_potential_reward_v2` in both the warm-up and RL.
+  - Each warm-up is its own arm: `train-arm --loss-mode critic_head --iterations 4 --pairs-per-iteration 32` on `seed-plan-wN.json`, from the BC parent and with that arm's reward. Warm-up bodies are kept, not pruned.
+  - The RL arm starts from the warm-up's final checkpoint (`--initial-checkpoint`). The BC parent stays the reference for drift and held-out capture, and plays iteration 0.
+  - A1 thus differs from `SS`'s A′ only in its starting critic, and A2 differs from A1 only in the reward.
+- **Built-in checks** (not part of the estimate):
+  - **Actor identity:** after each warm-up, every parameter outside the value head and its embedding is bit-identical to the parent's, and so is the exported actor. Otherwise that parent stops before RL.
+  - **Game identity:** two collections that should hold the same games must match in every body array except `reward` and `discounted_return`, and in each game's action-stream and final-state hashes. The two reward-derived arrays are compared separately: within one reward they must match too, and across rewards their differences are reported.
+  - The game-identity check applies to the two warm-ups of each parent, from their kept bodies, and to A1's and A2's RL iteration 0.
+  - The RL bodies are pruned after each update, so the runner regenerates both arms' iteration 0 with `collect`: the parent's model, the same seeds and the arm's reward. Each regenerated header must equal the arm's own, then the bodies are compared.
+  - A1's iteration-0 headers must also equal `SS`'s A′ iteration-0 headers, body checksums included.
+  - Any game-identity failure is an instrument failure: no new step starts, and the analysis issues no labels.
+  - Re-evaluations of the parents and of `SS`'s A′ children must equal `SS`'s game by game. They also give those models playstyle diagnostics.
+- **Evaluation:** the parent, A′, and A1 and A2 (final and after iteration 5), with the earlier commands and development seeds: 200 pairs against live v1, and 100 each against the heuristic and aggressive. Each new final child also gets `V/js-eval.mjs` parity under the kept 4-ULP rule, routine and playstyle diagnostics, and held-out Fireball capture.
+
+**Code checkpoint** (reviewed, with tests, before the smoke).
+- A `critic_head` loss mode in the cadence learner: value loss only, with the fused features detached, so gradients reach only `value_head` and `value_stratum_embedding`. Tests: every other parameter is bit-identical after an iteration, and the exported actor equals the parent's.
+- `train-arm --initial-checkpoint <file>`: start the arm's weights from a finished `critic_head` arm, with fresh Adam. It refuses a different reward version or parent, any other loss mode, or an actor that differs from the parent's. Without the flag, behavior is unchanged (tested).
+- Collections record each game's `action_stream_hash` and `final_state_hash`. The worker already computes both; collections dropped them. Headers and bodies are unchanged.
+- Nothing changes in the reward, the games played, evaluation or the production path.
+
+**Analysis.**
+- **Score:** each child's primary, as before: the equal-weighted mean points against v1, the heuristic and aggressive.
+- **Primary:** d_2 = A2 − A1 after 1,536 updates, per parent. Report the mean of the 12 values with a two-sided 95% t interval (11 df).
+- **Labels** (decision 2), from that interval:
+  - direction: "v2 better" (interval above 0), "v1 better" (below 0) or "direction unresolved";
+  - size: "at least 0.05" (lower endpoint above +0.05, or upper endpoint below −0.05), "below 0.05" (both endpoints strictly inside ±0.05) or "size unresolved";
+  - the observed mean is the estimate. It sets no label on its own, but enters the carry-forward rule (decision 4).
+- **Secondary, pre-registered:**
+  - Each arm's gain over the parent (g_1 and g_2), and the warm-up's effect under v1, w = A1 − A′, with A′ reused read-only. Each gets a t interval and no label.
+  - d_2 after iteration 5 (decision 3), with a t interval. It does not enter the decision.
+  - Per-opponent d_2, the median and SD of d_2, and every pair.
+  - **Read-only critic diagnostic,** a frozen run-directory script:
+    - the parent's critic on each parent's 256 warm-up games;
+    - the parent's critic and each warmed critic on the regenerated RL iteration-0 games, which are held out from the warm-up and played by the parent;
+    - each critic scored against both v1 and v2 returns on the same games. It reports mean squared error, mean residual and residual variance (MSE = mean residual² + residual variance), which separates corrected bias from reduced variance.
+  - Critic fit per arm, from the learner metrics: the critic's error against its targets, explained variance, the advantage distribution and the importance ratios, in every warm-up and RL iteration.
+  - Playstyle diagnostics per child (descriptive): wasted elixir, counter responses within 5 s, Giant plays into an affordable answer, and M/T/R/S at 60 s and 120 s. R is reported, but has weight 0 in A2's reward.
+  - Routine policy diagnostics, including the number of children per arm with a pooled 1-tick fraction of at least 0.9 (the factorial's descriptive threshold). Held-out Fireball capture.
+- **Sample size and stopping:** n = 12, fixed. The analysis runs once, after every child is evaluated or after the cap stops the run. Progress checks read only counts, timings, exit codes, stop reasons and the built-in checks.
+- **Failures,** as in the factorial:
+  - Settings never change. A failed step gets one identical retry, resuming from its last completed iteration.
+  - A non-finite learner stop is a recipe outcome. The final model is then the last good checkpoint, or the parent's actor if there is none.
+  - Every engineering-invalid outcome is reported: illegal attempts, a nondeterministic evaluation or a parity failure. An invalid A2 child blocks "v2 better" and "below 0.05"; an invalid A1 child blocks "v1 better" and "below 0.05".
+  - A missing score makes d_2 incomplete, with no labels. Results over the parents with complete scores may be reported only in a separate section, marked partial, with means and ranges but no intervals or labels.
+
+**Sizing** (planning model, not a power guarantee). The spread of a difference
+between two refreshed arms has not been measured. Reference values:
+- 0.040: A′'s child-score SD (0.028) × √2, as if the two arms were independent. This is optimistic.
+- 0.075: `FR`'s matched d.
+- 0.096 [0.068, 0.163]: `PR`'s d_P, the closest design (two learners on refreshed data at 1,536 updates).
+
+| SD of d_2 | Interval half-width | 80% power to exclude 0 at | Power to exclude 0 at a true 0.05 | at a true 0.10 |
+|---|---|---|---|---|
+| 0.040 | 0.025 | 0.036 | 0.98 | 1.00 |
+| 0.075 | 0.048 | 0.067 | 0.56 | 0.99 |
+| 0.096 | 0.061 | 0.085 | 0.38 | 0.91 |
+| 0.163 | 0.104 | 0.145 | 0.16 | 0.49 |
+
+These use the noncentral t with 12 pairs and two-sided α = 0.05. "Below 0.05"
+needs the whole interval inside ±0.05, which is within reach only at the
+lower spreads.
+
+**Cost** (estimate, from `SS`'s run log).
+- An A′-like RL arm took about 11.5 minutes. A warm-up arm should take about 2 minutes, and evaluating one model, with parity, about 1.2 minutes.
+- Per parent: two warm-ups (4 minutes), two RL arms (23 minutes), four new and two repeat evaluations (about 7 minutes), and the regenerated iteration 0 with the critic diagnostic (about 1 minute). That is about 35 minutes per parent, or 7 hours for twelve, running one arm at a time.
+- Running each parent's two arms side by side, with 6 workers each, should cut this to about 4.5–5 hours. That is a runner choice, allowed only if the smoke shows that the worker count changes no body.
+- The cap is 9 hours, after which no new step starts. The run is local only, about 1 GB: RL bodies are pruned, while the warm-up bodies and the regenerated iteration 0 are kept.
+
+**What it decides.** Fixed before output; the 1,536-update result decides.
+- **v2 is carried forward** only if d_2's interval is above 0 (the label "v2 better", not blocked) *and* the mean is at least +0.05. The parked league opponent mix design then runs under v2, with this design's critic-head warm-up.
+- **Otherwise v1 is kept.** This covers "v2 better" with a mean below 0.05, "direction unresolved" and "v1 better". The league design then runs under v1, as the earlier comparisons did, without a warm-up. v2 stays opt-in. A "v1 better" result leaves it unused, and any new reward becomes a new version with its own data check.
+- **An incomplete result or an instrument failure carries nothing forward.** v1 stays, and any repair or rerun is an owner decision.
+- Size labels are reported in every case. The carry-forward rule uses the mean; the "at least 0.05" label still needs the whole interval to clear 0.05.
+- Inconclusive results are reported as such, with no extension or follow-up chosen after seeing them.
+- Making v2 the code default, or teaching the production path (`convert-collection`) to accept v2, are separate owner decisions.
+- **Every outcome:** the refresh requirement stands, `train-arm` stays the learner, and no child is a promotion candidate. A null or negative result tests the terms' learning value through this learner only. It does not retract their measured winner prediction.
+
+**Before freezing.** These are the go/no-go for freeze and launch.
+- The code checkpoint, with tests, and `npm test`.
+- With the new code and default settings, `SS`'s A′-r6 iteration 0 replays exactly: 64 headers and bodies, 64 gradient norms and the weights.
+- A smoke on the pilot's parent `b0-s20260718` and the `smoke` and `smoke-w` plans, which are never part of the comparison:
+  - a full four-iteration warm-up on `smoke-w` and one RL iteration on `smoke`, for each reward;
+  - the actor-identity and game-identity checks, including regenerating RL iteration 0, and the worker-count check;
+  - the held-out critic check: on the smoke's RL iteration-0 games, score the parent's critic and each warmed critic against its own reward's returns, reporting MSE, mean residual and residual variance. If the warmed v2 critic's MSE is not below the parent critic's on the same games, the agent returns to the owner before freezing.
+- Verify the parent copies, the regenerated plans and the seed disjointness.
+- Dry-run `analyze.py` on synthetic inputs built from `SS` and `PR` files. Cover the carried-forward, kept-v1 (mean below 0.05), blocked, incomplete and instrument-failure paths.
+- Hash `plan.md`, `run.sh`, `analyze.py` and every other frozen script into `FROZEN.txt` before any output.
+
 ## Limits
 
 - The corpus is a 160-episode subset, not the production corpus.
