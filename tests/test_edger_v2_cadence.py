@@ -483,6 +483,41 @@ class CadenceLearnerTests(unittest.TestCase):
                 stratum=0, batch_size=16, value_loss_weight=0.5, entropy_bonus=0.001, loss_mode="nope",
             )
 
+    def test_critic_head_changes_only_the_value_head(self) -> None:
+        _, episode = synthetic_episode(40, mode="learned", seed=19)
+        model = seeded_policy()
+        before = copy.deepcopy(model.state_dict())
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+        for _ in range(3):
+            update = cadence.train_cadence_episode(
+                model, episode, optimizer, delay_mode="learned",
+                stratum=VOCAB["edger"], batch_size=16, value_loss_weight=0.5, entropy_bonus=0.001,
+                loss_mode="critic_head", decompose=True, reference=seeded_policy(7),
+            )
+        after = model.state_dict()
+        changed = {name.split(".")[0] for name in before if not torch.equal(before[name], after[name])}
+        self.assertIn("value_head", changed)
+        self.assertLessEqual(changed, set(cadence.CRITIC_HEAD_MODULES))
+        self.assertEqual(cadence.actor_differences(model, seeded_policy()), [])
+        norms = update["gradient_decomposition"]["group_norms"]
+        self.assertEqual(set(norms), {"value"})
+        for group in ("trunk", "card", "placement", "delay"):
+            self.assertEqual(norms["value"][group], 0.0, group)
+            self.assertEqual(update["group_gradient_norms"][group], 0.0, group)
+        # Every actor output is the untouched policy's.
+        batch = cadence.episode_batch(episode, 0, 40, VOCAB["edger"])
+        reference = seeded_policy()
+        with torch.no_grad():
+            trained, untouched = training.forward_batch(model, batch), training.forward_batch(reference, batch)
+            for head in ("card", "fused"):
+                self.assertTrue(torch.equal(trained[head], untouched[head]), head)
+        with self.assertRaisesRegex(ValueError, "critic_head has no actor loss"):
+            cadence.train_cadence_episode(
+                model, episode, torch.optim.Adam(model.parameters()), delay_mode="learned",
+                stratum=0, batch_size=16, value_loss_weight=0.5, entropy_bonus=0.001,
+                loss_mode="critic_head", reference=seeded_policy(7), card_kl_coefficient=0.05,
+            )
+
     def test_conditional_metrics_use_choice_and_play_denominators(self) -> None:
         _, episode = synthetic_episode(36, mode="fixed_one_tick", seed=19)
         forced = [1, 4, 5, 9, 20, 21, 22]
@@ -656,6 +691,126 @@ class CadenceLearnerTests(unittest.TestCase):
                     }))
                 with self.assertRaisesRegex(ValueError, "--reward-version must be one of"):
                     cadence.run_train_iteration(SimpleNamespace(**{**arguments, "reward_version": "nope"}))
+
+    def test_an_arm_warm_starts_only_from_a_critic_head_warm_up_of_its_parent(self) -> None:
+        import json
+        import tempfile
+        from types import SimpleNamespace
+        from unittest import mock
+
+        v1, v2 = cadence.REWARD_VERSIONS
+        episodes = {
+            f"ep{index}": synthetic_episode(16, mode="learned", seed=90 + index)[1]
+            for index in range(2)
+        }
+        for episode_id, episode in episodes.items():
+            episode["header"] = {**episode["header"], "episode_id": episode_id}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            def save_parent(name: str, seed: int) -> None:
+                # BC parents are production-schema checkpoints, as in the comparisons.
+                torch.save({
+                    "schema_version": training.CHECKPOINT_SCHEMA, "checkpoint_id": name,
+                    "model_state": seeded_policy(seed).state_dict(), "opponent_stratum_vocabulary": VOCAB,
+                }, root / f"{name}.pt")
+
+            save_parent("parent", 20260926)
+            save_parent("other", 5)
+            (root / "collection.json").write_text(json.dumps({"episodes": [
+                {"match_index": index, "header": str(root / f"{name}.json")}
+                for index, name in enumerate(episodes)
+            ]}))
+            base = dict(
+                checkpoint=str(root / "parent.pt"), parent=str(root / "parent.pt"),
+                collection=str(root / "collection.json"), delay_mode="learned",
+                arm="warm", iteration=0, out=str(root / "warm.pt"),
+                metrics_out=str(root / "warm-metrics.json"), learning_rate=1e-3, batch_size=16,
+                value_loss_weight=0.5, entropy_bonus=0.001, loss_mode="critic_head",
+                card_kl_coefficient=0.0, card_kl_rows="all", decompose_every=0, seed=1,
+                reward_version=v1, start_from_warmup=False,
+            )
+            rl = {**base, "checkpoint": str(root / "warm.pt"), "arm": "rl", "loss_mode": "full",
+                  "out": str(root / "rl0.pt"), "metrics_out": str(root / "rl0-metrics.json"),
+                  "start_from_warmup": True}
+            run = lambda **overrides: cadence.run_train_iteration(SimpleNamespace(**overrides))
+            loader = lambda path: episodes[Path(path).stem]
+            with mock.patch.object(cadence, "load_cadence_episode", loader), \
+                    mock.patch("builtins.print"):
+                run(**base)
+                warm, warm_model = cadence.load_any_checkpoint(root / "warm.pt")
+                _, parent_model = cadence.load_any_checkpoint(root / "parent.pt")
+                self.assertEqual(warm["loss_mode"], "critic_head")
+                self.assertEqual(cadence.actor_differences(warm_model, parent_model), [])
+                self.assertFalse(torch.equal(
+                    warm_model.state_dict()["value_head.weight"], parent_model.state_dict()["value_head.weight"]
+                ))
+                # The exported actor is the parent's, weight for weight.
+                for name in ("parent", "warm"):
+                    cadence.run_export(SimpleNamespace(
+                        checkpoint=str(root / f"{name}.pt"), out=str(root / f"{name}.json"), model_id=name,
+                    ))
+                self.assertEqual(
+                    json.loads((root / "warm.json").read_text())["weights"],
+                    json.loads((root / "parent.json").read_text())["weights"],
+                )
+                # Without the flag, a full arm cannot continue a critic_head arm.
+                with self.assertRaisesRegex(ValueError, "loss mode changed within an arm"):
+                    run(**{**rl, "start_from_warmup": False})
+                with self.assertRaisesRegex(ValueError, "used reward"):
+                    run(**{**rl, "reward_version": v2})
+                with self.assertRaisesRegex(ValueError, "different parent"):
+                    run(**{**rl, "parent": str(root / "other.pt")})
+                with self.assertRaisesRegex(ValueError, "different delay mode"):
+                    run(**{**rl, "delay_mode": "fixed_one_tick"})
+                with self.assertRaisesRegex(ValueError, "continues its warm-up"):
+                    run(**{**rl, "loss_mode": "critic_head"})
+                with self.assertRaisesRegex(ValueError, "needs a diagnostic critic_head checkpoint"):
+                    run(**{**rl, "checkpoint": str(root / "parent.pt")})
+                run(**{**base, "loss_mode": "critic_only", "arm": "conly", "out": str(root / "conly.pt"),
+                       "metrics_out": str(root / "conly-metrics.json")})
+                with self.assertRaisesRegex(ValueError, "needs a critic_head warm-up, not critic_only"):
+                    run(**{**rl, "checkpoint": str(root / "conly.pt")})
+                tampered = torch.load(root / "warm.pt", weights_only=False)
+                tampered["model_state"]["card_head.bias"] = tampered["model_state"]["card_head.bias"] + 1e-6
+                torch.save(tampered, root / "tampered.pt")
+                with self.assertRaisesRegex(ValueError, "changed actor parameters: card_head.bias"):
+                    run(**{**rl, "checkpoint": str(root / "tampered.pt")})
+                self.assertFalse((root / "rl0.pt").exists())
+
+                run(**rl)
+                rl0 = torch.load(root / "rl0.pt", weights_only=False)
+                metrics = json.loads((root / "rl0-metrics.json").read_text())
+                self.assertFalse(metrics["optimizer_restored"])
+                self.assertEqual(rl0["loss_mode"], "full")
+                self.assertEqual(rl0["root_parent_checkpoint_id"], "parent")
+                self.assertEqual(rl0["warm_start"], {
+                    "checkpoint_id": "edger_v2_cadence_warm_iter0", "arm": "warm", "iteration": 0,
+                    "reward_version": v1, "checkpoint_sha256": training.sha256_file(root / "warm.pt"),
+                })
+                self.assertEqual(metrics["warm_start"], rl0["warm_start"])
+                # The first full update starts from the warmed critic with fresh Adam:
+                # the same as a cold start whose critic head was replaced.
+                cold = copy.deepcopy(parent_model)
+                cold.value_head.load_state_dict(warm_model.value_head.state_dict())
+                cold.value_stratum_embedding.load_state_dict(warm_model.value_stratum_embedding.state_dict())
+                torch.save({
+                    "schema_version": cadence.DIAGNOSTIC_CHECKPOINT_SCHEMA, "checkpoint_id": "parent",
+                    "delay_mode": "learned", "loss_mode": "full", "model_state": cold.state_dict(),
+                    "optimizer_state": torch.optim.Adam(cold.parameters(), lr=1e-3).state_dict(),
+                    "opponent_stratum_vocabulary": VOCAB,
+                }, root / "cold.pt")
+                run(**{**rl, "checkpoint": str(root / "cold.pt"), "start_from_warmup": False,
+                       "out": str(root / "cold0.pt"), "metrics_out": str(root / "cold0-metrics.json")})
+                cold0 = torch.load(root / "cold0.pt", weights_only=False)
+                for name, tensor in rl0["model_state"].items():
+                    self.assertTrue(torch.equal(tensor, cold0["model_state"][name]), name)
+                # Later iterations continue normally and keep the warm-start record.
+                run(**{**rl, "checkpoint": str(root / "rl0.pt"), "iteration": 1, "start_from_warmup": False,
+                       "out": str(root / "rl1.pt"), "metrics_out": str(root / "rl1-metrics.json")})
+                rl1 = torch.load(root / "rl1.pt", weights_only=False)
+                self.assertEqual(rl1["warm_start"], rl0["warm_start"])
+                self.assertTrue(json.loads((root / "rl1-metrics.json").read_text())["optimizer_restored"])
 
     def test_vtrace_discount_follows_recorded_intervals(self) -> None:
         values = [0.2, -0.1, 0.4]

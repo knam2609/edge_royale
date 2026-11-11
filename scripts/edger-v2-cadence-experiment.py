@@ -12,6 +12,10 @@ update above. ``critic_only`` drops both the policy loss and the actor entropy,
 so the actor changes only through value-loss gradients into the shared trunk.
 ``value_detached`` keeps the full actor loss but stops value-loss gradients at
 the fused trunk features, so only actor terms shape the shared trunk.
+``critic_head`` trains only the value head and its opponent-stratum embedding:
+value loss alone, on detached fused features, so the trunk and every actor
+head stay bit for bit unchanged. It is the critic warm-up of the reward
+comparison; a later arm starts from it with ``--start-from-warmup``.
 
 Outputs are never promotable: checkpoints use a separate diagnostic schema that
 production ``load_checkpoint`` rejects, and exported actors are labelled
@@ -50,7 +54,11 @@ EPISODE_SCHEMA = "edger_v2_cadence_episode_v1"
 DIAGNOSTIC_CHECKPOINT_SCHEMA = "edger_v2_cadence_diagnostic_checkpoint_v1"
 PROMOTION_STATUS = "diagnostic_only_not_promotable"
 DELAY_MODES = ("learned", "fixed_one_tick")
-LOSS_MODES = ("full", "critic_only", "value_detached")
+LOSS_MODES = ("full", "critic_only", "value_detached", "critic_head")
+# Modes with no actor loss: only the value loss is optimized.
+CRITIC_LOSS_MODES = ("critic_only", "critic_head")
+# Parameters a critic_head update may change; every other one is the actor's.
+CRITIC_HEAD_MODULES = ("value_head", "value_stratum_embedding")
 # Training reward potentials (scripts/edger-reward-core.mjs). Every episode in
 # a collection, and every iteration of an arm, must use one version; files
 # written before v2 existed carry v1 or no version at all.
@@ -350,8 +358,8 @@ def train_cadence_episode(
         raise ValueError("card KL coefficient must not be negative")
     if card_kl_coefficient > 0 and reference is None:
         raise ValueError("a card KL term needs a reference policy")
-    if card_kl_coefficient > 0 and loss_mode == "critic_only":
-        raise ValueError("critic_only has no actor loss to add a card KL term to")
+    if card_kl_coefficient > 0 and loss_mode in CRITIC_LOSS_MODES:
+        raise ValueError(f"{loss_mode} has no actor loss to add a card KL term to")
     count = episode["rows"]
     behavior = behavior_log_probability(episode, delay_mode)
     ranges = microbatch_ranges(count, batch_size)
@@ -382,7 +390,7 @@ def train_cadence_episode(
     optimizer.zero_grad(set_to_none=True)
     names = [name for name, _ in model.named_parameters()]
     parameters = [parameter for _, parameter in model.named_parameters()]
-    components = ("value",) if loss_mode == "critic_only" else ("policy", "value", "entropy")
+    components = ("value",) if loss_mode in CRITIC_LOSS_MODES else ("policy", "value", "entropy")
     if card_kl_coefficient > 0:
         components = (*components, "card_kl")
     component_grads = (
@@ -403,11 +411,12 @@ def train_cadence_episode(
         logits = training.forward_batch(model, batch)
         log_probability = policy_log_probability(logits, batch, delay_mode)
         entropy = policy_entropy(logits, batch, delay_mode)
-        fused = logits["fused"].detach() if loss_mode == "value_detached" else logits["fused"]
+        detach_fused = loss_mode in ("value_detached", "critic_head")
+        fused = logits["fused"].detach() if detach_fused else logits["fused"]
         value = model.value(fused, batch.stratum)
         policy_loss = -(log_probability * advantage.detach() * batch.sample_weight).sum()
         value_loss = F.mse_loss(value, vtrace_target[start:end], reduction="sum")
-        if loss_mode == "critic_only":
+        if loss_mode in CRITIC_LOSS_MODES:
             loss = (value_loss_weight * value_loss) / count
         else:
             loss = (
@@ -623,6 +632,60 @@ def save_diagnostic_checkpoint(path: str | Path, payload: dict[str, Any]) -> Non
     torch.save(payload, output)
 
 
+def actor_differences(model: nn.Module, reference: nn.Module) -> list[str]:
+    """Parameters outside the critic head that are not bit-identical."""
+    reference_parameters = dict(reference.named_parameters())
+    return [
+        name
+        for name, parameter in model.named_parameters()
+        if name.split(".")[0] not in CRITIC_HEAD_MODULES
+        and not torch.equal(parameter.detach(), reference_parameters[name].detach())
+    ]
+
+
+def check_warmup_start(
+    checkpoint: dict[str, Any],
+    model: nn.Module,
+    parent_checkpoint: dict[str, Any],
+    parent: nn.Module,
+    *,
+    delay_mode: str,
+    loss_mode: str,
+    reward_version: str,
+) -> dict[str, Any]:
+    """Refuse a warm start unless it is a critic_head warm-up of this parent.
+
+    The warm-up must use the same cadence and reward, descend from the same
+    root parent, and leave every actor and trunk parameter bit for bit the
+    parent's, so the new arm differs from a cold start only in its critic.
+    """
+    if checkpoint.get("schema_version") != DIAGNOSTIC_CHECKPOINT_SCHEMA:
+        raise ValueError("a warm start needs a diagnostic critic_head checkpoint")
+    if checkpoint.get("loss_mode") != "critic_head":
+        raise ValueError(f"a warm start needs a critic_head warm-up, not {checkpoint.get('loss_mode')}")
+    if loss_mode == "critic_head":
+        raise ValueError("a critic_head arm continues its warm-up; it does not warm start")
+    if checkpoint.get("delay_mode") != delay_mode:
+        raise ValueError("the warm-up used a different delay mode")
+    if checkpoint.get("reward_version", DEFAULT_REWARD_VERSION) != reward_version:
+        raise ValueError(
+            f"the warm-up used reward {checkpoint.get('reward_version', DEFAULT_REWARD_VERSION)}, not {reward_version}"
+        )
+    if root_parent_id(checkpoint) != root_parent_id(parent_checkpoint):
+        raise ValueError("the warm-up descends from a different parent")
+    if checkpoint["opponent_stratum_vocabulary"] != parent_checkpoint["opponent_stratum_vocabulary"]:
+        raise ValueError("the warm-up's opponent strata differ from the parent's")
+    changed = actor_differences(model, parent)
+    if changed:
+        raise ValueError(f"the warm-up changed actor parameters: {', '.join(changed)}")
+    return {
+        "checkpoint_id": checkpoint["checkpoint_id"],
+        "arm": checkpoint.get("arm"),
+        "iteration": checkpoint.get("iteration"),
+        "reward_version": reward_version,
+    }
+
+
 def parameter_drift(model: nn.Module, reference: nn.Module) -> dict[str, dict[str, float]]:
     reference_parameters = dict(reference.named_parameters())
     result = {}
@@ -655,12 +718,23 @@ def run_train_iteration(args: argparse.Namespace) -> None:
         raise ValueError(f"--reward-version must be one of {REWARD_VERSIONS}")
     training.seed_everything(args.seed)
     checkpoint, model = load_any_checkpoint(args.checkpoint)
-    _, parent = load_any_checkpoint(args.parent)
+    parent_checkpoint, parent = load_any_checkpoint(args.parent)
     parent.eval()
     vocab = checkpoint["opponent_stratum_vocabulary"]
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
     optimizer_restored = False
-    if checkpoint.get("schema_version") == DIAGNOSTIC_CHECKPOINT_SCHEMA:
+    start_from_warmup = bool(getattr(args, "start_from_warmup", False))
+    warm_start = None
+    if start_from_warmup:
+        # A new arm whose weights come from a finished critic_head warm-up,
+        # with fresh Adam, as from a BC parent. Only its critic may differ.
+        warm_start = check_warmup_start(
+            checkpoint, model, parent_checkpoint, parent,
+            delay_mode=args.delay_mode, loss_mode=args.loss_mode, reward_version=reward_version,
+        )
+        warm_start["checkpoint_sha256"] = training.sha256_file(args.checkpoint)
+    elif checkpoint.get("schema_version") == DIAGNOSTIC_CHECKPOINT_SCHEMA:
+        warm_start = checkpoint.get("warm_start")
         if checkpoint["delay_mode"] != args.delay_mode:
             raise ValueError("delay mode changed within an arm")
         if checkpoint.get("loss_mode", "full") != args.loss_mode:
@@ -742,6 +816,7 @@ def run_train_iteration(args: argparse.Namespace) -> None:
         "delay_mode": args.delay_mode,
         "loss_mode": args.loss_mode,
         "reward_version": reward_version,
+        "warm_start": warm_start,
         "decompose_every": args.decompose_every,
         "iteration": args.iteration,
         "learning_rate": args.learning_rate,
@@ -872,6 +947,7 @@ def run_train_iteration(args: argparse.Namespace) -> None:
         "reward_version": reward_version,
         "card_kl_coefficient": args.card_kl_coefficient,
         "card_kl_rows": args.card_kl_rows,
+        "warm_start": warm_start,
         "iteration": args.iteration,
         "seed": args.seed,
         "model_state": model.state_dict(),
@@ -1089,6 +1165,10 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--entropy-bonus", type=float, default=0.001)
     train.add_argument("--loss-mode", default="full", choices=LOSS_MODES)
     train.add_argument("--reward-version", default=DEFAULT_REWARD_VERSION, choices=REWARD_VERSIONS)
+    train.add_argument(
+        "--start-from-warmup", action="store_true",
+        help="start a new arm from a critic_head warm-up checkpoint, with fresh Adam",
+    )
     train.add_argument(
         "--card-kl-coefficient", type=float, default=0.0,
         help="weight of KL(parent || model) over the card head (0 = the production update)",

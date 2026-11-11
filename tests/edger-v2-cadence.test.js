@@ -57,6 +57,7 @@ import {
   pruneEpisodeBodies,
   selectEvaluationSeeds,
   summarizePolicyDiagnostics,
+  trainIterationArguments,
   trainingOpponentSchedule,
 } from "../scripts/edger-v2-cadence-experiment.mjs";
 import { spawnNativePython } from "../scripts/python-runtime.mjs";
@@ -590,6 +591,24 @@ test("train-arm records pooled held-out Fireball capture against the parent", ()
   });
 });
 
+test("train-arm warm starts only its first iteration from an initial checkpoint", () => {
+  const options = {
+    checkpoint: "warm.pt", parentCheckpoint: "parent.pt", collection: "c.json", cadence: LEARNED,
+    arm: "A2-r6", iteration: 0, out: "out.pt", metricsOut: "m.json", learningRate: "0.001",
+    lossMode: "full", cardKlCoefficient: "0", cardKlRows: "all", decomposeEvery: "0",
+    torchSeed: "20260926", rewardVersion: "edger_potential_reward_v2",
+  };
+  const cold = trainIterationArguments(options);
+  assert.deepEqual(cold, [
+    "train-iteration", "--checkpoint", "warm.pt", "--parent", "parent.pt", "--collection", "c.json",
+    "--delay-mode", LEARNED, "--arm", "A2-r6", "--iteration", "0", "--out", "out.pt",
+    "--metrics-out", "m.json", "--learning-rate", "0.001", "--loss-mode", "full",
+    "--card-kl-coefficient", "0", "--card-kl-rows", "all", "--decompose-every", "0",
+    "--seed", "20260926", "--reward-version", "edger_potential_reward_v2",
+  ]);
+  assert.deepEqual(trainIterationArguments({ ...options, warmStart: true }), [...cold, "--start-from-warmup"]);
+});
+
 test("paired contrasts compare identical seed pairs", () => {
   const make = (points) => points.map((point, index) => ({ pair_id: `pair-${Math.floor(index / 2)}`, candidate_point: point }));
   const control = make([1, 0, 0.5, 0.5, 0, 0, 1, 1]);
@@ -921,6 +940,27 @@ test("convert-collection regenerates pruned games into production episodes and f
       assert.equal(entry.split, shard.split);
       assert.equal(deriveDecisionSequence(episode).samples.length, entry.rows);
     }
+    // The collection identifies each game apart from its reward fields; the
+    // independently regenerated game ends in the recorded final state.
+    for (const item of collection.episodes) {
+      assert.match(item.action_stream_hash, /^\S+$/);
+      const entry = report.episodes.find((episode) => episode.cadence_episode === item.episode_id);
+      const shard = manifest.shards.find((candidate) => candidate.episode_id === entry.episode_id);
+      assert.equal(loadTrainingEpisode(shard.uri, { verifyReplay: true }).final_state_hash, item.final_state_hash);
+    }
+    // The same games collected under reward v2: identical games, other rewards.
+    const v2Path = path.join(directory, "collection-v2.json");
+    const collectedV2 = run([
+      "collect", "--seeds", plan, "--iteration", "0", "--pairs-per-iteration", "1", "--model", modelPath,
+      "--cadence", LEARNED, "--out-dir", path.join(directory, "episodes-v2"), "--out", v2Path, "--workers", "2",
+      "--reward", "edger_potential_reward_v2",
+    ]);
+    assert.equal(collectedV2.status, 0, collectedV2.stderr);
+    const v2Collection = JSON.parse(fs.readFileSync(v2Path, "utf8"));
+    assert.equal(v2Collection.reward_version, "edger_potential_reward_v2");
+    const gameKeys = ({ episode_id, seed, opponent, rows, tick, candidate_point, action_stream_hash, final_state_hash }) =>
+      ({ episode_id, seed, opponent, rows, tick, candidate_point, action_stream_hash, final_state_hash });
+    assert.deepEqual(v2Collection.episodes.map(gameKeys), collection.episodes.map(gameKeys));
     const again = convert("b");
     assert.equal(again.status, 0, again.stderr);
     assert.deepEqual(

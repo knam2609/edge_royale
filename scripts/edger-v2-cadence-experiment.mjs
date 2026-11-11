@@ -942,6 +942,10 @@ async function collect({
       tick: result.tick,
       candidate_point: result.candidate_point,
       successful_deployments: result.stats.successful_deployments,
+      // Identify the game itself, independent of the reward fields the body
+      // also stores, so collections under different rewards can be compared.
+      action_stream_hash: result.action_stream_hash,
+      final_state_hash: result.final_state_hash,
     })),
   };
   writeJson(out, collection);
@@ -1007,6 +1011,35 @@ export function heldoutCaptureRecord(report) {
   };
 }
 
+// The learner command for one train-arm iteration. A warm start (the first
+// iteration of an arm given --initial-checkpoint) restarts Adam and lets the
+// learner check that only the critic head differs from the parent.
+export function trainIterationArguments({
+  checkpoint, parentCheckpoint, collection, cadence, arm, iteration, out, metricsOut,
+  learningRate, lossMode, cardKlCoefficient, cardKlRows, decomposeEvery, torchSeed, rewardVersion,
+  warmStart = false,
+}) {
+  return [
+    "train-iteration",
+    "--checkpoint", checkpoint,
+    "--parent", parentCheckpoint,
+    "--collection", collection,
+    "--delay-mode", cadence,
+    "--arm", arm,
+    "--iteration", String(iteration),
+    "--out", out,
+    "--metrics-out", metricsOut,
+    "--learning-rate", learningRate,
+    "--loss-mode", lossMode,
+    "--card-kl-coefficient", cardKlCoefficient,
+    "--card-kl-rows", cardKlRows,
+    "--decompose-every", decomposeEvery,
+    "--seed", torchSeed,
+    "--reward-version", rewardVersion,
+    ...(warmStart ? ["--start-from-warmup"] : []),
+  ];
+}
+
 async function commandTrainArm(args) {
   const arm = required(args, "arm");
   const cadence = required(args, "cadence");
@@ -1017,6 +1050,10 @@ async function commandTrainArm(args) {
   const workDir = path.resolve(required(args, "work-dir"));
   const parentCheckpoint = path.resolve(required(args, "parent-checkpoint"));
   const parentModel = path.resolve(required(args, "parent-model"));
+  // Weights for iteration 0 from a finished critic_head warm-up arm. The
+  // parent stays the reference and plays iteration 0: the learner refuses a
+  // warm-up whose actor differs from the parent's.
+  const initialCheckpoint = args["initial-checkpoint"] ? path.resolve(args["initial-checkpoint"]) : null;
   const iterations = Number(args.iterations ?? 6);
   const pairsPerIteration = Number(args["pairs-per-iteration"] ?? 32);
   const workers = Number(args.workers ?? 7);
@@ -1063,8 +1100,12 @@ async function commandTrainArm(args) {
     iterations: [],
     stop_reason: null,
   };
+  if (initialCheckpoint) {
+    status.initial_checkpoint = initialCheckpoint;
+    status.initial_checkpoint_sha256 = sha256File(initialCheckpoint);
+  }
   const armStarted = Date.now();
-  let checkpoint = parentCheckpoint;
+  let checkpoint = initialCheckpoint ?? parentCheckpoint;
   let model = parentModel;
   const firstIteration = Number(args["start-iteration"] ?? 0);
   if (firstIteration > 0) {
@@ -1114,24 +1155,24 @@ async function commandTrainArm(args) {
     }
     const nextCheckpoint = path.join(iterationDir, "checkpoint.pt");
     const learnerStarted = Date.now();
-    const train = python([
-      "train-iteration",
-      "--checkpoint", checkpoint,
-      "--parent", parentCheckpoint,
-      "--collection", path.join(iterationDir, "collection.json"),
-      "--delay-mode", cadence,
-      "--arm", arm,
-      "--iteration", String(iteration),
-      "--out", nextCheckpoint,
-      "--metrics-out", path.join(iterationDir, "learner-metrics.json"),
-      "--learning-rate", learningRate,
-      "--loss-mode", lossMode,
-      "--card-kl-coefficient", cardKlCoefficient,
-      "--card-kl-rows", cardKlRows,
-      "--decompose-every", decomposeEvery,
-      "--seed", torchSeed,
-      "--reward-version", rewardVersion,
-    ], logPath);
+    const train = python(trainIterationArguments({
+      checkpoint,
+      parentCheckpoint,
+      collection: path.join(iterationDir, "collection.json"),
+      cadence,
+      arm,
+      iteration,
+      out: nextCheckpoint,
+      metricsOut: path.join(iterationDir, "learner-metrics.json"),
+      learningRate,
+      lossMode,
+      cardKlCoefficient,
+      cardKlRows,
+      decomposeEvery,
+      torchSeed,
+      rewardVersion,
+      warmStart: Boolean(initialCheckpoint) && iteration === 0,
+    }), logPath);
     record.learner_wall_seconds = (Date.now() - learnerStarted) / 1000;
     if (train.status !== 0) {
       status.stop_reason = `learner failed in iteration ${iteration}: ${(train.stderr ?? "").split("\n").filter(Boolean).at(-1)}`;

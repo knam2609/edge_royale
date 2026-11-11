@@ -202,6 +202,21 @@ the live bot, the promotion evaluator or campaigns.
   actor moves only through value-loss gradients into the shared trunk;
   `value_detached` keeps the full actor loss but trains the value head on
   detached trunk features. The loss mode cannot change within an arm.
+- Critic warm-up (`train-arm --loss-mode critic_head`; the fifth comparison):
+  trains only `value_head` and `value_stratum_embedding`, with the value loss
+  alone on detached trunk features. The trunk and every actor head stay bit
+  for bit unchanged, so the warm-up's exported actor is its parent's.
+  `train-arm --initial-checkpoint <warm-up checkpoint>` starts a new arm from
+  it, with fresh Adam. The parent stays the reference and plays iteration 0.
+  The learner (`train-iteration --start-from-warmup`) refuses any warm-up that
+  is not `critic_head`, or that differs from the arm in reward version, cadence
+  or root parent. It also refuses any parameter outside the critic head that
+  differs from the parent's. Checkpoints and learner metrics record the warm
+  start (`warm_start`); without the flag, the update is unchanged.
+- Collections record each game's `action_stream_hash` and `final_state_hash`.
+  Collections of the same games under different rewards can then be compared
+  apart from the `reward` and `discounted_return` arrays. Headers and bodies
+  are unchanged.
 - Card KL floor (`train-arm --card-kl-coefficient β`, default 0; tactical
   proposal 3): adds β × KL(BC parent ‖ model) over the card head on every
   on-policy row. The forward direction keeps probability on cards the parent

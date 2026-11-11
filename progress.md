@@ -20,7 +20,7 @@
     - game-identity checks compare `reward` and `discounted_return` separately, and require every other array plus the action-stream and final-state hashes to match, including at RL iteration 0.
   - **Correction:** shifting the critic by −Φx leaves V-trace's advantages identical even with clipped ratios (verified on the local recursion, max difference 1.1e-15). v2 can act only through how closely the critic tracks the shift, and through the shared trunk.
   - Power to resolve the direction of a true 0.05 gain is about 0.38 at the closest measured spread, so an inconclusive result is plausible.
-  - **Needs one reviewed code checkpoint:** a `critic_head` loss mode, `train-arm --initial-checkpoint`, and collections that record each game's action-stream and final-state hashes.
+  - **The code checkpoint is committed (owner, November 11):** a `critic_head` loss mode, `train-arm --initial-checkpoint` (learner `--start-from-warmup`), and collections that record each game's action-stream and final-state hashes ([training doc](docs/EDGER_TRAINING.md#decision-cadence-diagnostic-local-only-never-promotable)). Tests pass, and at default settings it replays `SS`'s A′-r6 iteration 0 exactly (Validation).
   - Estimate: about 7 h one arm at a time, or 4.5–5 h with each parent's arms side by side; cap 9 h.
 - November 11, 2026: playstyle diagnostics (`edger_v2_playstyle_diagnostics_v1`, [definitions](docs/EDGER_TRAINING.md#decision-cadence-diagnostic-local-only-never-promotable)) are in every cadence `evaluate`/`collect` summary and in the `diagnostics` report. They cover wasted elixir, counter responses within 5 s, Giant plays into an affordable answer, and the v2 parts M/T/R/S at 60 s and 120 s. They are descriptive only, and games are unchanged. Committed as a code checkpoint after `4bcd5dd` (owner, November 11).
 - November 10 finding: bots, Edger included, can place troops at only four cells (the three bridge-front cells and the back center), plus pocket cells after a crown tower falls. Recorded as a follow-up task; nothing changed.
@@ -134,13 +134,11 @@
 
 # Next Tasks
 
-1. **Fifth comparison (approved with revisions, November 11)** ([design](docs/EDGER_TACTICAL_REVIEW.md#fifth-comparison-reward-v2-against-v1)), in this order:
-   1. commit the design docs-only;
-   2. the code checkpoint, with tests: a `critic_head` loss mode, `train-arm --initial-checkpoint`, and the per-game hashes in collections;
-   3. replay `SS`'s A′-r6 iteration 0 at default settings;
-   4. the smoke on `b0-s20260718` and the `smoke`/`smoke-w` plans, including the held-out critic check (return to the owner if the warmed v2 critic is not better than the parent's);
-   5. the synthetic `analyze.py` dry run;
-   6. freeze, then launch.
+1. **Fifth comparison (approved with revisions, November 11)** ([design](docs/EDGER_TACTICAL_REVIEW.md#fifth-comparison-reward-v2-against-v1); design commit `9e6e687`). Remaining steps, in this order:
+   1. create the run directory with a clean clone at the code checkpoint commit, and repeat the `SS` A′-r6 iteration-0 replay there;
+   2. the smoke on `b0-s20260718` and the `smoke`/`smoke-w` plans, including the held-out critic check (return to the owner if the warmed v2 critic is not better than the parent's);
+   3. the seed checks and the synthetic `analyze.py` dry run;
+   4. freeze, then launch.
 2. **Parked (owner, November 10): the league opponent mix comparison design.** It resumes after the reward comparison, under whichever reward that comparison favors. Design work was approved on November 10; the run is not authorized until the owner reviews the design. It continues the historical league-regression attribution under the factorial's frozen rule. Keep the `train-arm` learner, refreshed rollouts, matched parents and seeds, equal updates and the same evaluation, and vary only the training opponent mix. Use one host and pairs sized by the rule, and freeze before output. Do not extend completed comparisons after seeing their output; the factorial's inconclusive effects get no follow-up chosen after seeing them. Stale-batch breakdown and the balancing weights (up to 30) remain hypotheses, each needing its own design and pre-set endpoint.
 3. **Follow-up (owner, November 10): bot troop placement.** Bots can deploy troops at only four cells. Investigate after the reward comparison; widening it changes the action space for every trained model, so it needs its own design.
 4. Optional: repeat warm-up headed at DPR 2. Mobile/120 Hz need separate measurement. Protect decision-preserving speed-ups for review/fresh provenance; no forced-PASS shortcuts.
@@ -154,6 +152,19 @@
 12. Standardize browser smoke: retain assertion diagnostics, investigate recurrence of iCloud/refetch/watchdog failures, and add group/KILL cleanup to the 120 s watchdog. M6 install/smoke passes; the original October 4 193/196 cause is unconfirmed. Preserve verified outside-iCloud freeze gates.
 
 # Validation
+
+November 11, 2026: fifth comparison code checkpoint (committed after `9e6e687`, owner, November 11): `scripts/edger-v2-cadence-experiment.py`, `scripts/edger-v2-cadence-experiment.mjs`, the two cadence test files and `docs/EDGER_TRAINING.md`. These are training tooling only; there is no gameplay, Edger runtime, heuristic or client change.
+- `PYTHON=/usr/local/bin/python3 npm test`: 258/258. The new tests cover:
+  - `critic_head` changes only the critic head, with actor outputs identical;
+  - every warm-start refusal (production parent, `critic_only`, reward, parent, cadence, loss mode, a tampered actor bias), and that a warm start equals a cold start with the critic replaced and fresh Adam;
+  - the warm-start record carries forward;
+  - the `--start-from-warmup` wiring;
+  - the collected hashes, which equal the regenerated game's final state and are identical under v1 and v2.
+- Default path unchanged, checked read-only against `SS`, with outputs in the scratchpad:
+  - `collect --seeds $SS/seeds/seed-plan-r6.json --iteration 0 --pairs-per-iteration 32 --model $SS/models/b0-s20260724.json --cadence learned --workers 7`;
+  - then `OMP_NUM_THREADS=1 /usr/local/bin/python3 scripts/edger-v2-cadence-experiment.py train-iteration --checkpoint $SS/bc/b0-s20260724.pt --parent $SS/bc/b0-s20260724.pt … --loss-mode full --card-kl-coefficient 0 --seed 20260926 --reward-version edger_potential_reward_v1`;
+  - against `SS/arms/A-r6/iter0`: 64/64 headers byte-identical, 64/64 bodies matched `body_sha256`, 64/64 gradient norms equal, and weights and Adam moments identical.
+- `git diff --check` passes. The bot benchmark and browser smoke were not run: Edger's runtime, the heuristic and the client are unchanged.
 
 November 11, 2026: fifth comparison design and owner revisions (docs only: `docs/EDGER_TACTICAL_REVIEW.md`, `docs/EDGER_REWARD.md`, this file). No test run was needed.
 - Inputs were read-only:
@@ -298,6 +309,6 @@ November 7, 2026: converter code checkpoint, then preflight, run and frozen anal
 - No writes to frozen runs, spent runtime freeze `75dd33fe…`, reviewed measurement stage or failed campaigns. No cloud dispatch, paid service, push/PR or promotion occurred. The only training was the four local, owner-approved comparisons (freshness, staleness at scale, the production learner and the factorial `PF`), whose models are non-promotable diagnostics. The `PF` smoke trained eight r6 chains for two iterations each; only the `111` corner was exported and evaluated. The only other training was scratch prototype learner steps, and none of their checkpoints was kept:
   - the November 6 prototype, from one parent: one production `vtrace` iteration and the equivalence replays (at most 64 updates each);
   - the November 8 factorial prototype's corner reproductions: `000` and `111` for r6 iterations 0–2, and P's r15 iteration 11 three times. No intermediate cell was trained.
-- Checkpoints: Proposal 4 and the bank repair are committed at `16e36b4`, the pilot report and advice at `6e0b6a8`, and the rule and approved design at `d345a49`. The freshness results and November 6 decisions are committed docs-only at `bb39dea`. The approved staleness-at-scale design is committed docs-only at `51e5969`, and its results and next-step review at `b4a0c78`. The routine diagnostics are code checkpoint `a8127c1`, and the playstyle diagnostics a code checkpoint after `4bcd5dd`. The third-comparison design is committed docs-only at `270c451`, its converter at `f09fccf`, and its results docs-only after them. The factorial design is committed docs-only at `a03fd12`, and its preflight, run, results and the November 10 owner decisions docs-only after it. It shared the host with an unrelated `gridcast` process, so its wall times are not cost evidence.
+- Checkpoints: Proposal 4 and the bank repair are committed at `16e36b4`, the pilot report and advice at `6e0b6a8`, and the rule and approved design at `d345a49`. The freshness results and November 6 decisions are committed docs-only at `bb39dea`. The approved staleness-at-scale design is committed docs-only at `51e5969`, and its results and next-step review at `b4a0c78`. The routine diagnostics are code checkpoint `a8127c1`, and the playstyle diagnostics a code checkpoint after `4bcd5dd`. The third-comparison design is committed docs-only at `270c451`, its converter at `f09fccf`, and its results docs-only after them. The factorial design is committed docs-only at `a03fd12`, and its preflight, run, results and the November 10 owner decisions docs-only after it. The fifth comparison design, with the owner's revisions, is committed docs-only at `9e6e687`, and its code checkpoint after it. It shared the host with an unrelated `gridcast` process, so its wall times are not cost evidence.
 - Wall times favor a single rollout (about 1.1 against 2.6 min per arm at 384 updates, and 3.4 against 11.7 at 1,536), because one large collection batches better. The measured quality loss and degeneration outweigh that at these scales; any production choice must weigh both.
 - Large logits from degenerate training broke JS/PyTorch parity in 2 of the 4 degenerate children; parity alone is not a degeneration check. In the production comparison, the collapsed P children passed parity with worst ratios up to 0.954, close to the limit. In the factorial, five collapsed children failed it (worst ratios 1.144–1.250 at logit magnitudes 173–376, tie sets agreeing), which blocked three labels. On November 10 the owner kept the rule; the reference-host re-measurement assesses it for future campaigns.
