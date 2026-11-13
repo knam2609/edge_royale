@@ -443,9 +443,8 @@ export function installEdgerV2RuntimeCostDiagnostic({ appState, resetGame, rende
       }
       statesChecked += 1;
       for (const actor of ACTORS) {
-        const legalActions = enumerateLegalCardActions({ engine, actor });
-        for (const run of models.keys()) {
-          const model = models.get(run);
+        for (const [run, model] of models) {
+          const legalActions = enumerateLegalCardActions({ engine, actor, model });
           for (const controller of CONTROLLERS) {
             const where = { state: state.id, actor, model: run, controller };
             const reference = expected.get(`${state.id}|${actor}|${run}|${controller}`);

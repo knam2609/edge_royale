@@ -91,7 +91,7 @@ function sampleMainDecision({
   rng,
   temperature,
 }) {
-  const legalActions = enumerateLegalCardActions({ engine, actor });
+  const legalActions = enumerateLegalCardActions({ engine, actor, model });
   const observation = buildEdgerV2Observation({ engine, actor });
   const encodedState = encodeEdgerV2PolicyState({ model, observation });
   const cardMasks = buildEdgerV2LegalMasks({
@@ -174,7 +174,7 @@ function maybeOpponentDecision({
   }
   if (opponent.kind === "model") {
     const model = loadModel(opponent.model_path);
-    const legalActions = enumerateLegalCardActions({ engine, actor });
+    const legalActions = enumerateLegalCardActions({ engine, actor, model });
     const decision = model.schema_version === "edger_policy_model_v2"
       ? selectEdgerV2PolicyDecision({
           model,
@@ -310,6 +310,7 @@ function runSpec(spec) {
     events: engine.state.replay.events,
     result: engine.getMatchResult(),
     finalStateHash: engine.getStateHash(),
+    actionSpaceVersion: model.action_space_version,
     policies,
     source: {
       kind: "simulator",

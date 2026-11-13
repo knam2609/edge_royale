@@ -12,7 +12,7 @@ Code:
 | Version | Status | Potential Φ |
 |---|---|---|
 | `edger_potential_reward_v1` | Default. Every model and comparison so far. | Crowns and tower HP |
-| `edger_potential_reward_v2` | Opt-in (`--reward edger_potential_reward_v2` on `collect` and `train-arm`). Frozen November 11, 2026, after two data checks: counter table, weights, and R at weight 0. Not yet used in training. | v1 plus M, T and S |
+| `edger_potential_reward_v2` | Opt-in (`--reward edger_potential_reward_v2` on `collect` and `train-arm`). Frozen November 11, 2026, after two data checks: counter table, weights, and R at weight 0. Tested in training twice, both times with direction unresolved against v1, so v1 stays the default reward. The fifth comparison (November 11, four-cell shortlist) gave +0.036 [−0.004, +0.076]. The seventh (November 13, full-grid placement) gave +0.056 [−0.027, +0.138]. | v1 plus M, T and S |
 
 Every version has the same per-decision form, over the interval Δ ticks to the actor's next decision:
 
@@ -218,6 +218,9 @@ Not covered by the checks:
    - an identical critic-only warm-up in both arms;
    - the primary endpoint is the existing match-result primary score.
 
-   **Design approved November 11, 2026, with revisions** ([design](EDGER_TACTICAL_REVIEW.md#fifth-comparison-reward-v2-against-v1)). It is not yet frozen, and nothing has run.
+   **Design approved November 11, 2026, with revisions; run and analyzed the same day** ([design and results](EDGER_TACTICAL_REVIEW.md#fifth-comparison-reward-v2-against-v1)).
+   - **Result:** d_2 = A2 − A1 = +0.036 [−0.004, +0.076] over 12 parents: direction unresolved, size unresolved. Under the frozen rule, **v1 stays the training reward** for the league opponent mix design, without a warm-up. v2 stays opt-in and frozen.
+   - The critic warm-up did not give a better critic: on held-out games the warmed critics' MSE was above the parent critic's in 9 of 12 parents, through a bias of about +0.28.
+   - Secondary, descriptive: A2's children kept more material and threat at 60 s than A1's (M +1.42 against +1.07, T +0.60 against +0.37).
    - Shifting the critic by −Φx leaves V-trace's advantages identical, even with clipped ratios. So v2 can act only through how closely the learned critic tracks that shift, and through the value loss's pull on the shared trunk.
    - v2 is carried into the league comparison only if d_2's interval is above 0 and its mean is at least 0.05.

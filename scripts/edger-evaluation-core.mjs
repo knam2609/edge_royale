@@ -17,6 +17,7 @@ import {
   selectEdgerAction,
   selectHeuristicAction,
 } from "../src/ai/botRuntime.js";
+import { EDGER_FULL_GRID_ACTION_SPACE_VERSION } from "../src/ai/v2/observation.js";
 import { validateEdgerPolicyModel } from "../src/ai/mlPolicy.js";
 import { runBotMatch, runEdgerBenchmarkSuite } from "../src/ai/benchmark.js";
 
@@ -352,7 +353,7 @@ export function evaluateScenarioFeasibility({
 }
 
 function selectScenarioAction(engine, model, selector, actor) {
-  const legalActions = enumerateLegalCardActions({ engine, actor });
+  const legalActions = enumerateLegalCardActions({ engine, actor, model: selector === "candidate" ? model : undefined });
   if (selector === "heuristic") {
     return selectHeuristicAction({ legalActions, engine, actor });
   }
@@ -442,7 +443,7 @@ function runCandidatePolicyTicks(model, totalTicks = 120) {
 
   for (let i = 0; i < totalTicks && !engine.getMatchResult(); i += 1) {
     const tick = engine.state.tick + 1;
-    const legalActions = enumerateLegalCardActions({ engine, actor: "red" });
+    const legalActions = enumerateLegalCardActions({ engine, actor: "red", model });
     const selected = selectEdgerAction({
       model,
       engine,
@@ -563,6 +564,7 @@ export function evaluateTiming(
 ) {
   // Keep the pre-existing five-state timing method separate from the expanded
   // quality bank so a scoring change does not silently redefine p95.
+  const fullGrid = model.action_space_version === EDGER_FULL_GRID_ACTION_SPACE_VERSION;
   const fixtures = BASE_SCENARIO_FIXTURES.map((fixture) => {
     const engine = fixture.makeEngine();
     if (fixture.category === "defense") {
@@ -572,30 +574,25 @@ export function evaluateTiming(
     }
     return {
       engine,
-      legalActions: enumerateLegalCardActions({ engine, actor: "red" }),
+      legalActions: fullGrid ? null : enumerateLegalCardActions({ engine, actor: "red" }),
     };
+  });
+  const decide = ({ engine, legalActions }) => selectEdgerAction({
+    model,
+    engine,
+    actor: "red",
+    legalActions: legalActions ?? enumerateLegalCardActions({ engine, actor: "red", model }),
   });
   const durations = [];
 
   for (let i = 0; i < warmupSamples; i += 1) {
-    const fixture = fixtures[i % fixtures.length];
-    selectEdgerAction({
-      model,
-      engine: fixture.engine,
-      actor: "red",
-      legalActions: fixture.legalActions,
-    });
+    decide(fixtures[i % fixtures.length]);
   }
 
   for (let i = 0; i < samples; i += 1) {
     const fixture = fixtures[i % fixtures.length];
     const started = performance.now();
-    selectEdgerAction({
-      model,
-      engine: fixture.engine,
-      actor: "red",
-      legalActions: fixture.legalActions,
-    });
+    decide(fixture);
     durations.push(performance.now() - started);
   }
 

@@ -177,11 +177,12 @@ export function evaluateOpportunityBank(model, bank, { selector = selectEdgerAct
     const engine = opportunityEngine(entry.state);
     const legalActions = enumerateLegalCardActions({ engine, actor: entry.actor });
     const args = { engine, actor: entry.actor, legalActions };
-    const candidateAction = selector({ ...args, model });
+    const candidateActions = enumerateLegalCardActions({ engine, actor: entry.actor, model });
+    const candidateAction = selector({ ...args, legalActions: candidateActions, model });
     const heuristicAction = selectHeuristicAction(args);
-    const legal = (action) => legalActions.some((a) => a.cardId === action?.cardId && a.x === action.x && a.y === action.y);
-    const candidateCapture = legal(candidateAction) && capturesFireballOpportunity(engine, entry.actor, candidateAction, entry.category);
-    const heuristicCapture = legal(heuristicAction) && capturesFireballOpportunity(engine, entry.actor, heuristicAction, entry.category);
+    const legal = (action, actions) => actions.some((a) => a.cardId === action?.cardId && a.x === action.x && a.y === action.y);
+    const candidateCapture = legal(candidateAction, candidateActions) && capturesFireballOpportunity(engine, entry.actor, candidateAction, entry.category);
+    const heuristicCapture = legal(heuristicAction, legalActions) && capturesFireballOpportunity(engine, entry.actor, heuristicAction, entry.category);
     const category = categories[entry.category];
     category.count += 1;
     category.candidate_captures += Number(candidateCapture);

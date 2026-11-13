@@ -176,6 +176,42 @@ The actor rolls back and stops if validation KL from BC exceeds `0.05` nats.
 
 Every checkpoint is immutable and contains parent checkpoint ID, optimizer state, seeds, manifest hash, dataset checksum, Git commit, environment versions, and metrics. Later phases warm-start from an accepted v2 checkpoint.
 
+### Full-grid troop placement
+
+**Adopted (owner, November 13, 2026):** new Edger training and comparisons
+use the full-grid action space, with reward v1 and no critic warm-up. Live
+Edger keeps the legacy shortlist until a full-grid candidate passes
+promotion, including the tactical and held-out Fireball gates. Code defaults
+are unchanged, so legacy checkpoints, caches and completed runs still
+reproduce; branch new work with `initialize-full-grid`.
+
+Full-grid v2 actors declare `edger_autoregressive_full_grid_v1`. The engine
+supplies all legal troop tiles, and the placement head adds a learned
+projection of the canonical row and column in [−1, +1] before its activation.
+The projection adds 32 weights. Training, export and inference use the same
+row-major tile indices.
+
+To branch from an existing production-schema checkpoint with the new weights
+initialized to zero, run:
+
+```bash
+python3 scripts/edger-v2-training.py initialize-full-grid \
+  --checkpoint <legacy.pt> --out <full-grid.pt> --model-out <full-grid.json>
+```
+
+Pass the checkpoint and its matching model to `train-arm` or the existing
+league workflow. Collect new games from the expanded actor. Episodes,
+collections, checkpoints and derived Parquet caches identify the action space.
+Production V-trace selects eligible rows with the checkpoint's action space.
+Legacy corpora can still supply behavior-cloning data with their recorded
+masks. Full-grid promotion timing includes action enumeration in the existing
+5 ms p95 limit.
+
+For opted-in player demonstrations, pass `--action-space-version
+edger_autoregressive_full_grid_v1` to `edger:corpus:import`. This lets cache
+preparation retain placements across the player's legal grid. Browser replays
+supply demonstrations with unknown behavior probabilities for both sides.
+
 ### Decision-cadence diagnostic (local only, never promotable)
 
 `scripts/edger-v2-cadence-experiment.mjs` (with `edger-v2-cadence-core.mjs`,

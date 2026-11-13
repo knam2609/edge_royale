@@ -11,6 +11,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 
+import { EDGER_FULL_GRID_ACTION_SPACE_VERSION, EDGER_V2_ACTION_SPACE_VERSION } from "../src/ai/v2/observation.js";
 import { validateEdgerV2PolicyModel } from "../src/ai/v2/policy.js";
 import { createRng } from "../src/sim/random.js";
 import {
@@ -915,8 +916,12 @@ async function collect({
   });
   const started = Date.now();
   const results = await runCadenceSpecs(specs, { workers, onResult: progress(`collect it${iteration} ${cadence}`) });
+  const actionSpaceVersion = JSON.parse(fs.readFileSync(modelPath, "utf8")).action_space_version;
   const collection = {
     schema_version: "edger_v2_cadence_collection_v1",
+    ...(actionSpaceVersion === EDGER_FULL_GRID_ACTION_SPACE_VERSION
+      ? { action_space_version: actionSpaceVersion }
+      : {}),
     iteration,
     cadence,
     reward_version: rewardVersion,
@@ -1323,6 +1328,7 @@ export function cadenceTrainingEpisode({ item, match, model }) {
     events: match.replay.events,
     result: match.replay.result,
     finalStateHash: match.final_state_hash,
+    actionSpaceVersion: model.action_space_version,
     policies: {
       [item.candidate_actor]: {
         policy_id: model.model_id,
@@ -1380,6 +1386,9 @@ export function convertCadenceCollection({ collectionPath, headersDir = null, st
     throw conversionFailure(`collecting model ${collection.model} differs from the collection's recorded SHA-256`, report);
   }
   const model = validateEdgerV2PolicyModel(JSON.parse(fs.readFileSync(collection.model, "utf8")));
+  if ((collection.action_space_version ?? EDGER_V2_ACTION_SPACE_VERSION) !== model.action_space_version) {
+    throw conversionFailure("model and collection action spaces differ", report);
+  }
   const uris = [];
   for (const item of [...collection.episodes].sort((left, right) => left.match_index - right.match_index)) {
     const headerPath = headersDir ? path.join(headersDir, `${item.episode_id}.json`) : item.header;
@@ -1394,6 +1403,9 @@ export function convertCadenceCollection({ collectionPath, headersDir = null, st
       model_sha256: collection.model_sha256,
     };
     const headerProblems = Object.entries(recorded).filter(([key, value]) => header[key] !== value).map(([key]) => key);
+    if ((header.action_space_version ?? EDGER_V2_ACTION_SPACE_VERSION) !== model.action_space_version) {
+      headerProblems.push("action_space_version");
+    }
     if (headerProblems.length > 0) {
       throw conversionFailure(`${item.episode_id}: header disagrees with the collection on ${headerProblems.join(", ")}`, report);
     }

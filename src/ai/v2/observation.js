@@ -7,6 +7,7 @@ import { getSpellStats, getTowerStats } from "../../sim/stats.js";
 // see docs/EDGER_TACTICAL_REVIEW.md proposals 1-2.
 export const EDGER_V2_OBSERVATION_SCHEMA_VERSION = "edger_oracle_observation_v4";
 export const EDGER_V2_ACTION_SPACE_VERSION = "edger_autoregressive_action_v2";
+export const EDGER_FULL_GRID_ACTION_SPACE_VERSION = "edger_autoregressive_full_grid_v1";
 export const EDGER_V2_BOARD_HEIGHT = 32;
 export const EDGER_V2_BOARD_WIDTH = 18;
 export const EDGER_V2_BOARD_CHANNELS = 24;

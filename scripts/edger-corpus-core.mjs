@@ -6,6 +6,7 @@ import { gunzipSync, gzipSync } from "node:zlib";
 
 import {
   EDGER_V2_ACTION_SPACE_VERSION,
+  EDGER_FULL_GRID_ACTION_SPACE_VERSION,
   EDGER_V2_DELAY_BINS,
   buildEdgerV2LegalMasks,
   buildEdgerV2Observation,
@@ -34,13 +35,19 @@ export const EDGER_REWARD_VERSION = "edger_potential_reward_v1";
 // existing episodes, ids and manifest hashes valid. Caches and models carry
 // the current observation schema instead.
 export const EDGER_EPISODE_OBSERVATION_SCHEMA_VERSION = "edger_oracle_observation_v2";
-export const EDGER_COMPATIBILITY_COHORT = [
-  EDGER_RULES_VERSION,
-  EDGER_SIMULATOR_VERSION,
-  REPLAY_SCHEMA_VERSION,
-  EDGER_EPISODE_OBSERVATION_SCHEMA_VERSION,
-  EDGER_V2_ACTION_SPACE_VERSION,
-].join("|");
+function compatibilityCohort(actionSpaceVersion) {
+  if (![EDGER_V2_ACTION_SPACE_VERSION, EDGER_FULL_GRID_ACTION_SPACE_VERSION].includes(actionSpaceVersion)) {
+    throw new Error(`unsupported episode action space ${actionSpaceVersion}`);
+  }
+  return [
+    EDGER_RULES_VERSION,
+    EDGER_SIMULATOR_VERSION,
+    REPLAY_SCHEMA_VERSION,
+    EDGER_EPISODE_OBSERVATION_SCHEMA_VERSION,
+    actionSpaceVersion,
+  ].join("|");
+}
+export const EDGER_COMPATIBILITY_COHORT = compatibilityCohort(EDGER_V2_ACTION_SPACE_VERSION);
 export const DEFAULT_CORPUS_STORE = "artifacts/edger-training/corpus";
 
 const MAX_MATCH_TICKS = MATCH_CONFIG.regulation_ticks + MATCH_CONFIG.overtime_ticks + 40;
@@ -223,6 +230,7 @@ export function createTrainingEpisode({
   policies,
   source,
   decisions = null,
+  actionSpaceVersion = EDGER_V2_ACTION_SPACE_VERSION,
 }) {
   if (!result || !Number.isFinite(result.tick)) {
     throw new Error("complete match result is required");
@@ -238,12 +246,12 @@ export function createTrainingEpisode({
   const episode = {
     schema_version: EDGER_TRAINING_EPISODE_SCHEMA_VERSION,
     compatibility: {
-      cohort: EDGER_COMPATIBILITY_COHORT,
+      cohort: compatibilityCohort(actionSpaceVersion),
       rules_version: EDGER_RULES_VERSION,
       simulator_version: EDGER_SIMULATOR_VERSION,
       replay_schema_version: REPLAY_SCHEMA_VERSION,
       observation_schema_version: EDGER_EPISODE_OBSERVATION_SCHEMA_VERSION,
-      action_space_version: EDGER_V2_ACTION_SPACE_VERSION,
+      action_space_version: actionSpaceVersion,
       reward_version: EDGER_REWARD_VERSION,
     },
     seed,
@@ -279,12 +287,11 @@ function requireObject(value, label) {
 
 function assertCompatibility(episode) {
   const expected = {
-    cohort: EDGER_COMPATIBILITY_COHORT,
+    cohort: compatibilityCohort(episode.compatibility?.action_space_version),
     rules_version: EDGER_RULES_VERSION,
     simulator_version: EDGER_SIMULATOR_VERSION,
     replay_schema_version: REPLAY_SCHEMA_VERSION,
     observation_schema_version: EDGER_EPISODE_OBSERVATION_SCHEMA_VERSION,
-    action_space_version: EDGER_V2_ACTION_SPACE_VERSION,
     reward_version: EDGER_REWARD_VERSION,
   };
   for (const [key, value] of Object.entries(expected)) {
@@ -461,6 +468,7 @@ export function deriveDecisionSequence(episode) {
       const legalActions = enumerateLegalCardActions({
         engine,
         actor: decision.actor,
+        actionSpaceVersion: episode.compatibility.action_space_version,
       });
       if (!isEdgerV2ActionLegal({
         actor: decision.actor,
@@ -545,7 +553,7 @@ export function deriveDecisionSequence(episode) {
   return {
     schema_version: EDGER_DECISION_SEQUENCE_SCHEMA_VERSION,
     episode_id: episode.episode_id,
-    compatibility_cohort: EDGER_COMPATIBILITY_COHORT,
+    compatibility_cohort: episode.compatibility.cohort,
     reward_version: EDGER_REWARD_VERSION,
     per_tick_gamma: PER_TICK_GAMMA,
     samples,
@@ -749,6 +757,11 @@ function addEpisodeStatistics(statistics, episode) {
   statistics.splits[splitForEpisodeId(episode.episode_id)] += 1;
 }
 
+function manifestCohort(shards) {
+  const fullGrid = shards.some((shard) => shard.action_space_version === EDGER_FULL_GRID_ACTION_SPACE_VERSION);
+  return compatibilityCohort(fullGrid ? EDGER_FULL_GRID_ACTION_SPACE_VERSION : EDGER_V2_ACTION_SPACE_VERSION);
+}
+
 export function buildDatasetManifest({
   store = DEFAULT_CORPUS_STORE,
   episodeUris = null,
@@ -773,11 +786,14 @@ export function buildDatasetManifest({
       episode_id: episode.episode_id,
       split: splitForEpisodeId(episode.episode_id),
       source: episode.source.kind,
+      ...(episode.compatibility.action_space_version === EDGER_FULL_GRID_ACTION_SPACE_VERSION
+        ? { action_space_version: EDGER_FULL_GRID_ACTION_SPACE_VERSION }
+        : {}),
     });
   }
   const manifest = {
     schema_version: EDGER_DATASET_MANIFEST_SCHEMA_VERSION,
-    compatibility_cohort: EDGER_COMPATIBILITY_COHORT,
+    compatibility_cohort: manifestCohort(shards),
     split_policy: "sha256_episode_id_mod_100_v1",
     split_ranges: {
       train: "0-79",
@@ -828,7 +844,7 @@ export function mergeDatasetManifests(manifests) {
   shards.sort((left, right) => left.episode_id.localeCompare(right.episode_id));
   const merged = {
     schema_version: EDGER_DATASET_MANIFEST_SCHEMA_VERSION,
-    compatibility_cohort: EDGER_COMPATIBILITY_COHORT,
+    compatibility_cohort: manifestCohort(shards),
     split_policy: "sha256_episode_id_mod_100_v1",
     split_ranges: {
       train: "0-79",
@@ -847,14 +863,15 @@ export function validateDatasetManifest(manifest) {
   if (manifest.schema_version !== EDGER_DATASET_MANIFEST_SCHEMA_VERSION) {
     throw new Error(`manifest schema_version must be ${EDGER_DATASET_MANIFEST_SCHEMA_VERSION}`);
   }
-  if (manifest.compatibility_cohort !== EDGER_COMPATIBILITY_COHORT) {
-    throw new Error("manifest compatibility cohort mismatch");
-  }
   if (!Array.isArray(manifest.shards)) {
     throw new Error("manifest.shards must be an array");
   }
+  if (manifest.compatibility_cohort !== manifestCohort(manifest.shards)) {
+    throw new Error("manifest compatibility cohort mismatch");
+  }
   const ids = new Set();
   for (const shard of manifest.shards) {
+    compatibilityCohort(shard.action_space_version ?? EDGER_V2_ACTION_SPACE_VERSION);
     if (ids.has(shard.episode_id)) {
       throw new Error(`duplicate episode ${shard.episode_id} in manifest`);
     }

@@ -189,7 +189,7 @@ export function timedCall({ pathId, model, engine, actor, controller, tick, hook
   if (observed) {
     hook("begin");
   }
-  const legalActions = enumerateLegalCardActions({ engine, actor });
+  const legalActions = enumerateLegalCardActions({ engine, actor, model });
   const enumerated = now();
   if (observed) {
     hook("enumerate");

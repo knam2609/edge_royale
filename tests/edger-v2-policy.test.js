@@ -6,6 +6,7 @@ import fs from "node:fs";
 import { HEURISTIC_BOT_ID, enumerateLegalCardActions } from "../src/ai/botRuntime.js";
 import { DEFAULT_DECK } from "../src/sim/cards.js";
 import {
+  EDGER_FULL_GRID_ACTION_SPACE_VERSION,
   EDGER_V2_BOARD_CHANNELS,
   EDGER_V2_BOARD_HEIGHT,
   EDGER_V2_BOARD_WIDTH,
@@ -23,6 +24,7 @@ import {
   selectEdgerV2PolicyDecision,
   validateEdgerV2PolicyModel,
 } from "../src/ai/v2/policy.js";
+import { getTroopPlacementStatus } from "../src/sim/placement.js";
 import { createTroop } from "../src/sim/entities.js";
 import { createProductionEngine } from "../src/sim/productionMatch.js";
 import { buildCandidateParityFixtures } from "../scripts/edger-v2-evaluation-core.mjs";
@@ -184,6 +186,40 @@ test("v2 bootstrap inference respects masks and is deterministic", () => {
   });
   assert.deepEqual(decision.action, { type: "PASS" });
   assert.equal(decision.delayTicks, 200);
+});
+
+test("full-grid troop actions match player placement for both sides and unlocked pockets", () => {
+  const hand = DEFAULT_DECK.slice(0, 4);
+  const cards = { hand, draw_pile: DEFAULT_DECK.slice(4) };
+  const model = { action_space_version: EDGER_FULL_GRID_ACTION_SPACE_VERSION };
+  for (const actor of ["red", "blue"]) {
+    for (const destroyed of [0, 1, 2]) {
+      const engine = createProductionEngine({ initialCardState: { red: cards, blue: cards } });
+      const { arena, entities } = engine.state;
+      const enemyCrowns = entities.filter((entity) =>
+        entity.team !== actor && entity.entity_type === "tower" && entity.tower_role === "crown");
+      for (const tower of enemyCrowns.slice(0, destroyed)) tower.hp = 0;
+
+      const actions = enumerateLegalCardActions({ engine, actor, model })
+        .filter((action) => action.cardId === "giant");
+      const expected = [];
+      for (let y = 0.5; y < 32; y += 1) {
+        for (let x = 0.5; x < 18; x += 1) {
+          if (getTroopPlacementStatus({ arena, entities, actor, position: { x, y } }).ok) {
+            expected.push(`${x},${y}`);
+          }
+        }
+      }
+      assert.deepEqual(actions.map(({ x, y }) => `${x},${y}`).sort(), expected.sort());
+      if (destroyed === 0) {
+        assert.equal(actions.length, 236);
+        assert.equal(enumerateLegalCardActions({ engine, actor })
+          .filter((action) => action.cardId === "giant").length, 4);
+      } else {
+        assert.ok(actions.length > 236);
+      }
+    }
+  }
 });
 
 function seededModel() {

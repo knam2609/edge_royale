@@ -1,10 +1,11 @@
 import { ARROWS_CONFIG, FIREBALL_CONFIG, getMatchPhase } from "../sim/config.js";
 import { getCard } from "../sim/cards.js";
 import { snapPositionToGrid } from "../sim/map.js";
-import { buildTroopPlacementCandidates, getTroopPlacementStatus } from "../sim/placement.js";
+import { buildTroopPlacementCandidates, getTroopDeployRegions, getTroopPlacementStatus } from "../sim/placement.js";
 import { ACTION_SPACE_VERSION, PASS_ACTION, actionSortKey, appendPassAction, isPassAction } from "./actionSpace.js";
 import { EDGER_POLICY_MODEL } from "./generated/edgerPolicyCurrent.js";
 import { selectMlPolicyAction } from "./mlPolicy.js";
+import { EDGER_FULL_GRID_ACTION_SPACE_VERSION } from "./v2/observation.js";
 import { getSpellDamageAgainstTarget } from "./spellHeuristics.js";
 import {
   EDGER_V2_POLICY_MODEL_SCHEMA_VERSION,
@@ -136,7 +137,7 @@ const SPELL_THRESHOLD = Object.freeze({
 });
 
 const EPSILON = 1e-9;
-const SPELL_TARGET_CACHE = new WeakMap();
+const ARENA_TILE_CACHE = new WeakMap();
 
 function getTeam(actor) {
   return actor === "red" ? { own: "red", enemy: "blue" } : { own: "blue", enemy: "red" };
@@ -184,9 +185,9 @@ function buildTroopPlacements(state, actor) {
   });
 }
 
-function buildFullArenaSpellTargets(state) {
+function buildArenaTileCenters(state) {
   const { arena } = state;
-  const cached = SPELL_TARGET_CACHE.get(arena);
+  const cached = ARENA_TILE_CACHE.get(arena);
   if (cached) {
     return cached;
   }
@@ -216,7 +217,7 @@ function buildFullArenaSpellTargets(state) {
   }
 
   const targets = result.sort((a, b) => (a.x !== b.x ? a.x - b.x : a.y - b.y));
-  SPELL_TARGET_CACHE.set(arena, targets);
+  ARENA_TILE_CACHE.set(arena, targets);
   return targets;
 }
 
@@ -240,10 +241,13 @@ function cardCost(action) {
   return getCard(action.cardId)?.cost ?? 0;
 }
 
-export function enumerateLegalCardActions({ engine, actor = "red" }) {
+export function enumerateLegalCardActions({
+  engine, actor = "red", model, actionSpaceVersion = model?.action_space_version,
+}) {
   const hand = engine.getHand(actor);
   const elixir = engine.state.elixir[actor]?.elixir ?? 0;
   const actions = [];
+  let troopPlacements;
 
   for (const cardId of hand) {
     const card = getCard(cardId);
@@ -252,16 +256,25 @@ export function enumerateLegalCardActions({ engine, actor = "red" }) {
     }
 
     if (card.type === "troop") {
-      for (const placement of buildTroopPlacements(engine.state, actor)) {
-        if (!isLegalTroopPlacement(actor, engine.state, placement)) {
-          continue;
+      if (!troopPlacements) {
+        if (actionSpaceVersion === EDGER_FULL_GRID_ACTION_SPACE_VERSION) {
+          const { arena, entities } = engine.state;
+          const towers = entities.filter((entity) => entity.entity_type === "tower");
+          const regions = getTroopDeployRegions({ arena, entities: towers, actor });
+          troopPlacements = buildArenaTileCenters(engine.state).filter((position) =>
+            getTroopPlacementStatus({ arena, entities: towers, actor, position, regions }).ok);
+        } else {
+          troopPlacements = buildTroopPlacements(engine.state, actor).filter((placement) =>
+            isLegalTroopPlacement(actor, engine.state, placement));
         }
+      }
+      for (const placement of troopPlacements) {
         actions.push({ type: "PLAY_CARD", cardId, x: placement.x, y: placement.y });
       }
       continue;
     }
 
-    for (const target of buildFullArenaSpellTargets(engine.state)) {
+    for (const target of buildArenaTileCenters(engine.state)) {
       actions.push({ type: "PLAY_CARD", cardId, x: target.x, y: target.y });
     }
   }
@@ -863,7 +876,10 @@ export function selectBotDecision({
       model: edgerModel,
       engine,
       actor,
-      legalActions,
+      // Gameplay callers may have enumerated the legacy shortlist.
+      legalActions: edgerModel.action_space_version === EDGER_FULL_GRID_ACTION_SPACE_VERSION
+        ? enumerateLegalCardActions({ engine, actor, model: edgerModel })
+        : legalActions,
     });
   }
 

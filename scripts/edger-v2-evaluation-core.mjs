@@ -397,7 +397,7 @@ export function edgerV2ParityTolerance(jsValue, pytorchValue) {
 }
 
 function parityFixturesFor(model, engine, stateId) {
-  const legalActions = enumerateLegalCardActions({ engine, actor: "red" });
+  const legalActions = enumerateLegalCardActions({ engine, actor: "red", model });
   const observation = buildEdgerV2Observation({ engine, actor: "red" });
   const cardMask = buildEdgerV2LegalMasks({ actor: "red", legalActions }).card;
   const fixtures = [];
@@ -460,7 +460,7 @@ export function buildCandidateParityFixtures(model, { seeds = EDGER_V2_PARITY_SE
       const tick = engine.state.tick + 1;
       const actions = [];
       if (tick >= candidateNextTick) {
-        const legalActions = enumerateLegalCardActions({ engine, actor: "red" });
+        const legalActions = enumerateLegalCardActions({ engine, actor: "red", model });
         const decision = selectEdgerV2PolicyDecision({ model, engine, actor: "red", legalActions });
         if (legalActions.length > 0 && tick - lastCaptureTick >= PARITY_STATE_STRIDE_TICKS) {
           fixtures.push(...parityFixturesFor(model, engine, `seed${seed}-tick${tick}`));

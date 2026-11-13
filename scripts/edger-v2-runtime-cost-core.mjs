@@ -492,8 +492,8 @@ export function checkBankEquivalence({ bank, models }) {
       continue;
     }
     for (const actor of EDGER_V2_ACTORS) {
-      const legalActions = enumerateLegalCardActions({ engine, actor });
       for (const [run, model] of Object.entries(models)) {
+        const legalActions = enumerateLegalCardActions({ engine, actor, model });
         for (const controller of EDGER_V2_CONTROLLER_LIST) {
           const reference = decideEdgerV2WithCadence({
             model, engine, actor, legalActions, cadence: controller,
@@ -583,8 +583,8 @@ export function buildNodeExpectations({
     const source = sources.get(state.source_id);
     const engine = rebuildEngineAt({ seed: source.seed, actions: source.actions, tick: state.tick });
     for (const actor of EDGER_V2_ACTORS) {
-      const legalActions = enumerateLegalCardActions({ engine, actor });
       for (const [run, model] of Object.entries(models)) {
+        const legalActions = enumerateLegalCardActions({ engine, actor, model });
         for (const controller of EDGER_V2_CONTROLLER_LIST) {
           const reference = decideEdgerV2WithCadence({
             model, engine, actor, legalActions, cadence: controller,

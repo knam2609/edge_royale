@@ -4,16 +4,20 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { enumerateLegalCardActions } from "../src/ai/botRuntime.js";
+import { enumerateLegalCardActions, selectBotDecision } from "../src/ai/botRuntime.js";
 import {
+  EDGER_FULL_GRID_ACTION_SPACE_VERSION,
+  EDGER_V2_CARD_ACTIONS,
   buildEdgerV2LegalMasks,
   buildEdgerV2Observation,
 } from "../src/ai/v2/observation.js";
 import {
   computeEdgerV2Logits,
   createEdgerV2BootstrapModel,
+  selectEdgerV2PolicyDecision,
   validateEdgerV2PolicyModel,
 } from "../src/ai/v2/policy.js";
+import { DEFAULT_DECK } from "../src/sim/cards.js";
 import { createProductionEngine } from "../src/sim/productionMatch.js";
 import {
   EDGER_V2_PARITY_TOLERANCE,
@@ -135,6 +139,41 @@ test("PyTorch and generated-JS v2 logits agree on a golden fixture", { timeout: 
     ],
   );
   fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("learned full-grid coordinates rank new placements in JavaScript and PyTorch", {
+  timeout: 30_000,
+}, (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "edger-full-grid-parity-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const model = createEdgerV2BootstrapModel();
+  model.action_space_version = EDGER_FULL_GRID_ACTION_SPACE_VERSION;
+  model.weights.placement_coordinates = new Array(32).fill(0);
+  model.weights.placement_coordinates[0] = 1;
+  model.weights.placement_coordinates[1] = -0.25;
+  model.weights.placement_context.bias[0] = 2;
+  model.weights.placement_scorer.weights[0] = 1;
+  model.weights.card_head.bias[EDGER_V2_CARD_ACTIONS.indexOf("giant")] = 10;
+  const hand = DEFAULT_DECK.slice(0, 4);
+  const cards = { hand, draw_pile: DEFAULT_DECK.slice(4) };
+  for (const [actor, x, y] of [["red", 0.5, 14.5], ["blue", 17.5, 17.5]]) {
+    const engine = createProductionEngine({ initialCardState: { red: cards, blue: cards } });
+    const legalActions = enumerateLegalCardActions({ engine, actor, model });
+    const { action } = selectEdgerV2PolicyDecision({ engine, actor, model, legalActions });
+    assert.deepEqual(action, { type: "PLAY_CARD", cardId: "giant", x, y });
+    const gameplay = selectBotDecision({
+      engine, actor, edgerModel: model, legalActions: enumerateLegalCardActions({ engine, actor }),
+    });
+    assert.deepEqual(gameplay.action, action);
+    engine.step([{ ...action, actor, tick: 1 }]);
+    assert.equal(engine.state.replay.actions.length, 1);
+  }
+
+  const modelPath = path.join(root, "model.json");
+  fs.writeFileSync(modelPath, JSON.stringify(model));
+  const parity = checkCandidateParity(modelPath, model);
+  assert.equal(parity.passed, true, JSON.stringify(parity));
+  assert.equal(parity.tie_set_agreement, true);
 });
 
 test("candidate parity compares computed argmax when the forced fixture card is not best", {

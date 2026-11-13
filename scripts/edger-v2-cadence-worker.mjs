@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { EDGER_FULL_GRID_ACTION_SPACE_VERSION } from "../src/ai/v2/observation.js";
 import os from "node:os";
 import path from "node:path";
 import { parentPort } from "node:worker_threads";
@@ -24,10 +25,11 @@ function loadModel(modelPath) {
 
 export function runCadenceSpec(spec) {
   const wallStarted = performance.now();
+  const model = loadModel(spec.model_path);
   const match = runEdgerV2CadenceMatch({
     seed: spec.seed,
     candidateActor: spec.candidate_actor,
-    model: loadModel(spec.model_path),
+    model,
     cadence: spec.cadence,
     opponentBotId: spec.opponent,
     mode: spec.kind === "collect" ? "sample" : "deterministic",
@@ -55,6 +57,9 @@ export function runCadenceSpec(spec) {
         mode: "sample",
         sampling_temperature: 1,
         model_sha256: spec.model_sha256,
+        ...(model.action_space_version === EDGER_FULL_GRID_ACTION_SPACE_VERSION
+          ? { action_space_version: model.action_space_version }
+          : {}),
         result: { tick: match.tick, winner: match.winner, reason: match.reason, score: match.score },
       },
     });

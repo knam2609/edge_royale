@@ -1503,7 +1503,10 @@ required scores were present, and all 13 contrasts were labelled.
 ### Fifth comparison: reward v2 against v1
 
 **Status: proposed November 11, 2026, and approved by the owner the same day
-with revisions (below). Not yet frozen; nothing has run.** This is the
+with revisions (below). The code checkpoint is `7101186`. The run was frozen,
+run and analyzed the same day in `~/edge_royale-runs/20261111-reward-v2.noindex`
+([results](#fifth-comparison-reward-v2-against-v1), at the end of this
+section): direction unresolved, so v1 is kept.** This is the
 comparison the reward work leads to
 ([remaining steps](EDGER_REWARD.md#remaining-steps-before-v2-trains)). The
 outcome branches are fixed here, before any output. The league opponent mix
@@ -1648,6 +1651,155 @@ lower spreads.
 - Verify the parent copies, the regenerated plans and the seed disjointness.
 - Dry-run `analyze.py` on synthetic inputs built from `SS` and `PR` files. Cover the carried-forward, kept-v1 (mean below 0.05), blocked, incomplete and instrument-failure paths.
 - Hash `plan.md`, `run.sh`, `analyze.py` and every other frozen script into `FROZEN.txt` before any output.
+
+**Results (November 11, 2026).** Frozen analysis in `RV` =
+`~/edge_royale-runs/20261111-reward-v2.noindex` (`analysis.md`,
+`analysis.json`; `RV/SHA256SUMS` covers the run).
+
+- **Run.**
+  - Clone `7101186`, frozen at 05:26:43Z (`FROZEN.txt`, 66 files). It ran from 05:26:56Z to 09:41:29Z (4 h 15 min) with one launch, each parent's two arms side by side.
+  - All 492 steps succeeded on the first attempt; nothing was retried, capped or stopped.
+  - All 204 built-in checks passed:
+    - 108 game-identity and `SS`-reproduction checks. A1's iteration-0 games equal `SS`'s A′ games for every parent;
+    - 72 re-evaluations equal to `SS` game by game;
+    - 24 actor-identity checks.
+  - No child was engineering-invalid, no score was missing, and parity passed for all 24 children.
+- **Preflight** (`RV/plan.md`).
+  - The smoke's held-out critic gate passed: on the v2 returns, the warmed v2 critic's MSE was 0.432 against the parent's 0.447.
+  - `plan.md` also records the choices it adds to this text. Example: a re-evaluation that differs from `SS` is an instrument failure.
+- **Primary:** d_2 = A2 − A1 = **+0.036, 95% t interval [−0.004, +0.076]** (SD 0.063, n = 12).
+  - Labels: **direction unresolved**, **size unresolved**. A2 was above A1 in 8 of 12 pairs; median +0.026, range −0.082 to +0.148.
+  - **Decision (frozen): v1 is kept for the league opponent mix design, without a warm-up; v2 stays opt-in.**
+- **Secondary** (pre-registered; no labels):
+  - gain over the parent: A1 +0.226 [+0.180, +0.271], A2 +0.262 [+0.227, +0.297];
+  - warm-up effect under v1, w = A1 − A′: −0.019 [−0.043, +0.004];
+  - d_2 after iteration 5: +0.038 [−0.007, +0.084];
+  - per opponent: live v1 +0.045 [−0.014, +0.105], heuristic +0.044 [+0.008, +0.079], aggressive +0.019 [−0.020, +0.059]. These three intervals are unadjusted.
+- **Critic diagnostic** (read-only, means over parents; MSE / mean residual / residual variance):
+  - On the held-out RL iteration-0 games, the warmed critics did worse than the parent's.
+    - Against v2 returns: parent 0.549 / −0.045 / 0.539; warmed v2 0.615 / +0.277 / 0.525.
+    - Against v1 returns: parent 0.560 / −0.045 / 0.550; warmed v1 0.629 / +0.280 / 0.537.
+    - Each warmed critic's MSE was below the parent's in only 3 of 12 parents.
+  - The warm-ups lowered residual variance slightly but added a bias of about +0.28, so they underpredicted held-out returns.
+  - On its own 256 warm-up games, the parent's critic had mean residual −0.026. Its explained variance against those returns was about 0 (−0.02 for v1, −0.18 for v2 at warm-up iteration 0).
+  - The warm-up's error before each update rose across its four iterations (median MSE 0.58 at iteration 0, 0.66 over iterations 0–3, under v1).
+  - The smoke, on one non-comparison parent, did not show this.
+  - Both arms used the same warm-up procedure, so d_2 still compares the two rewards under matched conditions. But the warm-up did not deliver the critic tracking the design relied on for v2's first channel.
+- **Critic fit in RL** (learner metrics, medians):
+  - MSE against returns: A2 0.764, A1 0.720.
+  - Explained variance against V-trace targets: A2 0.272, A1 0.317.
+  - Importance ratios below 0.5: about 0.10 in both arms.
+- **Playstyle** (descriptive): A2's children played differently from A1's:
+  - they kept more material and threat at 60 s, closer to the parent (M +1.42 against +1.07, T +0.60 against +0.37; parent +1.58 and +0.74);
+  - they made fewer decisions per game (243 against 357), with higher delay entropy (1.19 against 0.86) and fewer 1-tick delays (0.002 against 0.070);
+  - they played fewer Giants into an affordable answer (0.57 against 0.70), and had a lower strong-counter share (0.17 against 0.21).
+  - No child reached the 0.9 1-tick threshold. Wasted elixir averaged 0.000 per minute in both arms, against the parent's 0.222.
+  - Held-out Fireball capture was 0 for every child, as for `SS`'s A′.
+- **What it does not show.**
+  - The unresolved direction does not show that v2's terms carry no learning value: the interval reaches +0.076, and the design's power at a true 0.05 was about 0.38.
+  - It does not retract v2's measured winner prediction.
+  - Under the comparison rule, no extension or follow-up is chosen from this output. Any further use of v2, or of a critic warm-up, needs its own owner decision and design.
+
+### Sixth comparison: full-grid troop placement
+
+**Status: run November 12, 2026 without a design reviewed in advance; the
+owner approved it after the fact on November 13, 2026, and adopted full-grid
+placement for training the same day** (after the seventh comparison below).
+Its plan, runner and analysis were frozen in the run directory before any
+comparison games.
+
+November 12, 2026. The control used the four-cell shortlist. The full-grid
+arm scored all engine-legal tiles for the chosen troop and learned a
+32-weight coordinate projection in its placement head. The two arms used
+the same 12 starting policies, reward v1, no critic warm-up and 384 games
+and updates per child. Rollouts refreshed every 64 games. The code snapshot,
+inputs, analysis and plan were frozen before the comparison in
+`~/edge_royale-runs/20261112-full-grid.noindex/`.
+
+- **Match results.** The equal-weight mean against live Edger, the heuristic
+  and aggressive was 0.754 for the control and 0.796 for full-grid. The mean
+  paired gain was **+0.041**, with a 95% t interval of **[−0.011, +0.093]**.
+  Full-grid led in 8/12 pairs. The median gain was +0.013. Direction and size
+  remain unresolved. The largest descriptive gain was against live Edger
+  (+0.108).
+- **Placement diagnostics.** Exact ties for best placement appeared in
+  207/250 control troop fixtures and 0/243 full-grid troop fixtures. Those
+  fixtures include states reached by each model. On shared held-out
+  scenarios, both arms averaged 1.000 for defense. Full-grid hit 50/96 support
+  positions and the control hit 33/96 under the geometric support check.
+- **Run and compatibility.** All 24 children completed, passed
+  JavaScript/PyTorch parity and passed the sampled legality and repeatability
+  checks. All 12 control actors reproduced the earlier freshness run's
+  final weights. The frozen comparison finished in 27 min 5 s.
+- **Promotion preflight.** On this host all 12 full-grid children met the
+  5 ms p95 timing limit, at 0.874–1.289 ms including action enumeration.
+  All 12 failed the tactical and held-out Fireball gates. Each captured
+  zero opportunities in the Fireball bank. The diagnostic children stopped
+  at preflight. Reports are in `promotion-preflight/` under the run directory.
+
+### Seventh comparison: reward v2 against v1 under full-grid placement
+
+**Status: requested by the owner on November 13, 2026, then frozen, run and
+analyzed the same day** in `FV` =
+`~/edge_royale-runs/20261113-full-grid-reward.noindex/` (`plan.md`, `run.py`,
+`analysis.json`, `posthoc.md`, `README.md`, `SHA256SUMS`). The fifth
+comparison tested v2 only on the four-cell shortlist, where most tank-support
+positions were out of reach. This comparison asks whether v2 helps once every
+legal troop tile is available.
+
+- **Design (frozen before output).**
+  - F1 is the sixth comparison's full-grid arm, unchanged. F2 differs only in
+    `--reward edger_potential_reward_v2`.
+  - Both use the 12 `FR` parents r6–r17 and the sixth's 36 inputs, byte for
+    byte. Training is learned cadence, 384 games and updates (six refreshes of
+    32 mirrored pairs), Adam 0.001 and torch seed 20260926, with no critic
+    warm-up. Source is `7101186` plus the uncommitted full-grid working tree.
+  - The evaluation is the sixth's: 50 development pairs against each of live
+    Edger, the heuristic and aggressive, scored by the equal-weight mean.
+  - Primary: d = F2 − F1, with a 95% t interval over 12 parents. Labels set
+    direction against 0 and size against ±0.05.
+  - **Rule:** v2 becomes the full-grid reward only if the interval is above 0
+    and the mean is at least 0.05. Otherwise v1 stays.
+  - Planning SDs of 0.072–0.082 gave about 0.5–0.6 power to resolve
+    direction at a true +0.05.
+- **Run.** Frozen at 14:16:32Z (129 files). The run took 14:16:36Z–14:44:18Z
+  in one launch with no failures, and `FROZEN.txt` verifies after it. All 24
+  children completed without a collapse or non-finite stop. Every child
+  passed parity, and each parent's two arms played identical iteration-0
+  games (64/64 action-stream and final-state hashes).
+- **Primary:** d = F2 − F1 = **+0.056, 95% t interval [−0.027, +0.138]**
+  (SD 0.130, n = 12).
+  - Labels: **direction unresolved**, **size unresolved**. F2 was above F1 in
+    8 of 12 pairs. The median was +0.075, with a range of −0.187 (r16) to
+    +0.273 (r10).
+  - **Decision (frozen): v1 stays the full-grid reward.**
+  - The spread was about 1.6–1.8 times the planning SDs, so the interval is
+    wider than planned.
+- **Secondary** (no labels; per-opponent intervals unadjusted):
+  - arm means: F1 0.796, F2 0.851;
+  - per opponent: live Edger +0.065 [−0.051, +0.181], heuristic +0.063
+    [−0.037, +0.163], aggressive +0.039 [−0.011, +0.089];
+  - geometric support hits: F1 50/96, F2 66/96. Placement ties were 0 in
+    both arms (243 and 229 fixtures), and defense was 1.000 in both;
+  - timing p95 was 1.12–2.94 ms. The current `evaluateTiming` includes
+    full-grid enumeration, and two children were timed at once on the host;
+  - playstyle at 60 s, means over opponents: F2 kept more material (1.75
+    against 1.47) and threat (0.76 against 0.60). The support term was near 0
+    in both (0.024). F2 made more decisions per game (138 against 97) and
+    fewer Giant plays (0.49 against 0.74).
+- **F1 reproduction.** The frozen byte-identity check reported 0/12. That is
+  because `model_id`, `checkpoint_id` and `dataset_checksum` embed the arm
+  name. After the output, a comparison of `weights` found all 12 F1 models
+  identical to the sixth's full-grid children. All 12 F1 per-opponent scores
+  also equal the sixth's (`posthoc.md`).
+- **What it does not show.**
+  - The unresolved direction does not show that v2 has no value under
+    full-grid; the interval reaches +0.138.
+  - The near-zero support term at 60 s means this run barely exercised v2's
+    tank-support channel. The children play Giant less than once per game, so the gain in
+    support hits is not evidence that S worked.
+  - Under the comparison rule, no extension or follow-up is chosen from this
+    output.
 
 ## Limits
 

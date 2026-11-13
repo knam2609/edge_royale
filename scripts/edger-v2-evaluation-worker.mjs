@@ -54,11 +54,11 @@ function maybePolicyAction({
   if (tick < policyController.next_decision_tick) {
     return { action: null, illegal: 0 };
   }
-  const legalActions = enumerateLegalCardActions({ engine, actor });
+  const model = policy.kind === "model" ? loadModel(policy.model_path) : undefined;
+  const legalActions = enumerateLegalCardActions({ engine, actor, model });
   let selected;
   let delayTicks;
-  if (policy.kind === "model") {
-    const model = loadModel(policy.model_path);
+  if (model) {
     if (model.schema_version === EDGER_V2_POLICY_MODEL_SCHEMA_VERSION) {
       const decision = selectEdgerV2PolicyDecision({
         model,

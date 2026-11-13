@@ -29,6 +29,8 @@ from torch.utils.data import DataLoader, Dataset
 MODEL_SCHEMA = "edger_policy_model_v2"
 CHECKPOINT_SCHEMA = "edger_v2_checkpoint_v1"
 ACTION_SCHEMA = "edger_autoregressive_action_v2"
+FULL_GRID_ACTION_SCHEMA = "edger_autoregressive_full_grid_v1"
+ACTION_SCHEMAS = (ACTION_SCHEMA, FULL_GRID_ACTION_SCHEMA)
 OBSERVATION_SCHEMA = "edger_oracle_observation_v4"
 ARCHITECTURE = {
     "type": "autoregressive_masked_conv_actor",
@@ -208,8 +210,11 @@ def float32_json(value: float) -> float:
 
 
 class EdgerV2Policy(nn.Module):
-    def __init__(self, opponent_strata: int = 1) -> None:
+    def __init__(self, opponent_strata: int = 1, action_space_version: str = ACTION_SCHEMA) -> None:
         super().__init__()
+        if action_space_version not in ACTION_SCHEMAS:
+            raise ValueError(f"unsupported action space {action_space_version}")
+        self.action_space_version = action_space_version
         channels = ARCHITECTURE["board_channels"]
         self.conv1 = nn.Conv2d(BOARD_INPUT_CHANNELS, channels, 3, padding=1)
         self.conv2 = nn.Conv2d(channels, channels, 1)
@@ -244,6 +249,16 @@ class EdgerV2Policy(nn.Module):
             1,
         )
 
+        self.placement_coordinates = None
+        if action_space_version == FULL_GRID_ACTION_SCHEMA:
+            self.placement_coordinates = nn.Parameter(torch.zeros(ARCHITECTURE["placement_hidden"], 2))
+            coordinates = [
+                (2 * row / (BOARD_HEIGHT - 1) - 1, 2 * column / (BOARD_WIDTH - 1) - 1)
+                for row in range(BOARD_HEIGHT)
+                for column in range(BOARD_WIDTH)
+            ]
+            self.register_buffer("tile_coordinates", torch.tensor(coordinates), persistent=False)
+
     def encode(self, board: Tensor, global_features: Tensor) -> tuple[Tensor, Tensor]:
         spatial = board.permute(0, 3, 1, 2)
         spatial = F.relu(self.conv1(spatial))
@@ -270,9 +285,12 @@ class EdgerV2Policy(nn.Module):
             PLACEMENTS,
             ARCHITECTURE["board_channels"],
         )
-        placement_hidden = F.relu(
-            spatial_cells + placement_context[:, None, :] + card_embedding[:, None, :]
-        )
+        placement_features = spatial_cells + placement_context[:, None, :] + card_embedding[:, None, :]
+        if self.placement_coordinates is not None:
+            placement_features = placement_features + F.linear(
+                self.tile_coordinates, self.placement_coordinates
+            )[None, :, :]
+        placement_hidden = F.relu(placement_features)
         placement_logits = self.placement_scorer(placement_hidden).squeeze(-1)
         batch_indices = torch.arange(board.shape[0], device=board.device)
         selected_spatial = spatial_cells[batch_indices, selected_placement]
@@ -849,6 +867,7 @@ def checkpoint_payload(
     checkpoint_id = f"edger_v2_{phase}_{sha256_bytes(canonical_json(checkpoint_id_content).encode())[:16]}"
     return {
         "schema_version": CHECKPOINT_SCHEMA,
+        **({"action_space_version": model.action_space_version} if model.action_space_version != ACTION_SCHEMA else {}),
         "checkpoint_id": checkpoint_id,
         "phase": phase,
         "architecture": ARCHITECTURE,
@@ -878,9 +897,39 @@ def load_checkpoint(path: str | Path, device: torch.device) -> tuple[dict[str, A
     if payload.get("schema_version") != CHECKPOINT_SCHEMA:
         raise ValueError(f"unsupported checkpoint schema {payload.get('schema_version')}")
     vocab = payload["opponent_stratum_vocabulary"]
-    model = EdgerV2Policy(max(1, len(vocab))).to(device)
+    model = EdgerV2Policy(max(1, len(vocab)), payload.get("action_space_version", ACTION_SCHEMA)).to(device)
     model.load_state_dict(payload["model_state"])
     return payload, model
+
+
+def initialize_full_grid(args: argparse.Namespace) -> None:
+    device = torch.device("cpu")
+    parent, legacy = load_checkpoint(args.checkpoint, device)
+    if legacy.action_space_version != ACTION_SCHEMA:
+        raise ValueError("full-grid initialization needs a legacy checkpoint")
+    model = EdgerV2Policy(max(1, len(parent["opponent_stratum_vocabulary"])), FULL_GRID_ACTION_SCHEMA)
+    state = legacy.state_dict()
+    state["placement_coordinates"] = torch.zeros_like(model.placement_coordinates)
+    model.load_state_dict(state)
+    checkpoint = checkpoint_payload(
+        model=model,
+        optimizer=torch.optim.Adam(model.parameters()),
+        phase="full_grid_initialization",
+        seed=parent["seed"],
+        manifest_hash=parent["manifest_hash"],
+        dataset_checksum=parent["dataset_checksum"],
+        parent_checkpoint=parent["checkpoint_id"],
+        vocab=parent["opponent_stratum_vocabulary"],
+        metrics={"source_checkpoint_sha256": sha256_file(args.checkpoint)},
+    )
+    payload = export_model_payload(checkpoint, model, None)
+    model_out = Path(args.model_out)
+    if model_out.exists():
+        raise FileExistsError(f"model artifact already exists: {model_out}")
+    save_checkpoint(args.out, checkpoint)
+    model_out.parent.mkdir(parents=True, exist_ok=True)
+    with model_out.open("x") as output:
+        output.write(json.dumps(payload, sort_keys=True, indent=2) + "\n")
 
 
 def winner_finetune_predicate(
@@ -963,7 +1012,7 @@ def run_bc(args: argparse.Namespace) -> None:
         raise ValueError("BC dataset has no training rows")
     vocab = make_parquet_stratum_vocab(args.dataset)
     device = torch.device(args.device)
-    model = EdgerV2Policy(max(1, len(vocab))).to(device)
+    model = EdgerV2Policy(max(1, len(vocab)), metadata.get("action_space_version", ACTION_SCHEMA)).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
 
     for epoch in range(args.epochs):
@@ -1079,6 +1128,8 @@ def run_offline(args: argparse.Namespace) -> None:
 
     metadata = parquet_metadata(args.dataset)
     require_cache_observation_schema(metadata, args.dataset)
+    if metadata.get("action_space_version", ACTION_SCHEMA) != model.action_space_version:
+        raise ValueError("cache and checkpoint action spaces differ")
     train_samples = count_parquet_rows(args.dataset, split="train")
     validation_samples = count_parquet_rows(args.dataset, split="validation")
     vocab = parent["opponent_stratum_vocabulary"]
@@ -1249,7 +1300,9 @@ def attach_vtrace_targets(
     return eligible
 
 
-def iter_vtrace_episodes(path: str | Path) -> Iterator[list[dict[str, Any]]]:
+def iter_vtrace_episodes(
+    path: str | Path, action_space_version: str = ACTION_SCHEMA
+) -> Iterator[list[dict[str, Any]]]:
     current_episode_id: str | None = None
     current_rows: list[dict[str, Any]] = []
     completed: set[str] = set()
@@ -1267,7 +1320,12 @@ def iter_vtrace_episodes(path: str | Path) -> Iterator[list[dict[str, Any]]]:
                 )
             current_episode_id = episode_id
             current_rows = []
-        if row.get("vtrace_eligible") and row.get("behavior_log_probability") is not None:
+        row_action_space = (row.get("compatibility_cohort") or ACTION_SCHEMA).rsplit("|", 1)[-1]
+        if (
+            row_action_space == action_space_version
+            and row.get("vtrace_eligible")
+            and row.get("behavior_log_probability") is not None
+        ):
             current_rows.append(row)
     if current_rows:
         yield current_rows
@@ -1359,6 +1417,8 @@ def run_vtrace(args: argparse.Namespace) -> None:
     parent, model = load_checkpoint(args.checkpoint, device)
     metadata = parquet_metadata(args.dataset)
     require_cache_observation_schema(metadata, args.dataset)
+    if metadata.get("action_space_version", ACTION_SCHEMA) != model.action_space_version:
+        raise ValueError("cache and checkpoint action spaces differ")
     vocab = parent["opponent_stratum_vocabulary"]
     validation_samples = count_parquet_rows(args.dataset, split="validation")
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
@@ -1375,7 +1435,7 @@ def run_vtrace(args: argparse.Namespace) -> None:
     for epoch in range(args.epochs):
         trained_samples = 0
         epoch_norms: list[float] = []
-        for episode_rows in iter_vtrace_episodes(args.dataset):
+        for episode_rows in iter_vtrace_episodes(args.dataset, model.action_space_version):
             update = train_vtrace_episode(
                 model, episode_rows, vocab, args.batch_size, device, optimizer,
                 value_loss_weight=args.value_loss_weight,
@@ -1406,6 +1466,8 @@ def run_vtrace(args: argparse.Namespace) -> None:
             model, args.dataset, "validation", vocab, args.batch_size, device
         ),
     }
+    if model.action_space_version == FULL_GRID_ACTION_SCHEMA and optimizer_updates == 0:
+        raise ValueError("full-grid V-trace needs fresh full-grid training episodes")
     payload = checkpoint_payload(
         model=model,
         optimizer=optimizer,
@@ -1452,7 +1514,7 @@ def export_model_payload(
     payload = {
         "model_id": model_id or checkpoint["checkpoint_id"].replace("checkpoint", "policy"),
         "schema_version": MODEL_SCHEMA,
-        "action_space_version": ACTION_SCHEMA,
+        "action_space_version": model.action_space_version,
         "observation_schema_version": OBSERVATION_SCHEMA,
         "architecture": ARCHITECTURE,
         "weights": {
@@ -1484,6 +1546,10 @@ def export_model_payload(
             "promotion_status": "shadow_candidate_unreviewed",
         },
     }
+    if model.placement_coordinates is not None:
+        payload["weights"]["placement_coordinates"] = [
+            float32_json(value) for value in model.placement_coordinates.detach().cpu().flatten()
+        ]
     parameters = actor_parameter_count(model)
     if parameters > 50_000:
         raise ValueError(f"actor parameter count {parameters} exceeds 50,000")
@@ -1544,7 +1610,7 @@ def load_actor_json(path: str | Path) -> EdgerV2Policy:
 def load_actor_payload(payload: dict[str, Any]) -> EdgerV2Policy:
     if payload.get("schema_version") != MODEL_SCHEMA:
         raise ValueError("parity model must use edger_policy_model_v2")
-    model = EdgerV2Policy(1)
+    model = EdgerV2Policy(1, payload["action_space_version"])
 
     def load_linear(layer: nn.Linear, source: dict[str, Any]) -> None:
         weights = torch.tensor(source["weights"], dtype=torch.float32).reshape(
@@ -1577,6 +1643,12 @@ def load_actor_payload(payload: dict[str, Any]) -> EdgerV2Policy:
         )
     )
     load_linear(model.placement_scorer, weights["placement_scorer"])
+    if model.placement_coordinates is not None:
+        model.placement_coordinates.data.copy_(torch.tensor(
+            weights["placement_coordinates"], dtype=torch.float32
+        ).reshape_as(model.placement_coordinates))
+    elif "placement_coordinates" in weights:
+        raise ValueError("placement coordinates require the full-grid action space")
     load_linear(model.delay_encoder, weights["delay_encoder"])
     load_linear(model.delay_head, weights["delay_head"])
     return model.eval()
@@ -1646,6 +1718,11 @@ def run_prepare(args: argparse.Namespace) -> None:
                 {
                     b"schema_version": DECISION_PARQUET_SCHEMA_VERSION.encode(),
                     b"observation_schema_version": OBSERVATION_SCHEMA.encode(),
+                    **(
+                        {b"action_space_version": args.action_space_version.encode()}
+                        if getattr(args, "action_space_version", ACTION_SCHEMA) != ACTION_SCHEMA
+                        else {}
+                    ),
                     b"manifest_hash": args.manifest_hash.encode(),
                     b"scale": str(args.scale).encode(),
                     b"compression": b"zstd",
@@ -2030,6 +2107,7 @@ def build_parser() -> argparse.ArgumentParser:
     prepare.add_argument("--out", required=True)
     prepare.add_argument("--manifest-hash", required=True)
     prepare.add_argument("--scale", type=float, required=True)
+    prepare.add_argument("--action-space-version", default=ACTION_SCHEMA, choices=ACTION_SCHEMAS)
     prepare.add_argument("--report")
     prepare.set_defaults(func=run_prepare)
 
@@ -2076,6 +2154,12 @@ def build_parser() -> argparse.ArgumentParser:
     export.add_argument("--model-id")
     export.add_argument("--force", action="store_true")
     export.set_defaults(func=run_export)
+
+    full_grid = subparsers.add_parser("initialize-full-grid")
+    full_grid.add_argument("--checkpoint", required=True)
+    full_grid.add_argument("--out", required=True)
+    full_grid.add_argument("--model-out", required=True)
+    full_grid.set_defaults(func=initialize_full_grid)
 
     parity = subparsers.add_parser("parity")
     parity.add_argument("--model", required=True)

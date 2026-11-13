@@ -78,7 +78,7 @@ DTYPES = {
 PARAMETER_GROUPS = {
     "trunk": ("conv1", "conv2", "conv3", "global_encoder", "fusion"),
     "card": ("card_head",),
-    "placement": ("placement_context", "card_embedding", "placement_scorer"),
+    "placement": ("placement_context", "card_embedding", "placement_scorer", "placement_coordinates"),
     "delay": ("delay_encoder", "delay_head"),
     "value": ("value_head", "value_stratum_embedding"),
 }
@@ -615,7 +615,10 @@ def load_any_checkpoint(path: str | Path) -> tuple[dict[str, Any], training.Edge
         return training.load_checkpoint(path, torch.device("cpu"))
     if payload.get("schema_version") != DIAGNOSTIC_CHECKPOINT_SCHEMA:
         raise ValueError(f"unsupported checkpoint schema {payload.get('schema_version')}")
-    model = training.EdgerV2Policy(max(1, len(payload["opponent_stratum_vocabulary"])))
+    model = training.EdgerV2Policy(
+        max(1, len(payload["opponent_stratum_vocabulary"])),
+        payload.get("action_space_version", training.ACTION_SCHEMA),
+    )
     model.load_state_dict(payload["model_state"])
     return payload, model
 
@@ -720,6 +723,9 @@ def run_train_iteration(args: argparse.Namespace) -> None:
     checkpoint, model = load_any_checkpoint(args.checkpoint)
     parent_checkpoint, parent = load_any_checkpoint(args.parent)
     parent.eval()
+    action_space = model.action_space_version
+    if parent.action_space_version != action_space:
+        raise ValueError("checkpoint and parent action spaces differ")
     vocab = checkpoint["opponent_stratum_vocabulary"]
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
     optimizer_restored = False
@@ -752,6 +758,8 @@ def run_train_iteration(args: argparse.Namespace) -> None:
         raise ValueError(
             f"collection reward version {collection.get('reward_version')} is not {reward_version}"
         )
+    if collection.get("action_space_version", training.ACTION_SCHEMA) != action_space:
+        raise ValueError("collection and checkpoint action spaces differ")
     episode_paths = [Path(item["header"]) for item in sorted(collection["episodes"], key=lambda item: item["match_index"])]
 
     updates = []
@@ -767,6 +775,8 @@ def run_train_iteration(args: argparse.Namespace) -> None:
             raise ValueError(
                 f"episode {path} reward version {episode['header'].get('reward_version')} is not {reward_version}"
             )
+        if episode["header"].get("action_space_version", training.ACTION_SCHEMA) != action_space:
+            raise ValueError(f"episode {path} and checkpoint action spaces differ")
         stratum = vocab.get(episode["header"]["opponent"], 0)
         update = train_cadence_episode(
             model,
@@ -937,6 +947,7 @@ def run_train_iteration(args: argparse.Namespace) -> None:
     }
     payload = {
         "schema_version": DIAGNOSTIC_CHECKPOINT_SCHEMA,
+        **({"action_space_version": action_space} if action_space != training.ACTION_SCHEMA else {}),
         "promotion_status": PROMOTION_STATUS,
         "checkpoint_id": f"edger_v2_cadence_{args.arm}_iter{args.iteration}",
         "root_parent_checkpoint_id": root_parent_id(checkpoint),

@@ -331,7 +331,7 @@ export function createEdgerV2DiagnosticDriver({
     const actions = [];
     if (tick >= candidateNextTick) {
       phaseHook?.("begin");
-      const legalActions = enumerateLegalCardActions({ engine, actor: candidateActor });
+      const legalActions = enumerateLegalCardActions({ engine, actor: candidateActor, model });
       phaseHook?.("enumerate");
       const decision = decideEdgerV2Diagnostic({
         model,

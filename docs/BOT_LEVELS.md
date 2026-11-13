@@ -35,6 +35,14 @@ The actor validator enforces:
 - at most 50,000 actor parameters
 - at most 1 MB serialized actor JSON
 
+The `edger_autoregressive_full_grid_v1` action space scores every tile the
+engine accepts for the selected troop, including all legal pocket and bridge
+tiles after a tower falls. The placement scorer learns from actor-relative
+row and column alongside its existing board features. Legacy artifacts and
+the frozen heuristic use the original shortlist. Full-grid is the adopted
+training action space (owner, November 13, 2026). The live bootstrap keeps
+the shortlist until a full-grid candidate passes promotion.
+
 See `docs/EDGER_TRAINING.md` for corpus, PyTorch learning, checkpoint, scaling, league, and scheduling details.
 
 ## Internal baselines

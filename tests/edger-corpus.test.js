@@ -29,6 +29,7 @@ import {
   createProductionEngine,
 } from "../src/sim/productionMatch.js";
 import {
+  EDGER_FULL_GRID_ACTION_SPACE_VERSION,
   EDGER_V2_BOARD_CHANNELS,
   EDGER_V2_BOARD_HEIGHT,
   EDGER_V2_BOARD_WIDTH,
@@ -180,6 +181,47 @@ test("decision derivation uses sparse delays and excludes unknown human probabil
   assert.ok(blue.every((sample) => sample.vtrace_eligible === false));
   assert.ok(red.every((sample) => sample.vtrace_eligible === true));
   assert.ok(sequence.samples.every((sample) => Number.isFinite(sample.discounted_return)));
+});
+
+test("full-grid human replay keeps a new placement as a demonstration", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "edger-full-grid-replay-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  let seed = 1;
+  let engine = createProductionEngine({ seed });
+  while (!engine.getHand("blue").includes("giant")) {
+    seed += 1;
+    engine = createProductionEngine({ seed });
+  }
+  engine.step([{ tick: 1, type: "PLAY_CARD", actor: "blue", cardId: "giant", x: 0.5, y: 17.5 }]);
+  assert.equal(engine.state.replay.actions.length, 1);
+  while (!engine.getMatchResult()) {
+    engine.step([]);
+    if (engine.shouldStartOvertime()) engine.setOvertime(true);
+  }
+  const file = path.join(root, "replay.json");
+  fs.writeFileSync(file, JSON.stringify({
+    schema_version: "edger_manual_replay_export_v1",
+    seed,
+    replay: JSON.parse(engine.exportReplay()),
+    result: engine.getMatchResult(),
+    final_state_hash: engine.getStateHash(),
+  }));
+  const imported = spawnSync(process.execPath, [
+    "scripts/edger-corpus.mjs", "import", "--file", file, "--store", root,
+    "--action-space-version", EDGER_FULL_GRID_ACTION_SPACE_VERSION,
+  ], { encoding: "utf8" });
+  assert.equal(imported.status, 0, imported.stderr || imported.stdout);
+  const [entry] = JSON.parse(imported.stdout).imported;
+  const episode = loadTrainingEpisode(entry.uri);
+  assert.equal(episode.compatibility.action_space_version, EDGER_FULL_GRID_ACTION_SPACE_VERSION);
+  const manifest = buildDatasetManifest({ store: root });
+  assert.equal(manifest.shards[0].action_space_version, EDGER_FULL_GRID_ACTION_SPACE_VERSION);
+  const { samples } = deriveDecisionSequence(episode);
+  const move = samples.find(({ tick, actor }) => tick === 1 && actor === "blue");
+  assert.ok(move.selected.card_index > 0);
+  assert.equal(move.legal_masks.placement[move.selected.placement_index], 1);
+  assert.equal(move.legal_masks.placement.reduce((total, bit) => total + bit), 236);
+  assert.ok(samples.every(({ vtrace_eligible }) => !vtrace_eligible));
 });
 
 test("collector specs are stable paired seeds with balanced sides and opponents", () => {

@@ -489,7 +489,7 @@ export function runEdgerV2CadenceMatch({
       stats.full_elixir_ticks += 1;
     }
     if (tick >= candidateNextTick) {
-      const legalActions = enumerateLegalCardActions({ engine, actor: candidateActor });
+      const legalActions = enumerateLegalCardActions({ engine, actor: candidateActor, model });
       const started = performance.now();
       const decision = decideEdgerV2WithCadence({
         model,
