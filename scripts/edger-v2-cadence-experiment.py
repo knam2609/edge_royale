@@ -777,7 +777,7 @@ def run_train_iteration(args: argparse.Namespace) -> None:
             )
         if episode["header"].get("action_space_version", training.ACTION_SCHEMA) != action_space:
             raise ValueError(f"episode {path} and checkpoint action spaces differ")
-        stratum = vocab.get(episode["header"]["opponent"], 0)
+        stratum = episode_stratum(episode["header"], vocab)
         update = train_cadence_episode(
             model,
             episode,
@@ -1131,6 +1131,24 @@ def heldout_batches(
 
     validation = list(training.batches_from_rows(validation_rows(), vocab, 32))
     return validation, list(training.batches_from_rows(opportunity_rows, vocab, 32))
+
+
+def episode_stratum(header: dict[str, Any], vocab: dict[str, int]) -> int:
+    """The critic stratum of one collected game.
+
+    Snapshot league games name their stratum explicitly (``edger``) because
+    the opponent label is a snapshot id; such a stratum must be in the parent's
+    vocabulary. Every other game keeps the existing lookup of its opponent,
+    unknown opponents falling back to index 0.
+    """
+    if "opponent_stratum" in header:
+        stratum = header["opponent_stratum"]
+        if stratum not in vocab:
+            raise ValueError(
+                f"episode {header.get('episode_id')} stratum {stratum!r} is not in the parent vocabulary"
+            )
+        return vocab[stratum]
+    return vocab.get(header["opponent"], 0)
 
 
 def run_heldout(args: argparse.Namespace) -> None:

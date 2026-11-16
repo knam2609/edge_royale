@@ -29,6 +29,7 @@ import {
   computeEdgerV2DelayLogits,
   computeEdgerV2PlacementLogits,
   encodeEdgerV2PolicyState,
+  selectEdgerV2PolicyDecision,
 } from "../src/ai/v2/policy.js";
 import { createRng } from "../src/sim/random.js";
 import {
@@ -439,12 +440,20 @@ export function actionStreamHash(actions) {
 // Run one production-arena match of a v2 candidate under a cadence against a
 // bot-runtime opponent. Seeds, controller RNG salts and tick loop match
 // scripts/edger-v2-evaluation-worker.mjs.
+//
+// With `opponentModel`, the opponent is a v2 policy model (a snapshot league
+// opponent or a head-to-head evaluation) instead of a bot, and
+// `opponentBotId` is only its label. It plays as the production league worker
+// plays a model: deterministic selectEdgerV2PolicyDecision over legal actions
+// enumerated for that model, waiting its own learned delay. Bot opponents are
+// unchanged, and their results carry no model-opponent fields.
 export function runEdgerV2CadenceMatch({
   seed,
   candidateActor,
   model,
   cadence,
   opponentBotId,
+  opponentModel = null,
   mode = "deterministic",
   recordRows = false,
   probeStride = 0,
@@ -462,6 +471,7 @@ export function runEdgerV2CadenceMatch({
   const opponentActor = candidateActor === "blue" ? "red" : "blue";
   const sampler = mode === "sample" ? { rng: createRng(seed ^ 0xa5a5a5a5) } : null;
   const opponent = botController(seed ^ 0x5f3759df);
+  const opponentModelStats = { decisions: 0, illegal_attempts: 0 };
   let candidateNextTick = 1;
   const rows = [];
   const probes = [];
@@ -575,7 +585,35 @@ export function runEdgerV2CadenceMatch({
         stats.pass_decisions += 1;
       }
     }
-    if (tick >= opponent.nextDecisionTick) {
+    if (opponentModel && tick >= opponent.nextDecisionTick) {
+      const legalActions = enumerateLegalCardActions({ engine, actor: opponentActor, model: opponentModel });
+      const decision = selectEdgerV2PolicyDecision({
+        model: opponentModel,
+        engine,
+        actor: opponentActor,
+        legalActions,
+      });
+      opponent.nextDecisionTick = tick + decision.delayTicks;
+      opponentModelStats.decisions += 1;
+      if (decision.action?.type === "PLAY_CARD") {
+        const legal = legalActions.some((candidate) =>
+          candidate.cardId === decision.action.cardId &&
+          candidate.x === decision.action.x &&
+          candidate.y === decision.action.y);
+        if (legal) {
+          actions.push({
+            tick,
+            type: "PLAY_CARD",
+            actor: opponentActor,
+            cardId: decision.action.cardId,
+            x: decision.action.x,
+            y: decision.action.y,
+          });
+        } else {
+          opponentModelStats.illegal_attempts += 1;
+        }
+      }
+    } else if (!opponentModel && tick >= opponent.nextDecisionTick) {
       const legalActions = enumerateLegalCardActions({ engine, actor: opponentActor });
       const selected = selectBotAction({
         botId: opponentBotId,
@@ -663,6 +701,12 @@ export function runEdgerV2CadenceMatch({
       deployment_interval_histogram: deploymentIntervals,
       deployments_by_card: deploymentsByCard,
       playstyle_diagnostics: finishPlaystyle(playstyle),
+      ...(opponentModel
+        ? {
+            opponent_decisions: opponentModelStats.decisions,
+            opponent_illegal_attempts: opponentModelStats.illegal_attempts,
+          }
+        : {}),
     },
     action_stream_hash: actionStreamHash(actionStream),
     final_state_hash: engine.getStateHash(),

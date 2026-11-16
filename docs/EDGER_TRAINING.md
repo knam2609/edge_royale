@@ -363,6 +363,14 @@ the live bot, the promotion evaluator or campaigns.
   production path then differs from train-arm's learner only by its
   train-split filter, ID (hash) order and balancing weights
   ([comparison design](EDGER_TACTICAL_REVIEW.md#third-comparison-production-learner-on-fixed-refreshed-data)).
+- Snapshot league opponent mix (since November 15, 2026, for the [eighth comparison](EDGER_TACTICAL_REVIEW.md#eighth-comparison-snapshot-league-opponent-mix)). Training only; snapshot opponents never appear in the game. The comparison left the direction unresolved (+0.025 [−0.012, +0.062], [result](EDGER_TACTICAL_REVIEW.md#eighth-comparison-result)), so under its frozen decision the mix stays opt-in and the current mix stays the default.
+  - `train-arm --opponent-mix plan|snapshot-league [--snapshot-every <k>]`. The default, `plan`, plays the seed plan's `training_opponents`, and its collections and headers are byte-for-byte unchanged.
+  - `snapshot-league` keeps each pair's allocation draw u from the plan's `opponent_schedule_seed`: live v1 for u < 0.4 and the heuristic for [0.4, 0.6), as the plan does. For u ≥ 0.6 it plays one of the arm's own pre-update actors, captured at iterations 0, k, 2k, … (snapshot 0 is the parent model) and eligible from the next iteration: uniformly for u in [0.6, 0.8), and by PFSP for [0.8, 1). An empty pool falls back to live v1, as `scripts/edger-league.mjs` does. At most seven snapshots.
+  - The within-bucket draw is the first 48 bits of SHA-256(`edger_v2_snapshot_league_v1|<schedule seed>|<absolute pair index>`) / 2^48. The PFSP score is the learner's cumulative mean match point against the snapshot over completed earlier iterations, 0.5 when unplayed, with weight (1 − score)² + 0.05 fixed for the refresh.
+  - Snapshots play deterministically, with their learned delay, over legal actions enumerated for their model, as the league worker plays models. Their games' headers add `opponent_stratum: edger` and the actor's SHA-256. The learner uses an explicit stratum and rejects one missing from the parent's vocabulary; every other header keeps the existing lookup.
+  - Collections record the ordered pool with scores and weights and every pair's pick. Before a refresh is learned from, `train-arm` re-derives the pool and picks from the plan and the hash-verified earlier collections, and stops with an `instrument:` reason on any difference. Resuming (`--start-iteration`) rebuilds the pool from verified iterations, sets the interrupted iteration's outputs aside, and reproduces the uninterrupted picks, bodies and weights (tested). Exported actors embed the collection checksum, so actor SHA-256 values differ between runs; compare runs on picks, bodies and weights.
+  - `convert-collection` refuses snapshot league collections.
+  - `evaluate --opponent-model <file> [--opponent <label>]` plays a v2 model as the opponent (head-to-head), binding both actors' SHA-256 values and checking both sides' legality and repeatability.
 - Checkpoints use `edger_v2_cadence_diagnostic_checkpoint_v1`, which production
   `load_checkpoint` rejects, and exports are labelled
   `diagnostic_only_not_promotable`. The diagnostic learner records the dirty
@@ -454,6 +462,10 @@ Opponent allocation:
 - 20% heuristic
 - 20% uniform historical
 - 20% PFSP over history/contenders with `(1−score)²+0.05`
+
+With no `--league` file or `--historical-anchors`, both snapshot buckets fall back to the champion. The September campaign ran this way (396 champion and 104 heuristic pairs, reconstructed from its seed). The cadence `train-arm` schedule (`trainingOpponentSchedule`) has the same nominal 80% champion and 20% heuristic allocation on its own seed plans.
+
+League rollouts currently record the opponent's `policy_id` as `opponent_stratum`. Model ids such as `edger_policy_bootstrap_20260701` fall back to stratum index 0 (`aggressive` in the archived parent). The review approved a separate repair before the next production league campaign. Assign `edger` to model opponents, retain baseline strata and keep each opponent's policy and checkpoint ids in provenance. Before using the fix, verify it through collection, the cache and the learner's vocabulary lookup. This field enters both content-addressed episode IDs and the balancing key. Fresh rollout lineage is required, and validation must record resulting changes to episode IDs, splits, order and balancing weights. The September campaign remains historical evidence, and the contribution of the fallback to its regression remains untested. The [local snapshot comparison](EDGER_TACTICAL_REVIEW.md#eighth-comparison-snapshot-league-opponent-mix) used `train-arm` and the `edger` stratum; its direction was unresolved, and the current mix stays.
 
 Every selected seed is played from both sides. Only simulator decisions with known behavior log-probabilities enter V-trace. Importance and trace coefficients are clipped at 1.
 

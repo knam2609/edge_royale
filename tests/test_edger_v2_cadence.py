@@ -812,6 +812,16 @@ class CadenceLearnerTests(unittest.TestCase):
                 self.assertEqual(rl1["warm_start"], rl0["warm_start"])
                 self.assertTrue(json.loads((root / "rl1-metrics.json").read_text())["optimizer_restored"])
 
+    def test_snapshot_games_use_their_explicit_stratum(self) -> None:
+        # Snapshot league games name their stratum; the label is a snapshot id.
+        header = {"episode_id": "it1-pair1-blue", "opponent": "snapshot_iter0", "opponent_stratum": "edger"}
+        self.assertEqual(cadence.episode_stratum(header, VOCAB), VOCAB["edger"])
+        with self.assertRaisesRegex(ValueError, "not in the parent vocabulary"):
+            cadence.episode_stratum({**header, "opponent_stratum": "snapshot"}, VOCAB)
+        # Every other game keeps the existing lookup, unknown opponents at 0.
+        self.assertEqual(cadence.episode_stratum({"opponent": "edger_heuristic"}, VOCAB), VOCAB["edger_heuristic"])
+        self.assertEqual(cadence.episode_stratum({"opponent": "snapshot_iter0"}, VOCAB), 0)
+
     def test_vtrace_discount_follows_recorded_intervals(self) -> None:
         values = [0.2, -0.1, 0.4]
         result = cadence.vtrace_recursion(

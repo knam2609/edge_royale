@@ -115,13 +115,143 @@ export function frozenSuiteSeeds() {
 // no historical or contender snapshots: champion below 0.4, heuristic in
 // [0.4, 0.6), and both snapshot buckets fall back to the champion.
 export function trainingOpponentSchedule({ pairs, seed = 20260927 }) {
+  return trainingOpponentAllocations({ pairs, seed })
+    .map((allocation) => (allocation >= 0.4 && allocation < 0.6 ? "edger_heuristic" : "edger"));
+}
+
+// The allocation draw u of every training pair: one draw per pair from the
+// plan's schedule seed, exactly as trainingOpponentSchedule consumes them.
+export function trainingOpponentAllocations({ pairs, seed = 20260927 }) {
   const rng = createRng(seed);
-  const schedule = [];
-  for (let index = 0; index < pairs; index += 1) {
-    const allocation = rng();
-    schedule.push(allocation >= 0.4 && allocation < 0.6 ? "edger_heuristic" : "edger");
+  return Array.from({ length: pairs }, () => rng());
+}
+
+// ---------------------------------------------------------------------------
+// Snapshot league opponent mix (eighth comparison; opt-in, training only)
+//
+// Each pair keeps its allocation draw u. Live v1 below 0.4 and the heuristic
+// in [0.4, 0.6) as in the plan; for u >= 0.6 the plan plays live v1, while
+// the snapshot league plays one of the arm's own earlier actors: uniformly in
+// [0.6, 0.8) and by PFSP in [0.8, 1), as scripts/edger-league.mjs allocates.
+// An empty pool falls back to live v1, as production does.
+
+export const SNAPSHOT_LEAGUE_SCHEMA = "edger_v2_snapshot_league_v1";
+export const SNAPSHOT_LEAGUE_STRATUM = "edger";
+export const SNAPSHOT_LEAGUE_MAX_SNAPSHOTS = 7;
+export const OPPONENT_MIXES = Object.freeze(["plan", "snapshot-league"]);
+
+export function snapshotLeagueBucket(allocation) {
+  if (allocation < 0.4) {
+    return "champion";
   }
-  return schedule;
+  if (allocation < 0.6) {
+    return "heuristic";
+  }
+  return allocation < 0.8 ? "historical_uniform" : "pfsp";
+}
+
+// The choice within a snapshot bucket: a uniform draw in [0, 1) from the first
+// 48 bits of SHA-256("edger_v2_snapshot_league_v1|<schedule seed>|<absolute
+// pair index>"). It is separate from the allocation stream, independent of
+// iteration and pool, shared by both sides of the pair, and easy to re-derive
+// in any language.
+export function snapshotLeagueDraw({ scheduleSeed, pairIndex }) {
+  const digest = createHash("sha256")
+    .update(`${SNAPSHOT_LEAGUE_SCHEMA}|${scheduleSeed}|${pairIndex}`)
+    .digest();
+  return digest.readUIntBE(0, 6) / 2 ** 48;
+}
+
+// Iterations whose pre-update actor is captured: 0, every, 2·every, …
+export function snapshotCaptureIterations({ iterations, every }) {
+  if (!Number.isInteger(every) || every < 1) {
+    throw new Error(`--snapshot-every must be a positive integer; got ${every}`);
+  }
+  const captures = [];
+  for (let iteration = 0; iteration < iterations; iteration += every) {
+    captures.push(iteration);
+  }
+  // A snapshot captured at k is first eligible at k + 1.
+  const eligible = captures.filter((iteration) => iteration + 1 < iterations);
+  if (eligible.length > SNAPSHOT_LEAGUE_MAX_SNAPSHOTS) {
+    throw new Error(`${eligible.length} snapshots exceed the league's ${SNAPSHOT_LEAGUE_MAX_SNAPSHOTS} historical snapshots`);
+  }
+  return captures;
+}
+
+export function pfspWeight(score) {
+  return (1 - score) ** 2 + 0.05;
+}
+
+// The learner's cumulative mean match point against each snapshot over the
+// given (completed, earlier) collections, both sides and both buckets; 0.5
+// before any game. Pool order is kept.
+export function snapshotLeagueScores(pool, collections) {
+  return pool.map((snapshot) => {
+    const points = collections.flatMap((collection) => collection.episodes
+      .filter((episode) => episode.opponent === snapshot.id)
+      .map((episode) => {
+        if (episode.opponent_model_sha256 !== snapshot.model_sha256) {
+          throw new Error(`episode ${episode.episode_id} played ${snapshot.id} with a different actor`);
+        }
+        return episode.candidate_point;
+      }));
+    const score = points.length === 0 ? 0.5 : mean(points);
+    return { ...snapshot, games: points.length, score, weight: pfspWeight(score) };
+  });
+}
+
+function weightedPick(pool, draw) {
+  const total = pool.reduce((sum, snapshot) => sum + snapshot.weight, 0);
+  let roll = draw * total;
+  for (const snapshot of pool) {
+    roll -= snapshot.weight;
+    if (roll <= 0) {
+      return snapshot;
+    }
+  }
+  return pool.at(-1);
+}
+
+// Every pair's opponent in one refresh. `pool` is the ordered eligible pool
+// with frozen weights (snapshotLeagueScores); it is fixed for the refresh.
+export function snapshotLeagueSelections({ plan, iteration, pairsPerIteration, pool }) {
+  const scheduleSeed = plan.opponent_schedule_seed;
+  if (!Number.isInteger(scheduleSeed)) {
+    throw new Error("the snapshot league needs a seed plan with an opponent_schedule_seed");
+  }
+  const allocations = trainingOpponentAllocations({ pairs: plan.training.length, seed: scheduleSeed });
+  const rederived = allocations.map((allocation) => (allocation >= 0.4 && allocation < 0.6 ? "edger_heuristic" : "edger"));
+  if (JSON.stringify(rederived) !== JSON.stringify(plan.training_opponents)) {
+    throw new Error("the plan's training_opponents do not re-derive from its opponent_schedule_seed");
+  }
+  const start = iteration * pairsPerIteration;
+  if (start + pairsPerIteration > plan.training.length) {
+    throw new Error(`seed plan has too few training pairs for iteration ${iteration}`);
+  }
+  return Array.from({ length: pairsPerIteration }, (_, offset) => {
+    const pairIndex = start + offset;
+    const allocation = allocations[pairIndex];
+    const bucket = snapshotLeagueBucket(allocation);
+    const selection = { pair_index: pairIndex, allocation, bucket };
+    if (bucket === "champion" || bucket === "heuristic") {
+      return { ...selection, opponent: plan.training_opponents[pairIndex] };
+    }
+    if (pool.length === 0) {
+      return { ...selection, opponent: plan.training_opponents[pairIndex], fallback: true };
+    }
+    const draw = snapshotLeagueDraw({ scheduleSeed, pairIndex });
+    const snapshot = bucket === "historical_uniform"
+      ? pool[Math.floor(draw * pool.length)]
+      : weightedPick(pool, draw);
+    return {
+      ...selection,
+      draw,
+      opponent: snapshot.id,
+      snapshot_iteration: snapshot.capture_iteration,
+      opponent_model_sha256: snapshot.model_sha256,
+    };
+  });
 }
 
 export function buildCadenceSeedPlan({ development = 200, probe = 8, training = 192 } = {}) {
@@ -731,9 +861,24 @@ async function commandEvaluate(args) {
     excludePlans: excludeFiles.map((file) => JSON.parse(fs.readFileSync(file, "utf8"))),
   });
   const cadence = required(args, "cadence");
-  const opponent = required(args, "opponent");
   const modelPath = required(args, "model");
-  const specs = pairedSpecs({ seeds, kind: "evaluate", modelPath, cadence, opponentFor: () => opponent });
+  // Head-to-head: a v2 model file as the opponent, played deterministically
+  // as the league worker plays models; --opponent is then only its label.
+  const opponentModelPath = args["opponent-model"] ? path.resolve(required(args, "opponent-model")) : null;
+  const opponentModelSha256 = opponentModelPath ? sha256File(opponentModelPath) : null;
+  const opponent = opponentModelPath
+    ? String(args.opponent ?? `model:${opponentModelSha256.slice(0, 16)}`)
+    : required(args, "opponent");
+  const specs = pairedSpecs({
+    seeds,
+    kind: "evaluate",
+    modelPath,
+    cadence,
+    opponentFor: () => opponent,
+    extra: () => (opponentModelPath
+      ? { opponent_model_path: opponentModelPath, opponent_model_sha256: opponentModelSha256 }
+      : {}),
+  });
   const started = Date.now();
   const results = await runCadenceSpecs(specs, {
     workers: Number(args.workers ?? 7),
@@ -744,7 +889,8 @@ async function commandEvaluate(args) {
   const repeatFailures = repeats.filter((repeat) =>
     repeat.action_stream_hash !== results[repeat.spec_id].action_stream_hash ||
     repeat.final_state_hash !== results[repeat.spec_id].final_state_hash);
-  if (repeatFailures.length > 0 || results.some((result) => result.stats.illegal_attempts > 0)) {
+  if (repeatFailures.length > 0 || results.some((result) =>
+    result.stats.illegal_attempts > 0 || (result.stats.opponent_illegal_attempts ?? 0) > 0)) {
     throw new Error("cadence evaluation failed its repeatability or legality check");
   }
   writeJson(required(args, "out"), {
@@ -754,6 +900,7 @@ async function commandEvaluate(args) {
     model_sha256: sha256File(modelPath),
     cadence,
     opponent,
+    ...(opponentModelPath ? { opponent_model: opponentModelPath, opponent_model_sha256: opponentModelSha256 } : {}),
     seeds_file_sha256: sha256File(seedsFile),
     seed_selection: {
       set: seedSet,
@@ -878,6 +1025,10 @@ export function collectionSpecs({
   cadence,
   outDir,
   rewardVersion = EDGER_V2_CADENCE_REWARD_VERSION,
+  // Snapshot league only: one record per pair (snapshotLeagueSelections) and
+  // the eligible pool, which supplies each snapshot's model file.
+  selections = null,
+  pool = [],
 }) {
   assertRewardVersion(rewardVersion);
   const start = iteration * pairsPerIteration;
@@ -885,18 +1036,37 @@ export function collectionSpecs({
   if (seeds.length !== pairsPerIteration) {
     throw new Error(`seed plan has too few training pairs for iteration ${iteration}`);
   }
+  if (selections && selections.length !== pairsPerIteration) {
+    throw new Error("snapshot league selections do not cover the refresh");
+  }
+  const snapshots = new Map(pool.map((snapshot) => [snapshot.id, snapshot]));
   return pairedSpecs({
     seeds,
     kind: "collect",
     modelPath,
     cadence,
-    opponentFor: (pairIndex) => plan.training_opponents[start + pairIndex],
-    extra: (pairIndex, actor) => ({
-      episode_id: `it${iteration}-pair${start + pairIndex}-${actor}`,
-      out_dir: outDir,
-      model_sha256: modelSha256,
-      reward_version: rewardVersion,
-    }),
+    opponentFor: (pairIndex) => (selections ? selections[pairIndex].opponent : plan.training_opponents[start + pairIndex]),
+    extra: (pairIndex, actor) => {
+      const snapshot = selections?.[pairIndex].opponent_model_sha256
+        ? snapshots.get(selections[pairIndex].opponent)
+        : null;
+      if (selections && selections[pairIndex].opponent_model_sha256 && snapshot?.model_sha256 !== selections[pairIndex].opponent_model_sha256) {
+        throw new Error(`snapshot ${selections[pairIndex].opponent} is not in the eligible pool`);
+      }
+      return {
+        episode_id: `it${iteration}-pair${start + pairIndex}-${actor}`,
+        out_dir: outDir,
+        model_sha256: modelSha256,
+        reward_version: rewardVersion,
+        ...(snapshot
+          ? {
+              opponent_model_path: path.resolve(snapshot.model),
+              opponent_model_sha256: snapshot.model_sha256,
+              opponent_stratum: SNAPSHOT_LEAGUE_STRATUM,
+            }
+          : {}),
+      };
+    },
   });
 }
 
@@ -910,9 +1080,12 @@ async function collect({
   workers,
   out,
   rewardVersion = EDGER_V2_CADENCE_REWARD_VERSION,
+  snapshotLeague = null,
 }) {
   const specs = collectionSpecs({
     plan, iteration, pairsPerIteration, modelPath, modelSha256: sha256File(modelPath), cadence, outDir, rewardVersion,
+    selections: snapshotLeague?.selections ?? null,
+    pool: snapshotLeague?.pool ?? [],
   });
   const started = Date.now();
   const results = await runCadenceSpecs(specs, { workers, onResult: progress(`collect it${iteration} ${cadence}`) });
@@ -951,7 +1124,26 @@ async function collect({
       // also stores, so collections under different rewards can be compared.
       action_stream_hash: result.action_stream_hash,
       final_state_hash: result.final_state_hash,
+      ...(result.opponent_model_sha256
+        ? {
+            opponent_model_sha256: result.opponent_model_sha256,
+            opponent_stratum: SNAPSHOT_LEAGUE_STRATUM,
+            opponent_decisions: result.stats.opponent_decisions,
+            opponent_illegal_attempts: result.stats.opponent_illegal_attempts,
+          }
+        : {}),
     })),
+    ...(snapshotLeague
+      ? {
+          opponent_mix: "snapshot-league",
+          snapshot_league: {
+            schema_version: SNAPSHOT_LEAGUE_SCHEMA,
+            opponent_schedule_seed: plan.opponent_schedule_seed,
+            pool: snapshotLeague.pool,
+            selections: snapshotLeague.selections,
+          },
+        }
+      : {}),
   };
   writeJson(out, collection);
   return collection;
@@ -1045,6 +1237,90 @@ export function trainIterationArguments({
   ];
 }
 
+// The eligible pool at the start of `iteration`: actors captured at earlier
+// iterations, in capture order, each bound to its recorded SHA-256. Snapshot 0
+// is the arm's parent model; snapshot k > 0 is the model exported after
+// iteration k − 1, which collected iteration k.
+export function snapshotLeaguePool({ iteration, captures, parentModel, parentModelSha256, records }) {
+  return captures.filter((capture) => capture < iteration).map((capture) => {
+    const record = capture === 0 ? null : records.find((item) => item.iteration === capture - 1);
+    const model = capture === 0 ? parentModel : record?.model;
+    const modelSha256 = capture === 0 ? parentModelSha256 : record?.model_sha256;
+    if (!model || !modelSha256 || sha256File(model) !== modelSha256) {
+      throw new Error(`snapshot_iter${capture} is missing or does not match its recorded SHA-256`);
+    }
+    return { id: `snapshot_iter${capture}`, capture_iteration: capture, model, model_sha256: modelSha256 };
+  });
+}
+
+// Pool, frozen PFSP weights and every pick of one refresh, re-derived from the
+// seed plan and the hash-verified collections of the completed iterations.
+export function deriveSnapshotLeagueRefresh({
+  plan, iteration, pairsPerIteration, captures, parentModel, parentModelSha256, records, workDir,
+}) {
+  const prior = [];
+  for (let index = 0; index < iteration; index += 1) {
+    const record = records.find((item) => item.iteration === index);
+    const file = path.join(workDir, `iter${index}`, "collection.json");
+    if (!record?.collection_sha256 || !fs.existsSync(file) || sha256File(file) !== record.collection_sha256) {
+      throw new Error(`iteration ${index}'s collection is missing or does not match its recorded SHA-256`);
+    }
+    prior.push(JSON.parse(fs.readFileSync(file, "utf8")));
+  }
+  const pool = snapshotLeagueScores(
+    snapshotLeaguePool({ iteration, captures, parentModel, parentModelSha256, records }),
+    prior,
+  );
+  return { pool, selections: snapshotLeagueSelections({ plan, iteration, pairsPerIteration, pool }) };
+}
+
+// Before a refresh is accepted: the collection's recorded pool and picks equal
+// the re-derivation, every game played its pair's pick (the right actor for a
+// snapshot), and snapshot opponents made no illegal attempt.
+export function snapshotLeagueCollectionProblems(collection, refresh) {
+  const problems = [];
+  const recorded = collection.snapshot_league;
+  if (!recorded) {
+    return ["the collection has no snapshot league record"];
+  }
+  if (JSON.stringify(recorded.pool) !== JSON.stringify(refresh.pool)) {
+    problems.push("recorded pool or PFSP weights differ from the re-derivation");
+  }
+  if (JSON.stringify(recorded.selections) !== JSON.stringify(refresh.selections)) {
+    problems.push("recorded picks differ from the re-derivation");
+  }
+  const byPair = new Map(refresh.selections.map((selection) => [selection.pair_index, selection]));
+  for (const episode of collection.episodes) {
+    const pairIndex = Number(/-pair(\d+)-/.exec(episode.episode_id)?.[1]);
+    const selection = byPair.get(pairIndex);
+    if (!selection || episode.opponent !== selection.opponent) {
+      problems.push(`${episode.episode_id} played ${episode.opponent}, not its pick`);
+    } else if ((episode.opponent_model_sha256 ?? null) !== (selection.opponent_model_sha256 ?? null)) {
+      problems.push(`${episode.episode_id} played a different actor than its pick`);
+    } else if ((episode.opponent_illegal_attempts ?? 0) > 0) {
+      problems.push(`${episode.episode_id}: the snapshot opponent made an illegal attempt`);
+    }
+  }
+  if (collection.episodes.length !== 2 * refresh.selections.length) {
+    problems.push("the collection does not hold both sides of every pair");
+  }
+  return problems;
+}
+
+function snapshotLeagueRecord(refresh) {
+  const counts = {};
+  for (const selection of refresh.selections) {
+    const key = selection.opponent_model_sha256 ? "snapshot" : selection.fallback ? "fallback" : selection.bucket;
+    counts[key] = (counts[key] ?? 0) + 1;
+  }
+  return {
+    pool: refresh.pool.map(({ id, capture_iteration, model_sha256, games, score, weight }) => ({
+      id, capture_iteration, model_sha256, games, score, weight,
+    })),
+    pair_counts: counts,
+  };
+}
+
 async function commandTrainArm(args) {
   const arm = required(args, "arm");
   const cadence = required(args, "cadence");
@@ -1077,6 +1353,16 @@ async function commandTrainArm(args) {
   // the headers, whose body checksums pin what the learner consumed.
   const episodesRoot = args["episodes-root"] ? path.resolve(args["episodes-root"]) : null;
   const pruneEpisodes = args["prune-episodes"] === true;
+  const opponentMix = String(args["opponent-mix"] ?? "plan");
+  if (!OPPONENT_MIXES.includes(opponentMix)) {
+    throw new Error(`--opponent-mix must be one of ${OPPONENT_MIXES.join(", ")}`);
+  }
+  if (opponentMix === "plan" && args["snapshot-every"] !== undefined) {
+    throw new Error("--snapshot-every needs --opponent-mix snapshot-league");
+  }
+  const snapshotLeague = opponentMix === "snapshot-league";
+  const snapshotEvery = snapshotLeague ? Number(args["snapshot-every"] ?? 4) : null;
+  const captures = snapshotLeague ? snapshotCaptureIterations({ iterations, every: snapshotEvery }) : [];
   const logPath = path.join(workDir, "train-arm.log");
   fs.mkdirSync(workDir, { recursive: true });
   const statusPath = path.join(workDir, "arm-status.json");
@@ -1101,6 +1387,18 @@ async function commandTrainArm(args) {
     parent_model_sha256: sha256File(parentModel),
     iterations_planned: iterations,
     pairs_per_iteration: pairsPerIteration,
+    ...(snapshotLeague
+      ? {
+          opponent_mix: opponentMix,
+          snapshot_league: {
+            schema_version: SNAPSHOT_LEAGUE_SCHEMA,
+            snapshot_every: snapshotEvery,
+            capture_iterations: captures,
+            stratum: SNAPSHOT_LEAGUE_STRATUM,
+            opponent_schedule_seed: plan.opponent_schedule_seed,
+          },
+        }
+      : {}),
     started_at: new Date().toISOString(),
     iterations: [],
     stop_reason: null,
@@ -1120,16 +1418,42 @@ async function commandTrainArm(args) {
     if (!completed?.checkpoint || sha256File(completed.checkpoint) !== completed.checkpoint_sha256) {
       throw new Error(`cannot resume: iteration ${firstIteration - 1} is not complete and verified`);
     }
+    if ((previous.opponent_mix ?? "plan") !== opponentMix ||
+        JSON.stringify(previous.snapshot_league ?? null) !== JSON.stringify(status.snapshot_league ?? null)) {
+      throw new Error("cannot resume: the opponent mix or snapshot settings differ from the interrupted run");
+    }
     status.iterations = previous.iterations.filter((record) => record.iteration < firstIteration);
     status.resumed_at_iteration = firstIteration;
     checkpoint = completed.checkpoint;
     model = completed.model;
+    // Outputs of the interrupted iteration are incomplete by definition (the
+    // status never accepted them); keep them aside rather than mixing them in.
+    for (let iteration = firstIteration; iteration < iterations; iteration += 1) {
+      const stale = path.join(workDir, `iter${iteration}`);
+      if (fs.existsSync(stale)) {
+        let suffix = 1;
+        while (fs.existsSync(`${stale}.interrupted-${suffix}`)) {
+          suffix += 1;
+        }
+        fs.renameSync(stale, `${stale}.interrupted-${suffix}`);
+      }
+    }
   }
+  // Test and smoke hook: stop like an interrupted run once this iteration is
+  // accepted, leaving the status without a stop reason.
+  const interruptAfter = args["interrupt-after-iteration"] === undefined
+    ? null
+    : Number(args["interrupt-after-iteration"]);
   for (let iteration = firstIteration; iteration < iterations; iteration += 1) {
     const iterationDir = path.join(workDir, `iter${iteration}`);
     const episodesDir = episodesRoot
       ? path.join(episodesRoot, arm, `iter${iteration}`)
       : path.join(iterationDir, "episodes");
+    const refreshArgs = {
+      plan, iteration, pairsPerIteration, captures, parentModel,
+      parentModelSha256: status.parent_model_sha256, records: status.iterations, workDir,
+    };
+    const refresh = snapshotLeague ? deriveSnapshotLeagueRefresh(refreshArgs) : null;
     const collection = await collect({
       plan,
       iteration,
@@ -1140,6 +1464,7 @@ async function commandTrainArm(args) {
       workers,
       out: path.join(iterationDir, "collection.json"),
       rewardVersion,
+      snapshotLeague: refresh,
     });
     const record = {
       iteration,
@@ -1152,6 +1477,17 @@ async function commandTrainArm(args) {
       sampled_score: collection.sampled_play_summary.score,
       sampled_successful_deployments_per_game: collection.sampled_play_summary.successful_deployments_per_game,
     };
+    if (snapshotLeague) {
+      // Accept the refresh only if its recorded picks re-derive from disk.
+      const problems = snapshotLeagueCollectionProblems(collection, deriveSnapshotLeagueRefresh(refreshArgs));
+      record.collection_sha256 = sha256File(path.join(iterationDir, "collection.json"));
+      record.snapshot_league = snapshotLeagueRecord(refresh);
+      if (problems.length > 0) {
+        status.stop_reason = `instrument: snapshot league check failed in iteration ${iteration}: ${problems[0]}`;
+        status.iterations.push(record);
+        break;
+      }
+    }
     const deployments = collection.episodes.reduce((sum, episode) => sum + episode.successful_deployments, 0);
     if (deployments === 0) {
       status.stop_reason = `collapse: zero successful deployments in iteration ${iteration}`;
@@ -1225,6 +1561,11 @@ async function commandTrainArm(args) {
     writeJson(statusPath, status);
     checkpoint = nextCheckpoint;
     model = nextModel;
+    if (interruptAfter === iteration) {
+      console.log(JSON.stringify({ arm, interrupted_after_iteration: iteration }));
+      process.exitCode = 75;
+      return;
+    }
     if (iteration === firstIteration) {
       const projectedMinutes = ((Date.now() - armStarted) / 60_000) * (iterations - firstIteration);
       status.projected_minutes_after_first_iteration = projectedMinutes;
@@ -1360,6 +1701,11 @@ export function convertCadenceCollection({ collectionPath, headersDir = null, st
   const collection = JSON.parse(fs.readFileSync(collectionPath, "utf8"));
   if (collection.schema_version !== "edger_v2_cadence_collection_v1") {
     throw new Error(`${collectionPath} is not a cadence collection`);
+  }
+  // Snapshot league games replay a model opponent the production derivation
+  // does not know, and carry metadata it does not keep.
+  if (collection.opponent_mix || collection.episodes.some((episode) => episode.opponent_model_sha256)) {
+    throw new Error(`${collectionPath} holds snapshot league games; convert-collection does not support them`);
   }
   // The production derivation computes reward v1 only.
   const collectionReward = collection.reward_version ?? EDGER_V2_CADENCE_REWARD_VERSION;

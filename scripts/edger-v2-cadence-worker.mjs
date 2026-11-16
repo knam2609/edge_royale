@@ -26,12 +26,16 @@ function loadModel(modelPath) {
 export function runCadenceSpec(spec) {
   const wallStarted = performance.now();
   const model = loadModel(spec.model_path);
+  // A model opponent (snapshot league or head-to-head); `opponent` is then
+  // only its label.
+  const opponentModel = spec.opponent_model_path ? loadModel(spec.opponent_model_path) : null;
   const match = runEdgerV2CadenceMatch({
     seed: spec.seed,
     candidateActor: spec.candidate_actor,
     model,
     cadence: spec.cadence,
     opponentBotId: spec.opponent,
+    opponentModel,
     mode: spec.kind === "collect" ? "sample" : "deterministic",
     recordRows: spec.kind === "collect",
     probeStride: spec.kind === "probe" ? spec.probe_stride : 0,
@@ -43,6 +47,7 @@ export function runCadenceSpec(spec) {
     spec_id: spec.spec_id,
     pair_id: spec.pair_id,
     match_index: spec.match_index ?? null,
+    ...(opponentModel ? { opponent_model_sha256: spec.opponent_model_sha256 } : {}),
   };
   if (spec.kind === "collect") {
     const { header, body } = encodeCadenceEpisode({
@@ -53,6 +58,11 @@ export function runCadenceSpec(spec) {
         seed: spec.seed,
         candidate_actor: spec.candidate_actor,
         opponent: spec.opponent,
+        // Snapshot games name the critic stratum explicitly and bind the
+        // opponent actor; every other header is unchanged.
+        ...(opponentModel
+          ? { opponent_stratum: spec.opponent_stratum, opponent_model_sha256: spec.opponent_model_sha256 }
+          : {}),
         cadence: spec.cadence,
         mode: "sample",
         sampling_temperature: 1,

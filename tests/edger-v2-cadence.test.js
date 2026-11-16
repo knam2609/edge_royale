@@ -45,10 +45,20 @@ import {
 } from "../scripts/edger-v2-cadence-core.mjs";
 import {
   CADENCE_CONVERSION_COLLECTOR,
+  SNAPSHOT_LEAGUE_STRATUM,
   buildCadenceSeedPlan,
   buildReplicationSeedPlans,
   cadenceRowMismatches,
   cadenceTrainingEpisode,
+  collectionSpecs,
+  convertCadenceCollection,
+  pfspWeight,
+  snapshotCaptureIterations,
+  snapshotLeagueCollectionProblems,
+  snapshotLeagueDraw,
+  snapshotLeagueScores,
+  snapshotLeagueSelections,
+  trainingOpponentAllocations,
   exactSignTest,
   frozenSuiteSeeds,
   heldoutCaptureRecord,
@@ -1001,4 +1011,278 @@ test("Python cadence learner semantics", () => {
     { cwd: ROOT, encoding: "utf8", env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" } },
   );
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+});
+
+// ---------------------------------------------------------------------------
+// Snapshot league opponent mix (eighth comparison)
+
+function snapshotPlan(pairs = 40) {
+  const base = buildCadenceSeedPlan({ development: 3, probe: 1, training: 4 });
+  return buildReplicationSeedPlans(base, { replicates: ["r1"], training: pairs, confirmation: 2 }).replicates.r1;
+}
+
+test("snapshot league allocations re-derive the plan schedule, and plan collections keep their specs", () => {
+  const plan = snapshotPlan();
+  const allocations = trainingOpponentAllocations({ pairs: plan.training.length, seed: plan.opponent_schedule_seed });
+  assert.deepEqual(
+    allocations.map((u) => (u >= 0.4 && u < 0.6 ? "edger_heuristic" : "edger")),
+    plan.training_opponents,
+  );
+  assert.deepEqual(trainingOpponentSchedule({ pairs: 40, seed: plan.opponent_schedule_seed }), plan.training_opponents);
+  const specs = collectionSpecs({
+    plan, iteration: 1, pairsPerIteration: 4, modelPath: "/m.json", modelSha256: "abc", cadence: LEARNED, outDir: "/o",
+  });
+  assert.deepEqual(specs[0], {
+    spec_id: 0, match_index: 0, pair_id: "pair-0", kind: "collect", seed: plan.training[4],
+    candidate_actor: "blue", model_path: "/m.json", cadence: LEARNED, opponent: plan.training_opponents[4],
+    episode_id: "it1-pair4-blue", out_dir: "/o", model_sha256: "abc", reward_version: "edger_potential_reward_v1",
+  });
+  assert.equal(specs.length, 8);
+  // A plan whose schedule does not re-derive from its seed is refused.
+  const tampered = { ...plan, training_opponents: plan.training_opponents.map((opponent, index) => (index === 3 ? "aggressive" : opponent)) };
+  assert.throws(() => snapshotLeagueSelections({ plan: tampered, iteration: 0, pairsPerIteration: 4, pool: [] }), /re-derive/);
+  assert.deepEqual(snapshotCaptureIterations({ iterations: 24, every: 4 }), [0, 4, 8, 12, 16, 20]);
+  assert.throws(() => snapshotCaptureIterations({ iterations: 24, every: 2 }), /exceed the league's 7/);
+});
+
+test("an empty snapshot pool falls back to live v1 and keeps the plan's opponents", () => {
+  const plan = snapshotPlan();
+  const selections = snapshotLeagueSelections({ plan, iteration: 0, pairsPerIteration: 40, pool: [] });
+  const allocations = trainingOpponentAllocations({ pairs: 40, seed: plan.opponent_schedule_seed });
+  assert.deepEqual(selections.map((selection) => selection.opponent), plan.training_opponents);
+  for (const selection of selections) {
+    assert.equal(selection.allocation, allocations[selection.pair_index]);
+    assert.equal(selection.fallback === true, allocations[selection.pair_index] >= 0.6);
+    assert.equal(selection.opponent_model_sha256, undefined);
+  }
+  assert.ok(selections.some((selection) => selection.fallback));
+});
+
+test("snapshot league scores, PFSP weights and picks are deterministic and match a hand computation", () => {
+  // The within-bucket draw is frozen: also recomputed independently in Python.
+  assert.equal(snapshotLeagueDraw({ scheduleSeed: 38, pairIndex: 2 }), 0.27684230442124047);
+  assert.equal(snapshotLeagueDraw({ scheduleSeed: 20266927, pairIndex: 0 }), 0.718187757481676);
+  const snapshots = [
+    { id: "snapshot_iter0", capture_iteration: 0, model: "/a.json", model_sha256: "a" },
+    { id: "snapshot_iter4", capture_iteration: 4, model: "/b.json", model_sha256: "b" },
+    { id: "snapshot_iter8", capture_iteration: 8, model: "/c.json", model_sha256: "c" },
+  ];
+  const collections = [
+    { episodes: [
+      { opponent: "snapshot_iter0", opponent_model_sha256: "a", candidate_point: 1 },
+      { opponent: "edger", candidate_point: 0 },
+      { opponent: "snapshot_iter4", opponent_model_sha256: "b", candidate_point: 0 },
+    ] },
+    { episodes: [{ opponent: "snapshot_iter0", opponent_model_sha256: "a", candidate_point: 0.5 }] },
+  ];
+  const pool = snapshotLeagueScores(snapshots, collections);
+  assert.deepEqual(pool.map(({ games, score, weight }) => [games, score, weight]), [
+    [2, 0.75, 0.25 ** 2 + 0.05],
+    [1, 0, 1.05],
+    [0, 0.5, 0.3],
+  ]);
+  assert.equal(pfspWeight(1), 0.05);
+  assert.throws(() => snapshotLeagueScores(snapshots, [{ episodes: [
+    { episode_id: "x", opponent: "snapshot_iter4", opponent_model_sha256: "z", candidate_point: 1 },
+  ] }]), /different actor/);
+
+  const plan = snapshotPlan();
+  const selections = snapshotLeagueSelections({ plan, iteration: 1, pairsPerIteration: 20, pool });
+  assert.deepEqual(snapshotLeagueSelections({ plan, iteration: 1, pairsPerIteration: 20, pool }), selections);
+  const total = pool.reduce((sum, snapshot) => sum + snapshot.weight, 0);
+  let snapshotPairs = 0;
+  for (const selection of selections) {
+    const u = selection.allocation;
+    if (u < 0.6) {
+      assert.equal(selection.opponent, plan.training_opponents[selection.pair_index]);
+      continue;
+    }
+    snapshotPairs += 1;
+    const draw = snapshotLeagueDraw({ scheduleSeed: plan.opponent_schedule_seed, pairIndex: selection.pair_index });
+    assert.equal(selection.draw, draw);
+    let expected;
+    if (u < 0.8) {
+      expected = pool[Math.floor(draw * pool.length)];
+      assert.equal(selection.bucket, "historical_uniform");
+    } else {
+      // Cumulative weights in capture order: 0.1125, 1.1625, 1.4625.
+      const target = draw * total;
+      expected = target <= pool[0].weight ? pool[0] : target <= pool[0].weight + pool[1].weight ? pool[1] : pool[2];
+      assert.equal(selection.bucket, "pfsp");
+    }
+    assert.equal(selection.opponent, expected.id);
+    assert.equal(selection.snapshot_iteration, expected.capture_iteration);
+    assert.equal(selection.opponent_model_sha256, expected.model_sha256);
+  }
+  assert.ok(snapshotPairs > 0);
+  // The draw depends only on the schedule seed and the absolute pair index.
+  const reordered = snapshotLeagueSelections({ plan, iteration: 1, pairsPerIteration: 20, pool: [pool[1]] });
+  for (const [index, selection] of reordered.entries()) {
+    assert.equal(selection.draw, selections[index].draw);
+  }
+});
+
+test("model opponents play only legal deterministic actions and replay identically", () => {
+  const match = () => runEdgerV2CadenceMatch({
+    seed: 20261115,
+    candidateActor: "red",
+    model: randomModel(8),
+    cadence: LEARNED,
+    opponentBotId: "snapshot_iter0",
+    opponentModel: randomModel(11),
+  });
+  const first = match();
+  const second = match();
+  assert.equal(first.opponent, "snapshot_iter0");
+  assert.ok(first.stats.opponent_decisions > 0);
+  assert.equal(first.stats.opponent_illegal_attempts, 0);
+  assert.ok(first.stats.opponent_deployments > 0);
+  assert.equal(first.action_stream_hash, second.action_stream_hash);
+  assert.equal(first.final_state_hash, second.final_state_hash);
+  const bot = runEdgerV2CadenceMatch({
+    seed: 20261115, candidateActor: "red", model: randomModel(8), cadence: LEARNED, opponentBotId: "aggressive",
+  });
+  assert.equal("opponent_decisions" in bot.stats, false);
+  assert.equal("opponent_illegal_attempts" in bot.stats, false);
+});
+
+test("convert-collection refuses snapshot league collections", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "edger-cadence-snapshot-convert-"));
+  try {
+    const collectionPath = path.join(directory, "collection.json");
+    fs.writeFileSync(collectionPath, JSON.stringify({
+      schema_version: "edger_v2_cadence_collection_v1", opponent_mix: "snapshot-league", episodes: [],
+    }));
+    assert.throws(() => convertCadenceCollection({ collectionPath, store: directory, manifestOut: path.join(directory, "m.json") }), /snapshot league/);
+    assert.deepEqual(
+      snapshotLeagueCollectionProblems({ episodes: [] }, { pool: [], selections: [] }),
+      ["the collection has no snapshot league record"],
+    );
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("a resumed snapshot league arm reproduces the uninterrupted arm's picks, bodies and weights", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "edger-cadence-snapshot-arm-"));
+  try {
+    const python = (argv) => {
+      const result = spawnNativePython(argv, {
+        cwd: ROOT, encoding: "utf8", env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" },
+      });
+      assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    };
+    // A small random legacy parent, initialized to the full grid as in the comparison.
+    python(["-c", [
+      "import importlib.util, sys, torch",
+      `spec = importlib.util.spec_from_file_location("t", ${JSON.stringify(path.join(ROOT, "scripts", "edger-v2-training.py"))})`,
+      "t = importlib.util.module_from_spec(spec); sys.modules['t'] = t; spec.loader.exec_module(t)",
+      "torch.manual_seed(7); m = t.EdgerV2Policy(5)",
+      "vocab = {'aggressive': 0, 'defender': 1, 'edger': 2, 'edger_heuristic': 3, 'random': 4}",
+      "p = t.checkpoint_payload(model=m, optimizer=torch.optim.Adam(m.parameters()), phase='behavior_cloning', seed=7, manifest_hash='test', dataset_checksum='test', parent_checkpoint=None, vocab=vocab, metrics={})",
+      `t.save_checkpoint(${JSON.stringify(path.join(directory, "parent.pt"))}, p)`,
+    ].join("\n")]);
+    const initial = path.join(directory, "initial.pt");
+    const initialModel = path.join(directory, "initial.json");
+    python([path.join(ROOT, "scripts", "edger-v2-training.py"), "initialize-full-grid",
+      "--checkpoint", path.join(directory, "parent.pt"), "--out", initial, "--model-out", initialModel]);
+    // Schedule seed 38 draws u = 0.251, 0.725, 0.838: live v1, then uniform,
+    // then PFSP over two snapshots.
+    const planPath = path.join(directory, "plan.json");
+    fs.writeFileSync(planPath, JSON.stringify({
+      schema_version: "edger_v2_cadence_seed_plan_v1", training: [9101, 9102, 9103], opponent_schedule_seed: 38,
+      training_opponents: trainingOpponentSchedule({ pairs: 3, seed: 38 }),
+    }));
+    const work = path.join(directory, "arm");
+    const trainArm = (extra) => spawnSync(process.execPath, [
+      path.join(ROOT, "scripts", "edger-v2-cadence-experiment.mjs"), "train-arm", "--arm", "B-test",
+      "--cadence", LEARNED, "--seeds", planPath, "--iterations", "3", "--pairs-per-iteration", "1",
+      "--workers", "2", "--torch-seed", "20260926", "--parent-checkpoint", initial, "--parent-model", initialModel,
+      "--work-dir", work, "--opponent-mix", "snapshot-league", "--snapshot-every", "1", "--prune-episodes", ...extra,
+    ], { cwd: ROOT, encoding: "utf8" });
+    const full = trainArm([]);
+    assert.equal(full.status, 0, full.stderr);
+    fs.renameSync(work, `${work}.full`);
+    const interrupted = trainArm(["--interrupt-after-iteration", "1"]);
+    assert.equal(interrupted.status, 75, interrupted.stderr);
+    // A crash inside iteration 2 leaves partial outputs; resuming sets them aside.
+    fs.mkdirSync(path.join(work, "iter2"));
+    fs.writeFileSync(path.join(work, "iter2", "checkpoint.pt"), "partial");
+    const resumed = trainArm(["--start-iteration", "2"]);
+    assert.equal(resumed.status, 0, resumed.stderr);
+    assert.equal(fs.readFileSync(path.join(work, "iter2.interrupted-1", "checkpoint.pt"), "utf8"), "partial");
+
+    // Snapshot actor files embed run metadata, so identity is judged on picks,
+    // games, bodies and weights; each run's hashes bind its own files.
+    const comparable = (root, iteration) => {
+      const collection = JSON.parse(fs.readFileSync(path.join(root, `iter${iteration}`, "collection.json"), "utf8"));
+      const headers = collection.episodes.map((episode) => JSON.parse(fs.readFileSync(
+        path.join(root, `iter${iteration}`, "episode-headers", path.basename(episode.header)), "utf8")));
+      return {
+        pool: collection.snapshot_league.pool.map(({ model, model_sha256, ...rest }) => rest),
+        selections: collection.snapshot_league.selections.map(({ opponent_model_sha256, ...rest }) => rest),
+        episodes: collection.episodes.map(({ header, opponent_model_sha256, ...rest }) => rest),
+        bodies: headers.map((header) => header.body_sha256),
+        strata: headers.map((header) => header.opponent_stratum ?? null),
+        weights: JSON.parse(fs.readFileSync(path.join(root, `iter${iteration}`, "model.json"), "utf8")).weights,
+      };
+    };
+    for (const iteration of [0, 1, 2]) {
+      assert.deepEqual(comparable(work, iteration), comparable(`${work}.full`, iteration), `iteration ${iteration}`);
+    }
+    const iteration = (index) => comparable(work, index);
+    assert.deepEqual(iteration(0).selections.map((selection) => selection.opponent), ["edger"]);
+    assert.deepEqual(iteration(1).selections.map((selection) => [selection.bucket, selection.opponent]), [["historical_uniform", "snapshot_iter0"]]);
+    assert.deepEqual(iteration(1).strata, [SNAPSHOT_LEAGUE_STRATUM, SNAPSHOT_LEAGUE_STRATUM]);
+    assert.deepEqual(iteration(0).strata, [null, null]);
+    const [pfsp] = iteration(2).selections;
+    const { pool } = iteration(2);
+    assert.deepEqual(pool.map((snapshot) => snapshot.id), ["snapshot_iter0", "snapshot_iter1"]);
+    assert.equal(pool[0].games, 2);
+    assert.equal(pool[1].games, 0);
+    const expected = pfsp.draw * (pool[0].weight + pool[1].weight) <= pool[0].weight ? "snapshot_iter0" : "snapshot_iter1";
+    assert.equal(pfsp.bucket, "pfsp");
+    assert.equal(pfsp.opponent, expected);
+    // Each run's snapshot hash binds the actor file that run exported.
+    const status = JSON.parse(fs.readFileSync(path.join(work, "arm-status.json"), "utf8"));
+    assert.equal(status.stop_reason, "completed");
+    assert.equal(status.resumed_at_iteration, 2);
+    const recorded = JSON.parse(fs.readFileSync(path.join(work, "iter2", "collection.json"), "utf8")).snapshot_league.pool;
+    assert.equal(recorded[1].model_sha256, status.iterations[0].model_sha256);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("head-to-head evaluation binds both actors and plays both sides against the model", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "edger-cadence-head-to-head-"));
+  try {
+    const planPath = path.join(directory, "plan.json");
+    fs.writeFileSync(planPath, JSON.stringify(buildCadenceSeedPlan({ development: 1, probe: 1, training: 1 })));
+    const candidate = path.join(directory, "candidate.json");
+    const opponent = path.join(directory, "opponent.json");
+    fs.writeFileSync(candidate, JSON.stringify(randomModel(8)));
+    fs.writeFileSync(opponent, JSON.stringify(randomModel(11)));
+    const out = path.join(directory, "report.json");
+    const result = spawnSync(process.execPath, [
+      path.join(ROOT, "scripts", "edger-v2-cadence-experiment.mjs"), "evaluate",
+      "--model", candidate, "--opponent-model", opponent, "--cadence", LEARNED, "--seeds", planPath,
+      "--seed-set", "development", "--pairs", "1", "--workers", "2", "--out", out,
+    ], { cwd: ROOT, encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    const report = JSON.parse(fs.readFileSync(out, "utf8"));
+    const sha = (file) => spawnSync("shasum", ["-a", "256", file], { encoding: "utf8" }).stdout.split(" ")[0];
+    assert.equal(report.model_sha256, sha(candidate));
+    assert.equal(report.opponent_model_sha256, sha(opponent));
+    assert.equal(report.opponent, `model:${sha(opponent).slice(0, 16)}`);
+    assert.deepEqual(report.results.map((game) => game.candidate_actor), ["blue", "red"]);
+    for (const game of report.results) {
+      assert.equal(game.opponent_model_sha256, report.opponent_model_sha256);
+      assert.equal(game.stats.opponent_illegal_attempts, 0);
+      assert.ok(game.stats.opponent_decisions > 0);
+    }
+    assert.equal(report.repeat_checked_specs, 2);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 });

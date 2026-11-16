@@ -1801,6 +1801,199 @@ legal troop tile is available.
   - Under the comparison rule, no extension or follow-up is chosen from this
     output.
 
+### Eighth comparison: snapshot league opponent mix
+
+**Status: design approved with revisions on November 15, 2026, then
+implemented, frozen, run once and analyzed the same day. Frozen decision: the
+current mix stays** ([result](#eighth-comparison-result)). The run is in `SL` =
+`~/edge_royale-runs/20261115-snapshot-league.noindex/` (`plan.md`,
+`FROZEN.txt`, `analysis.md`, `analysis.json`, `README.md`, `SHA256SUMS`;
+[preflight](#eighth-comparison-preflight-and-launch)). The owner approved
+design work on the league opponent mix on November 10. On November 13 it resumed under
+full-grid placement and reward v1, without a warm-up. On November 15, after
+the code reading below, the owner chose to test the snapshot league.
+
+**September allocation and critic label** (code reading, November 15).
+- The historical league stage ran `edger:train:league` with the live champion and no `--league` file or `--historical-anchors` (`scripts/edger-production-campaign.mjs` at `0270d82`). Both snapshot buckets were empty and `selectOpponent` fell back to the champion. Replaying the historical scheduler at seed `20260718` gives 396 champion and 104 heuristic pairs (79.2% and 20.8%).
+- `train-arm` implements the same nominal allocation with empty buckets in `trainingOpponentSchedule`. Over the r6–r17 plans the heuristic share is 19.9% (1,837 of 9,216 pairs). The paths use different seed schedules.
+- Live v1 plays the same way in both paths: `selectEdgerAction` on `edger_policy_current.json`, deciding every tick.
+- This rules out exposure to snapshots as an explanation for the historical regression. The small difference in realized proportions comes from the different draws. The allocation question closes without a training run.
+- **The league used the wrong opponent label for value estimation.**
+  - The league worker records the opponent's `policy_id` as its stratum. For the champion that is the model id `edger_policy_bootstrap_20260701`. `train-arm` uses `edger`.
+  - The parent's vocabulary is `{aggressive: 0, defender: 1, edger: 2, edger_heuristic: 3, random: 4}`. This was read from copies of the archived `parent.pt` and the league `candidate.pt` (`79a095af…`). The learner maps an unknown stratum to index 0.
+  - The code and schedule imply that 792 of the collected games had the model-id label. Rows with that label resolve to the aggressive embedding. This is inferred from the code and checkpoint vocabulary. The archived rows were not inspected.
+  - The label enters the value head, and those values affect the policy gradients through V-trace advantages. Its contribution to the regression is untested. The production fix is a separate change for fresh campaigns. See [training contract](EDGER_TRAINING.md#5-scaling-and-snapshot-league).
+
+**Question.** Does filling the league's snapshot buckets with the learner's
+own earlier policies give better children than the current champion and
+heuristic mix? The comparison holds games, seeds, sides and updates equal, with
+the `train-arm` learner, refreshed rollouts, full-grid placement and reward v1.
+The result informs the next league-stage design. Match points determine the
+decision.
+
+**Approved choices.**
+1. **Scale: 1,536 updates** (24 refreshes of 32 mirrored pairs), with an evaluation after iteration 5 as a secondary.
+   - Twenty-four refreshes give the pool time to reach six snapshots. The first six control iterations reproduce the sixth comparison's full-grid reference.
+2. **Snapshots: the arm's own pre-update actor at the start of iterations 0, 4, 8, 12, 16 and 20.** Snapshot 0 is the initialized full-grid parent. Snapshot 4 is the actor after iterations 0–3. A snapshot captured at iteration k first becomes eligible at k + 1. The pool is empty at iteration 0, so both snapshot buckets use live v1 and the heuristic bucket stays as scheduled. Uniform and PFSP both use the same pool, in ascending capture order.
+3. **PFSP score:** the learner's cumulative mean match point against each snapshot (win 1, draw 0.5, loss 0), across both sides and both snapshot buckets. Use only games from completed prior iterations. Unplayed snapshots start at 0.5. Apply (1 − score)² + 0.05 and fix the weights for the entire next refresh.
+4. **Snapshot play:** deterministic, with the snapshot's own learned delay, on the full grid. Use the production league worker's policy selector and legal-action enumeration. The learner keeps sampling at temperature 1.
+5. **Critic stratum for snapshot games: `edger`,** the existing stratum for a learned policy with hidden information. Production's fallback (index 0, aggressive) would mislabel them. A new vocabulary entry would change the critic's shape and need an initialization rule.
+6. **Extra secondary evaluations,** each on the same 50 mirrored development pairs as the primary. Evaluate both final children against defender and each B child against its paired A child at learned cadence. Both are descriptive and outside the carry-forward decision.
+
+**Design.** RL-only, matched by parent.
+- **Host and code:** the M6, with a clean clone at the reviewed code checkpoint (below). With default settings, `train-arm` must reproduce the sixth comparison's full-grid arm (preflight).
+- **Parents and inputs:** `FR`'s parents r6–r17, through `initialize-full-grid` as in the sixth and seventh comparisons. The sixth's 36 inputs are used byte for byte; its 768-pair plans equal `SS`'s.
+- **Arms.** Each parent trains two children:
+  - **A (current mix):** the seventh's F1 command with `--iterations 24`. That is learned cadence, 32 mirrored pairs per refresh, Adam 0.001, torch seed 20260926, reward v1, no warm-up and pruned bodies.
+  - **B (snapshot league):** identical except `--opponent-mix snapshot-league`.
+- **How B's opponents are drawn.**
+  - Each pair keeps the allocation draw u that already sets the control's schedule. The draws come from the plan's `opponent_schedule_seed`, and they re-derive all 12 plans exactly (9,216 of 9,216 pairs).
+  - Both arms play live v1 for u < 0.4 and the heuristic for u in [0.4, 0.6).
+  - For u ≥ 0.6, A plays live v1. B plays a snapshot: uniform over the pool for u in [0.6, 0.8), and by PFSP for u in [0.8, 1).
+  - Choices within a bucket use a separate deterministic draw keyed by the plan's schedule seed and the absolute pair index. Freeze the exact draw derivation and use the same selection for both sides.
+  - The planned bucket shares across r6–r17 are 0.407, 0.199, 0.201 and 0.193. Including iteration 0's fallback, B is scheduled to play snapshots in 3,462 of 9,216 pairs (37.6% overall, 39.2% after iteration 0) and live v1 in 42.5%, compared with A's 80.1%.
+- Both arms play the same seeds, sides and order, with one update per episode and 1,536 scheduled updates per arm.
+- **Built-in checks.** Verify each identity check at its iteration boundary and verify the recorded opponent selections before accepting each completed refresh. A mismatch is an instrument failure. Stop scheduling new steps when detected and issue no labels.
+  - B's iteration 0 must equal A's: 64 of 64 episode ids, headers, action-stream hashes and final-state hashes.
+  - A's weights after iteration 5 must equal the sixth comparison's full-grid child weights, compared on `weights` as `FV/posthoc.md` did.
+  - B's collection records each pair's bucket, selected opponent and, for snapshot games, the snapshot iteration and actor SHA-256. Record the ordered eligible pool and frozen PFSP weights per refresh. Re-derive all picks from the frozen seed plan and verified prior collections, including the fallback. A retry rebuilds the pool and scores from hash-verified completed iterations and reproduces the same picks, bodies and weights as an uninterrupted run.
+- **Evaluation:** the sixth's. Each model plays 50 development pairs (100 games) against live v1, the heuristic and aggressive, at learned cadence, and its score is the equal-weight mean.
+  - Final models of both arms, plus both arms after iteration 5 (secondary). The initialized full-grid parent plays the same primary suite once per pair for the descriptive gain over the parent.
+  - Each final child also gets the sixth's unchanged `diagnostics.mjs` (parity, timing, defense, support positions, placement ties), the playstyle and policy diagnostics, and the two extra evaluations in choice 6.
+  - Complete the final primary evaluations and parity across all pairs before spending remaining run time on the separate descriptive evaluations.
+
+**Code checkpoint** (reviewed, with tests, before the smoke). Training tooling
+only.
+- `train-arm --opponent-mix plan|snapshot-league`. `plan` is the existing default. `snapshot-league` implements the pool, PFSP and collection records above.
+- Model opponents in the cadence match core use deterministic `selectEdgerV2PolicyDecision`, full-grid enumeration and the model's own delay. A snapshot game's header keeps the snapshot id as `opponent` and adds `opponent_stratum`. The learner rejects an explicit stratum missing from the parent vocabulary. Legacy headers continue to use `opponent` and their existing lookup. Other headers stay byte-identical, and `convert-collection` rejects snapshot collections until it supports their replay and metadata.
+- `evaluate --opponent-model <file>` for head-to-head. Bind both actor hashes and both mirrored sides, and check model-opponent legality and repeatability as well as the candidate's.
+- Tests:
+  - the default schedule and collections are unchanged;
+  - the allocation draws re-derive the schedule;
+  - the empty pool falls back to live v1;
+  - PFSP picks are deterministic and match a hand computation;
+  - resuming a snapshot arm preserves opponent picks and learner weights;
+  - snapshot opponents make only legal actions and replay identically;
+  - snapshot games use the `edger` stratum.
+
+**Analysis.**
+- **Primary:** d = B − A after 1,536 updates, per parent. Report the mean of the 12 values with a two-sided 95% t interval (11 df).
+- **Labels,** as in the fifth to seventh comparisons:
+  - direction: "snapshot league better" (interval above 0), "current mix better" (below 0) or "direction unresolved";
+  - size: "at least 0.05" if the lower bound is ≥ +0.05 or the upper bound is ≤ −0.05, "below 0.05" if both endpoints lie strictly within (−0.05, +0.05), otherwise "size unresolved". Use unrounded values.
+- **Secondary** (pre-registered, no labels):
+  - d after iteration 5;
+  - per-opponent d, with unadjusted intervals;
+  - each arm's gain over the parent, the median and SD of d, and all 12 pairs;
+  - the paired B − A defender difference and B's head-to-head match point against A, each with a 95% t interval over parents;
+  - B's realized opponent shares and PFSP weights by iteration;
+  - the diagnostics and playstyle results, including the number of children per arm with a pooled 1-tick fraction of at least 0.9.
+- **Sample size and stopping:** n = 12, fixed. The analysis runs once after completion, the cap or an instrument failure. Progress checks read only counts, timings, exit codes, stop reasons and the built-in checks.
+- **Failures,** as in the fifth comparison:
+  - Settings never change. An infrastructure failure gets one retry with identical settings, resuming from its last completed iteration.
+  - A collapse (the current zero-successful-deployments stop) or non-finite stop is a recipe outcome, scored with the last good actor or the initialized parent if none. Record the actual update count. Missing iteration-5 secondary scores are reported separately.
+  - An engineering-invalid child (illegal attempts, a nondeterministic evaluation or a parity failure) blocks its arm's favorable direction and size labels and blocks "below 0.05" for the comparison.
+  - A missing required primary score makes the result incomplete, with no labels. An unavailable descriptive score does not by itself block the primary.
+
+**Sizing** (planning model, not a power guarantee). The closest measured
+spreads of a matched difference are:
+- 0.063: the fifth comparison (two rewards, 1,536 updates);
+- 0.082: the sixth (two action spaces, 384 updates);
+- 0.096: `PR`'s d_P (two learners on the same 1,536 refreshed games);
+- 0.130: the seventh (two rewards, full-grid, 384 updates).
+A change of training opponents may spread more than a change of reward.
+
+| SD of d | Interval half-width | 80% power to exclude 0 at | Power to exclude 0 at a true 0.05 | at a true 0.10 |
+|---|---|---|---|---|
+| 0.063 | 0.040 | 0.056 | 0.71 | 1.00 |
+| 0.082 | 0.052 | 0.073 | 0.49 | 0.97 |
+| 0.096 | 0.061 | 0.085 | 0.38 | 0.91 |
+| 0.130 | 0.083 | 0.116 | 0.23 | 0.68 |
+
+These use the noncentral t with 12 pairs and two-sided α = 0.05. An unresolved
+direction is a plausible outcome. At a true gain of +0.05, the chance of
+also clearing the mean gate is about 35–42% at SD 0.096–0.082, before any
+engineering failures. At the latest observed SD of 0.130, it is about 23%.
+
+**Cost** (estimate, from `FV`'s run).
+- A full-grid iteration took about 13 seconds with two arms side by side: 9–11 seconds of collection and 2–4.5 seconds of learning, growing over the run. An A arm should take about 6–8 minutes.
+- Snapshot games add a second model's inference, so a B arm may take 8–10 minutes.
+- Budget for 26 seconds per child for the primary and diagnostics based on `FV`, plus the two iteration-5 suites, one parent suite, two defender evaluations and one head-to-head per pair. Use the smoke to check the cost of the model-opponent path.
+- That is about 12 minutes per parent with the arms side by side, or about 2.5 hours for twelve. Enforce the five-hour wall-clock cap from launch across training, retries and evaluations. Stop active work at the deadline and retain verified completed outputs for analysis.
+- The run is local only, about 1.1 GB with pruned bodies.
+
+**What it decides.** Fixed before output.
+- **Carry snapshots into the next league-stage design** only if d's direction label is "snapshot league better" after validity checks and the unrounded mean is at least +0.05. The next design starts from snapshots every 256 updates, PFSP from prior training games and the `edger` stratum. Production adoption has its own decision and requires the separate league labelling fix.
+- **Otherwise the current mix stays**, which is production's default with empty buckets. The snapshot mix stays opt-in in `train-arm`. After "current mix better", a future campaign does not pass snapshots to the league without a new design.
+- **An incomplete result or an instrument failure leaves the current mix in use and gives no labels.**
+- **Every outcome:** the refresh requirement stands, `train-arm` stays the learner, and the children are local diagnostics. Report size labels for complete, instrument-valid results. The 12-pair sample and stopping rules are fixed before output.
+
+**What it does not test.**
+- Snapshots from other runs, promoted history or contenders.
+- Scales beyond 1,536 updates, and the production learner.
+- The historical stratum fallback.
+
+The primary weights live v1 at one third. Use the per-opponent results to read
+any tradeoff as its training share falls from 80.1% in A to 42.5% in B.
+
+**Before freezing.** These are the go/no-go for freeze and launch.
+- The code checkpoint, with tests, and `PYTHON=/usr/local/bin/python3 npm test -- --test-concurrency=2` on this host.
+- With default settings, A-r6's first six iterations reproduce the sixth comparison's full-grid r6 child weights.
+- A smoke on the pilot parent `b0-s20260718` with a throwaway `smoke` plan, never part of the comparison. B runs six iterations of four pairs, with a snapshot every two iterations so the pool fills. It checks:
+  - iteration-0 identity;
+  - the re-derivation of every pick;
+  - snapshot legality and repeatability;
+  - that the worker count changes no body;
+  - that an interrupted run resumed with a nonempty pool reproduces an uninterrupted run;
+  - one head-to-head evaluation.
+- A dry run of the analysis on synthetic inputs covering every label, the blocked, incomplete and instrument-failure paths, and the carry-forward rule.
+- Hash the plan, runner, analysis code, diagnostics, source snapshot, reference weight digests and inputs into `FROZEN.txt` before the comparison produces output.
+
+#### Eighth comparison preflight and launch
+
+November 15, 2026 (UTC times below are November 14). Every go/no-go item
+passed; `SL/plan.md` restates the design and records the runner's choices.
+- **Code checkpoint** (working tree, uncommitted): `PYTHON=/usr/local/bin/python3 npm test -- --test-concurrency=2` passed 268/268, with seven new Node tests and one new Python test covering the listed cases. `SL/source` is `4bb1ec9` plus `SL/source.patch`, equal to that tree.
+- **Control reproduction:** from the frozen source, A-r6 for six iterations reproduced the sixth comparison's full-grid r6 weights after iteration 5. All 384 games equal `FV`'s F1-r6. `initial.json` differs from `FV`'s only in the recorded platform string (macOS 27.2 → 27.2.1).
+- **Smoke** (not evidence; pilot parent `b0-s20260718`, throwaway `smoke` plan, six iterations of four pairs, a snapshot every two):
+  - Two runs: S1 used 6 workers, and its B arm was SIGKILLed inside iteration 4 and resumed by the runner's retry. S2 used 3 workers, uninterrupted. All six iterations of both arms matched in picks, pools, games, bodies and weights.
+  - Iteration-0 identity held, and every pick re-derived independently in Python. Every bucket and the empty-pool fallback were exercised, and the 22 snapshot games made no illegal attempt. Final scores were equal across worker counts, both children passed parity, and the head-to-head bound both actors and passed its repeat check.
+  - A tamper check accepted an untouched copy and rejected a swapped pick, a PFSP weight changed by 1e-9 and a swapped actor.
+- **Analysis dry run:** 12 of 12 synthetic cases gave the expected labels and decisions: every label, three blocked paths, the carry rule, incomplete, instrument failure and a missing boundary check.
+- **Runner choices** (`SL/plan.md`):
+  - Identity across separate runs is judged on picks, games, bodies and weights. Exported actors embed the collection checksum, which records wall time, so actor SHA-256 values bind only their own run. This is also why `FV`'s byte check reported 0/12.
+  - An evaluation refused for illegal attempts or nondeterminism marks its child engineering-invalid and leaves its primary score missing, so the result is incomplete.
+  - The cap kills active steps at five hours from launch.
+- **Freeze and launch:** `FROZEN.txt` (133 files) was written at 15:20:48Z, and `EDGER_FROZEN_NODE="$(command -v node)" caffeinate -is /usr/local/bin/python3 -I -u run.py` launched once at 15:21:01Z. An unrelated `gridcast` process shared the host, so wall times and timing p95 are not cost evidence.
+
+#### Eighth comparison result
+
+November 15, 2026 (UTC times below are November 14). `SL/analysis.md` and
+`SL/analysis.json` hold the frozen analysis, read once after the run.
+- **Run.** One launch, 15:21:01Z–17:26:31Z (2 h 5 min), exit 0, with no retries and well inside the cap. `FROZEN.txt` verifies after the run.
+  - Every built-in check passed for all 12 parents: iteration-0 identity (64/64 games), A's iteration-5 weights equal to the sixth's full-grid child, A's plan opponents in 24/24 iterations, and B's picks re-derived in 24/24 iterations.
+  - All 24 children completed 1,536 updates with no collapse or non-finite stop. All passed parity and made no illegal attempts, so no child was engineering-invalid.
+- **Primary:** d = B − A = **+0.025, 95% t interval [−0.012, +0.062]** (SD 0.058, n = 12).
+  - Labels: **direction unresolved**, **size unresolved**. B was above A in 9 of 12 parents. The median was +0.025, with a range of −0.093 (r15) to +0.130 (r14).
+  - **Decision (frozen): the current mix stays.** Snapshots are not carried into the next league-stage design, and the snapshot mix stays opt-in in `train-arm`.
+  - The SD was below every planning value (0.063–0.130). The interval's upper end, +0.062, is above +0.05, so it does not exclude a gain the size the rule required.
+- **Secondary** (no labels; per-opponent intervals unadjusted):
+  - arm means: A 0.851, B 0.876. Gain over the parent: A +0.199 [+0.176, +0.223], B +0.224 [+0.175, +0.273];
+  - per opponent: live Edger +0.013 [−0.050, +0.075], heuristic +0.018 [−0.038, +0.073], aggressive +0.044 [+0.012, +0.077];
+  - after iteration 5: +0.053 [−0.014, +0.120];
+  - defender: every child of both arms scored 1.000, so the paired difference is 0;
+  - head-to-head: B's match point against A was 0.522 [0.422, 0.622], ranging from 0.30 (r15) to 0.90 (r14);
+  - B's realized opponents: live v1 42.5%, heuristic 19.9% and snapshots 37.6% of 9,216 pairs, as planned;
+  - PFSP pools (means over parents): the sampling learner scored below 0.5 against every snapshot it had played. Against snapshot 0 its cumulative mean rose from 0.17 (iteration 2) to 0.35 (iteration 23). Against later snapshots it ended at 0.24–0.41, so the final mean weights were 0.48–0.63 and PFSP stayed close to uniform;
+  - diagnostics: parity 12/12 in both arms, defense 1.000, placement ties 0 (240 and 229 fixtures), support hits 36 and 35, timing p95 1.28–2.94 ms (A) and 1.21–2.93 ms (B) on a shared host;
+  - playstyle at 60 s (means over children and opponents): material 1.47 against 1.45, threat 0.64 against 0.60, support 0.041 against 0.035. B made more decisions per game (645 against 279; higher in 9 of 12 parents) and fewer Giant plays (0.09 against 0.17);
+  - children with a pooled 1-tick fraction ≥ 0.9: A 0, B 1 (B-r14, 0.993). B-r14 also had the largest d and head-to-head point.
+- **What it does not show.**
+  - The unresolved direction does not show that snapshots have no value. The interval reaches +0.062. It also does not show harm, since the lower bound is −0.012.
+  - The aggressive interval above 0 is an unadjusted secondary, not a label.
+  - Whether snapshot opponents push children toward faster decisions is untested. B-r14 is one child, and the decisions-per-game difference is descriptive.
+  - Under the comparison rule, no extension or follow-up is chosen from this output.
+
 ## Limits
 
 - The corpus is a 160-episode subset, not the production corpus.
@@ -1814,7 +2007,7 @@ legal troop tile is available.
 - Option 1 tested one coefficient (0.05) and one row mask, with `P`'s parents, seeds and controls; the controls were trained on October 26–27 under code shown to reproduce them.
 - The β = 1 follow-up tested one more coefficient on the same mask. Its same-host controls come from an addendum written after the frozen analysis was read; that addendum changed only the controls' host.
 - Same-host training-run variance was measured once (six old-recipe runs on the M6): the child-primary SD is 0.118, strongly influenced by one valid low-scoring run. Three-run contrasts are below the modeled 80%-power target. Matched-difference spread was measured for rollout freshness at two scales: SD 0.075 at 384 updates and 0.229 at 1,536, each over 12 pairs.
-- Rollout freshness was tested at two scales on the same 12 parents: 384 updates, and 1,536 with a 1,536-game rollout. Both used one refresh interval (64 games), one cache, the `train-arm` learner, `train-arm` opponents and development seeds. The production learner path was tested on fixed refreshed data in the third and fourth comparisons: it cost about 0.1, and attribution among its three behaviors is unresolved. League opponents and the historical scale (about 11,318 updates) are untested. The stale-degeneration pattern is post hoc.
+- Rollout freshness was tested at two scales on the same 12 parents: 384 updates, and 1,536 with a 1,536-game rollout. Both used one refresh interval (64 games), one cache, the `train-arm` learner, `train-arm` opponents and development seeds. The production learner path was tested on fixed refreshed data in the third and fourth comparisons: it cost about 0.1, and attribution among its three behaviors is unresolved. The historical league used the same nominal champion–heuristic allocation as `train-arm`, with a 20.8% realized heuristic share and empty snapshot buckets. Snapshot opponents were tested once, in the eighth comparison: the arm's own actors every 256 updates over 1,536 updates, with direction unresolved. The historical critic-stratum fallback and the historical scale (about 11,318 updates) are untested. The stale-degeneration pattern is post hoc.
 - RL training is bit-reproducible only on the same host (M1 against M6, PyTorch 2.11.0 with Accelerate). Host variation of a six-iteration child (up to 0.17 primary) is as large as most effects in this review, so every RL contrast here carries training-run uncertainty that its intervals do not cover. Future comparisons need same-host controls.
 
 ## Reproduction
