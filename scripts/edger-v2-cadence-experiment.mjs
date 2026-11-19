@@ -917,6 +917,106 @@ async function commandEvaluate(args) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Fireball capture-value branches (tactical review, ninth comparison, Stage 1)
+//
+// Replays a model's own deterministic learned-cadence evaluation games. Each
+// unforced game must reproduce its recorded action-stream and final-state
+// hashes and point; then, per opportunity class, the first decision of that
+// class that did not already capture is replaced by a forced capturing
+// Fireball (decideForcedFireballCapture) and the game is replayed from the
+// start. Evaluation only: no learner, no promotion use.
+export const FIREBALL_BRANCH_SCHEMA = "edger_v2_fireball_branch_v1";
+
+export function fireballBranchSpecs({ evaluations, modelPath }) {
+  const specs = [];
+  for (const evaluation of evaluations) {
+    for (const result of [...evaluation.results].sort((left, right) => left.spec_id - right.spec_id)) {
+      specs.push({
+        spec_id: specs.length,
+        match_index: specs.length,
+        pair_id: `${evaluation.opponent}-${result.pair_id}`,
+        kind: "fireball-branch",
+        seed: result.seed,
+        candidate_actor: result.candidate_actor,
+        model_path: path.resolve(modelPath),
+        cadence: evaluation.cadence,
+        opponent: result.opponent,
+        expected_action_stream_hash: result.action_stream_hash,
+        expected_final_state_hash: result.final_state_hash,
+        expected_candidate_point: result.candidate_point,
+      });
+    }
+  }
+  return specs;
+}
+
+export function summarizeFireballBranches(games) {
+  const classes = {};
+  for (const category of ["lethal", "cluster"]) {
+    const records = games.map((game) => game.classes[category]).filter((record) => record?.opportunity);
+    const branched = records.filter((record) => record.branched);
+    const deltas = branched.map((record) => record.forced.delta);
+    const landed = branched.filter((record) => record.forced.cast.landed);
+    classes[category] = {
+      games: games.length,
+      games_with_opportunity: records.length,
+      own_captures: records.length - branched.length,
+      branched: branched.length,
+      casts_played: branched.filter((record) => record.forced.cast.cast_played).length,
+      impacts: branched.filter((record) => record.forced.cast.impact !== null).length,
+      landed: landed.length,
+      delta_sum: deltas.reduce((sum, value) => sum + value, 0),
+      delta_mean_given_branch: deltas.length ? deltas.reduce((sum, value) => sum + value, 0) / deltas.length : null,
+      // Every game counts; games without a branch of this class add 0.
+      delta_mean_full_suite: games.length ? deltas.reduce((sum, value) => sum + value, 0) / games.length : null,
+      replaced_own_cards: branched.reduce((counts, record) => {
+        counts[record.first.own_card] = (counts[record.first.own_card] ?? 0) + 1;
+        return counts;
+      }, {}),
+    };
+  }
+  return classes;
+}
+
+async function commandFireballBranch(args) {
+  const modelPath = path.resolve(required(args, "model"));
+  const modelSha256 = sha256File(modelPath);
+  const files = asList(required(args, "evaluations")).map((file) => path.resolve(file));
+  const evaluations = files.map((file) => JSON.parse(fs.readFileSync(file, "utf8")));
+  evaluations.forEach((evaluation, index) => {
+    if (evaluation.schema_version !== "edger_v2_cadence_evaluation_v1" || evaluation.model_sha256 !== modelSha256 ||
+        evaluation.cadence !== EDGER_V2_CADENCES.LEARNED || evaluation.deterministic_choices !== true ||
+        evaluation.opponent_model) {
+      throw new Error(`${files[index]} is not a deterministic learned-cadence bot evaluation of this model`);
+    }
+  });
+  const specs = fireballBranchSpecs({ evaluations, modelPath });
+  const started = Date.now();
+  const games = await runCadenceSpecs(specs, {
+    workers: Number(args.workers ?? 7),
+    onResult: progress(`${args.label ?? "fireball-branch"}`),
+  });
+  const identityFailures = games.filter((game) => !game.identity).map((game) => game.spec_id);
+  const report = {
+    schema_version: FIREBALL_BRANCH_SCHEMA,
+    label: args.label ?? null,
+    model: modelPath,
+    model_sha256: modelSha256,
+    evaluations: files.map((file, index) => ({
+      path: file, sha256: sha256File(file), opponent: evaluations[index].opponent, games: evaluations[index].results.length,
+    })),
+    identity: { games: games.length, reproduced: games.length - identityFailures.length, failures: identityFailures },
+    wall_seconds: (Date.now() - started) / 1000,
+    classes: identityFailures.length === 0 ? summarizeFireballBranches(games) : null,
+    games,
+  };
+  writeJson(required(args, "out"), report);
+  if (identityFailures.length > 0) {
+    throw new Error(`${identityFailures.length} unforced games did not reproduce their recorded hashes`);
+  }
+}
+
 // One model's routine diagnostics over its evaluation files (one per
 // opponent): pooled over every game once, and per opponent.
 export function policyDiagnosticsReport(evaluations, { label = null } = {}) {
@@ -1029,6 +1129,8 @@ export function collectionSpecs({
   // the eligible pool, which supplies each snapshot's model file.
   selections = null,
   pool = [],
+  // Ninth comparison: per-class Fireball aim counts in a separate file.
+  fireballAim = false,
 }) {
   assertRewardVersion(rewardVersion);
   const start = iteration * pairsPerIteration;
@@ -1058,6 +1160,7 @@ export function collectionSpecs({
         out_dir: outDir,
         model_sha256: modelSha256,
         reward_version: rewardVersion,
+        ...(fireballAim ? { fireball_aim: true } : {}),
         ...(snapshot
           ? {
               opponent_model_path: path.resolve(snapshot.model),
@@ -1081,11 +1184,13 @@ async function collect({
   out,
   rewardVersion = EDGER_V2_CADENCE_REWARD_VERSION,
   snapshotLeague = null,
+  fireballAimOut = null,
 }) {
   const specs = collectionSpecs({
     plan, iteration, pairsPerIteration, modelPath, modelSha256: sha256File(modelPath), cadence, outDir, rewardVersion,
     selections: snapshotLeague?.selections ?? null,
     pool: snapshotLeague?.pool ?? [],
+    fireballAim: fireballAimOut !== null,
   });
   const started = Date.now();
   const results = await runCadenceSpecs(specs, { workers, onResult: progress(`collect it${iteration} ${cadence}`) });
@@ -1146,7 +1251,47 @@ async function collect({
       : {}),
   };
   writeJson(out, collection);
+  if (fireballAimOut !== null) {
+    // Outside collection.json and the episode files, which stay byte for byte.
+    writeJson(fireballAimOut, fireballAimReport(results, { iteration, modelSha256: collection.model_sha256 }));
+  }
   return collection;
+}
+
+export const FIREBALL_AIM_SCHEMA = "edger_v2_fireball_aim_v1";
+
+// Per class, the candidate's opportunity decisions in sampled rollouts, those
+// that sampled Fireball and those whose Fireball captured (bank rule), per
+// episode and in total. Descriptive (ninth comparison).
+export function fireballAimReport(results, { iteration, modelSha256 }) {
+  const totals = { lethal: { rows: 0, fireball_rows: 0, capture_rows: 0 }, cluster: { rows: 0, fireball_rows: 0, capture_rows: 0 } };
+  let mismatches = 0;
+  const episodes = results.map((result) => {
+    if (!result.fireball_aim) {
+      throw new Error(`episode ${result.header} has no Fireball aim record`);
+    }
+    for (const [category, counts] of Object.entries(result.fireball_aim.classes)) {
+      for (const key of Object.keys(counts)) {
+        totals[category][key] += counts[key];
+      }
+    }
+    mismatches += result.fireball_aim.global_class_mismatches;
+    return {
+      match_index: result.match_index,
+      episode_id: path.basename(result.header, ".json"),
+      rows: result.rows,
+      classes: result.fireball_aim.classes,
+      global_class_mismatches: result.fireball_aim.global_class_mismatches,
+    };
+  });
+  return {
+    schema_version: FIREBALL_AIM_SCHEMA,
+    iteration,
+    model_sha256: modelSha256,
+    totals,
+    global_class_mismatches: mismatches,
+    episodes,
+  };
 }
 
 async function commandCollect(args) {
@@ -1214,7 +1359,7 @@ export function heldoutCaptureRecord(report) {
 export function trainIterationArguments({
   checkpoint, parentCheckpoint, collection, cadence, arm, iteration, out, metricsOut,
   learningRate, lossMode, cardKlCoefficient, cardKlRows, decomposeEvery, torchSeed, rewardVersion,
-  warmStart = false,
+  warmStart = false, opportunityCardWeight = "1", opportunityCardWeightClasses = "both",
 }) {
   return [
     "train-iteration",
@@ -1234,8 +1379,15 @@ export function trainIterationArguments({
     "--seed", torchSeed,
     "--reward-version", rewardVersion,
     ...(warmStart ? ["--start-from-warmup"] : []),
+    // Only a non-default weight changes the command, so default arms run
+    // exactly the earlier learner command.
+    ...(Number(opportunityCardWeight) !== 1
+      ? ["--opportunity-card-weight", opportunityCardWeight, "--opportunity-card-weight-classes", opportunityCardWeightClasses]
+      : []),
   ];
 }
+
+export const OPPORTUNITY_CARD_WEIGHT_CLASSES = Object.freeze(["lethal", "cluster", "both"]);
 
 // The eligible pool at the start of `iteration`: actors captured at earlier
 // iterations, in capture order, each bound to its recorded SHA-256. Snapshot 0
@@ -1348,6 +1500,18 @@ async function commandTrainArm(args) {
   const decomposeEvery = String(args["decompose-every"] ?? "0");
   const torchSeed = String(args["torch-seed"] ?? "20260926");
   const rewardVersion = assertRewardVersion(String(args.reward ?? EDGER_V2_CADENCE_REWARD_VERSION));
+  // Ninth comparison: the card head's policy term on Fireball opportunity rows
+  // of the chosen classes is multiplied by this weight (1 = the earlier
+  // update), and per-class Fireball aim counts are written per iteration.
+  const opportunityCardWeight = String(args["opportunity-card-weight"] ?? "1");
+  const opportunityCardWeightClasses = String(args["opportunity-card-weight-classes"] ?? "both");
+  if (!(Number(opportunityCardWeight) > 0) || !Number.isFinite(Number(opportunityCardWeight))) {
+    throw new Error("--opportunity-card-weight must be a positive number");
+  }
+  if (!OPPORTUNITY_CARD_WEIGHT_CLASSES.includes(opportunityCardWeightClasses)) {
+    throw new Error(`--opportunity-card-weight-classes must be one of ${OPPORTUNITY_CARD_WEIGHT_CLASSES.join(", ")}`);
+  }
+  const fireballAimDiagnostics = args["fireball-aim-diagnostics"] === true;
   // Episodes may live outside the work directory (e.g. off a synced or nearly
   // full volume); pruning deletes bodies after a successful update and keeps
   // the headers, whose body checksums pin what the learner consumed.
@@ -1373,6 +1537,9 @@ async function commandTrainArm(args) {
     loss_mode: lossMode,
     card_kl_coefficient: Number(cardKlCoefficient),
     card_kl_rows: cardKlRows,
+    opportunity_card_weight: Number(opportunityCardWeight),
+    opportunity_card_weight_classes: opportunityCardWeightClasses,
+    fireball_aim_diagnostics: fireballAimDiagnostics,
     decompose_every: Number(decomposeEvery),
     torch_seed: Number(torchSeed),
     reward_version: rewardVersion,
@@ -1422,6 +1589,11 @@ async function commandTrainArm(args) {
         JSON.stringify(previous.snapshot_league ?? null) !== JSON.stringify(status.snapshot_league ?? null)) {
       throw new Error("cannot resume: the opponent mix or snapshot settings differ from the interrupted run");
     }
+    if ((previous.opportunity_card_weight ?? 1) !== status.opportunity_card_weight ||
+        (previous.opportunity_card_weight_classes ?? "both") !== opportunityCardWeightClasses ||
+        (previous.fireball_aim_diagnostics ?? false) !== fireballAimDiagnostics) {
+      throw new Error("cannot resume: the opportunity weight or aim settings differ from the interrupted run");
+    }
     status.iterations = previous.iterations.filter((record) => record.iteration < firstIteration);
     status.resumed_at_iteration = firstIteration;
     checkpoint = completed.checkpoint;
@@ -1465,6 +1637,7 @@ async function commandTrainArm(args) {
       out: path.join(iterationDir, "collection.json"),
       rewardVersion,
       snapshotLeague: refresh,
+      fireballAimOut: fireballAimDiagnostics ? path.join(iterationDir, "fireball-aim.json") : null,
     });
     const record = {
       iteration,
@@ -1477,6 +1650,11 @@ async function commandTrainArm(args) {
       sampled_score: collection.sampled_play_summary.score,
       sampled_successful_deployments_per_game: collection.sampled_play_summary.successful_deployments_per_game,
     };
+    if (fireballAimDiagnostics) {
+      const aimPath = path.join(iterationDir, "fireball-aim.json");
+      const aim = JSON.parse(fs.readFileSync(aimPath, "utf8"));
+      record.fireball_aim = { totals: aim.totals, global_class_mismatches: aim.global_class_mismatches, sha256: sha256File(aimPath) };
+    }
     if (snapshotLeague) {
       // Accept the refresh only if its recorded picks re-derive from disk.
       const problems = snapshotLeagueCollectionProblems(collection, deriveSnapshotLeagueRefresh(refreshArgs));
@@ -1513,6 +1691,8 @@ async function commandTrainArm(args) {
       torchSeed,
       rewardVersion,
       warmStart: Boolean(initialCheckpoint) && iteration === 0,
+      opportunityCardWeight,
+      opportunityCardWeightClasses,
     }), logPath);
     record.learner_wall_seconds = (Date.now() - learnerStarted) / 1000;
     if (train.status !== 0) {
@@ -1888,6 +2068,7 @@ const COMMANDS = {
   seeds: commandSeeds,
   "replicate-seeds": commandReplicateSeeds,
   evaluate: commandEvaluate,
+  "fireball-branch": commandFireballBranch,
   probe: commandProbe,
   collect: commandCollect,
   "train-arm": commandTrainArm,

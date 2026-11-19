@@ -1994,6 +1994,215 @@ November 15, 2026 (UTC times below are November 14). `SL/analysis.md` and
   - Whether snapshot opponents push children toward faster decisions is untested. B-r14 is one child, and the decisions-per-game difference is descriptive.
   - Under the comparison rule, no extension or follow-up is chosen from this output.
 
+### Ninth comparison: Fireball capture value and opportunity weight
+
+**Status: proposed November 17, 2026; revised November 19 to adopt the design
+review the owner passed on; approved by the owner on November 19 with 24
+Stage 2 pairs (decisions at the end of this section). Implemented,
+preflighted, frozen and Stage 1 run on November 19. Frozen decision: no class
+is "capture better", so Stage 2 did not run. The owner reviewed the result on
+November 20 and closed the comparison as recorded
+([result](#ninth-comparison-stage-1-result)).** After
+the eighth comparison the owner chose the Fireball gap as the next experiment
+(November 17). The aim is a full-grid model that can pass promotion.
+
+**Where things stand** (read from existing outputs, November 17).
+- **No full-grid child captures.** The sixth comparison's 12 full-grid children captured 0 of the 80 bank opportunities and scored 0 on the spell-value and tower-finishing scenarios. The eighth's 12 A children (the current recipe, 1,536 updates) cast no Fireball in any of their 3,600 primary evaluation games, while scoring 0.74–0.98 against each opponent.
+- **Fireball is necessary for promotion but not sufficient.** The same 12 sixth-comparison children also miss the elixir-punishment minimum (0.55) in 8 of 12, and the pocket-pressure minimum (0.55) in 11 of 12 (scores 0.12–0.69). Defense passes for all 12.
+- **RL meets opportunities and moves away from the parent on them.** In the eighth's A arms, Fireball opportunity rows were 3.5–9.7% of the rows with a real card choice (3,016–5,102 rows per arm over 24 iterations). The card KL to the parent on those rows was 0.04–0.18 nats in iteration 0 and 0.47–2.59 in iteration 23.
+- **Few Fireball examples late in training.** The same arms' rollouts sampled 608 Fireballs in iteration 0's 768 games and 205 in the final six iterations' 4,608 games. Those six iterations had 11,498 opportunity rows. Even if every late Fireball fell on an opportunity row, at most 1.8% of those rows sampled it. The counts cover every sampled Fireball, aimed or not.
+- **Earlier work** ([proposal 3](#proposal-3-data-and-learning-on-v4--october-27-2026) to the [stronger floor](#stronger-targeted-floor--november-2-2026); four-cell placement, 384 updates, three runs per arm):
+  - The v4 spell globals give the card head exact lethal and cluster inputs.
+  - The `bfo` BC recipe raised validation capture from 0 to 24–30%. RL without a floor erased it within six iterations.
+  - Every floor that kept Fireball cost play. The global β = 0.05 floor cost about 0.06–0.10. The targeted β = 1 floor cost 0.160 against no floor on the M6, with capture 0.239. The inferred mechanism is that the floors held the shared card head near a weaker parent.
+- **The baselines miss the gate too.** The heuristic captures 20 of 27 lethal (0.741, against a minimum of 0.80) and 40 of 53 cluster opportunities. Live v1 captures 8 of 27 and 22 of 53.
+- **Not yet measured: whether capture wins games for these children.** The bank scores one decision and ignores cast delay and travel. A tower at 207 HP with troops on it may fall anyway, and Fireball costs 4 elixir. If capture has no match value, RL is right to drop it, and any recipe that keeps it should cost play.
+
+**Question.** In two stages:
+1. Does casting a capturing Fireball at an opportunity raise the current children's match points? Evaluation only.
+2. For the classes where it does, does giving those opportunity rows more weight in the card head's policy loss let RL learn capture while costing less than 0.05 in match score?
+
+Both stages' designs, analyses and decisions are frozen before Stage 1 produces any output. That includes the rule that picks Stage 2's weighted classes from Stage 1's labels.
+
+#### Stage 1: capture value (evaluation only)
+
+- **Models:** the eighth's 12 final A children, verified against `SL/SHA256SUMS`.
+- **Games:** each child's primary suite from the eighth: 50 development pairs against live v1, the heuristic and aggressive, at learned cadence, deterministic (300 games per child). An unforced rerun must reproduce `SL`'s action-stream and final-state hashes for all 3,600 games. A mismatch is an instrument failure.
+- **Branch points:** in each game, the child's first decision at a lethal opportunity, and separately its first decision at a cluster opportunity. Classes use the bank's rule at decision time (`classifyFireballOpportunity`, lethal first). A decision whose own action already captures is counted and not branched.
+- **Forced action:** Fireball at the capturing cell that the child's own placement head ranks highest (lowest index on ties, as at runtime), with the delay the child's delay head picks for that card and cell. The branch replays the game from the start with only that decision replaced, so both games are identical up to the branch tick. The opponent's random draws come from the same generator state, but they can diverge once the games do.
+- **Outcome per branch:** Δ = the child's match point in the forced game minus its point in the own game (win 1, draw 0.5, loss 0). Descriptive: crowns and towers taken by each side, the own action that was replaced (PASS, a troop card or Arrows) and the class.
+- **Impact log per forced cast** (descriptive). The intended targets are the entities that made the decision an opportunity, fixed at the branch tick. For lethal, they are the enemy towers within the cast radius whose HP is at most Fireball's tower damage. For cluster, they are the enemy troops within the radius. The log reads the engine's `spell_impact` event (`impacted_entity_ids`) and records:
+  - the impact tick;
+  - which intended targets were hit;
+  - all enemy entities hit;
+  - whether each intended tower fell to the impact.
+
+  A lethal cast **landed** if at least one intended tower was hit. A cluster cast landed if at least three intended troops were hit. Report the landing rate per class and per child, and Δ separately for landed and missed casts.
+- **Statistic, per class:** each child's mean Δ over its branches, then the mean over children with at least one branch, with a two-sided 95% t interval (n − 1 df). Also report every child, the branch counts, the median and the pooled per-branch mean.
+- **Full-suite change, per class** (reported, no labels): each child's mean Δ over all 300 games, counting games without a branch of that class as 0, then the mean over the 12 children with a t interval. This is the suite-score change from capturing at the first opportunity of that class.
+- **Labels, per class:** "capture better" (interval above 0), "own action better" (interval below 0) or "unresolved".
+- **Decision** (fixed before output; the frozen analysis writes Stage 2's classes to a file that the frozen Stage 2 runner reads):
+  - Stage 2 weights exactly the classes labeled "capture better": lethal only, cluster only, or both. It launches after its preflight, with no further design.
+  - If neither class is "capture better", Stage 2 does not run.
+    - If both classes are "own action better", capture costs these children match points, and the gate question goes back to the owner with this evidence.
+    - Otherwise stop and review with the owner.
+  - An instrument failure or a missing child stops the stage with no labels.
+- **Limits:**
+  - The test is one forced cast, using the current children's aim and their follow-up play. They never learned to play after a Fireball, and a policy trained to cast it could gain more or less. A negative result justifies a review of the gate, not a verdict on Fireball.
+  - It covers one deviation per game, deterministic play and the three primary opponents only.
+  - It does not test the bank's own states.
+- **Rough size** (a planning guess, not a measurement): branch counts are unknown until the run. In the bank's source games, 23 of 70 test episodes had a lethal opportunity and 50 had a cluster one. With a branch-level SD near 0.5 and 60 or more branches per child, the interval half-width would be about 0.05–0.07 per class.
+- **Cost:** about 3,600 unforced and at most 7,200 forced games, roughly 20–30 minutes at the eighth's evaluation rate.
+
+#### Stage 2: opportunity weight (RL only, matched by parent)
+
+- **Treatment:** `train-arm --opportunity-card-weight w --opportunity-card-weight-classes lethal|cluster|both` multiplies the card head's policy-loss term by w on the Fireball opportunity rows of the chosen classes. The classes are the ones Stage 1 picked.
+  - Rows are classified as in the targeted floor, from each on-policy row's globals and card mask, using the bank's rule (lethal first).
+  - The weight scales whichever card was sampled on the row: Fireball, Arrows, a troop or PASS.
+  - The placement, delay, value and entropy terms are unchanged, and w = 1 reproduces today's update bit for bit.
+- **Why this treatment:**
+  - The floors held the card head near the BC parent. The weight follows the measured advantage instead, so if capture loses games, the arm learns that faster too.
+  - Extra exploration in rollouts would add Fireball samples, but V-trace scales each sample's advantage by min(1, π/μ). For an action sampled more often than the target policy plays it, the expected contribution to the update stays the on-policy one. Exploration adds samples, not pull.
+  - The `bfo` BC recipe changes the parents, and the comparison rule then requires separate end-to-end parents. It can follow if the weight works.
+- **w = 10, one diagnostic dose.** At the eighth's 3.5–9.7% share, the opportunity rows of both classes would then carry about 0.4–1.1 times the card-head weight of all other choice rows combined. With one class weighted, the weighted rows carry less.
+- **Parents and inputs:** `FR`'s parents r6–r17 through `initialize-full-grid`, with the sixth's 36 inputs byte for byte. With 24 pairs, the 12 extra parents are added as described under sample size below.
+- **Arms:**
+  - **A (control):** the eighth's A command: current mix, full-grid placement, reward v1, no warm-up, 24 refreshes of 32 mirrored pairs (1,536 updates).
+  - **B:** identical, plus `--opportunity-card-weight 10` and Stage 1's classes.
+- **Built-in checks:** B's iteration-0 games equal A's (64 of 64 action-stream and final-state hashes). Each A child on r6–r17 has final weights equal to the eighth's A child for the same parent. A mismatch is an instrument failure.
+- **Sampling and aim diagnostics** (both arms, every iteration, per class, descriptive). They show whether a flat result had useful examples to learn from.
+  - Counts: opportunity rows, rows that sampled Fireball, and rows that sampled Fireball at a capturing cell.
+  - The learner's mean V-trace advantage on the Fireball and non-Fireball rows.
+  - Aim is checked at collection with the bank's capture rule and written to a separate file per iteration, so collections stay byte for byte.
+- **Evaluation:**
+  - The final children of both arms, plus both arms after iteration 5 (secondary), on the eighth's primary suite.
+  - The promotion preflight, as in the sixth comparison, for the final children and the initialized parents: tactical scenarios, timing, and bank capture on `QB`'s frozen bank.
+  - The sixth's `diagnostics.mjs`, the playstyle and policy diagnostics, and Fireballs per game. These are descriptive; only the two endpoints below are labeled.
+- **Endpoints** (n = the number of pairs, n − 1 df):
+  - **Match (primary):** d = B − A in the primary score: the mean over pairs, with a two-sided 95% t interval and the eighth's direction and size labels. Against the −0.05 margin, d is:
+    - "within margin" if its lower bound is above −0.05;
+    - "beyond margin" if its upper bound is below −0.05;
+    - otherwise "cost unresolved".
+  - **Capture (required to carry):** c = B − A in bank capture on `QB`'s frozen bank, per parent, for the weighted class (with both weighted, lethal and cluster rates count equally). It is reported with a t interval and the labels "weight better", "control better" or "direction unresolved". Each class is also reported separately, including an unweighted one.
+- **Decision** (fixed before output; 12 pairs are a screen):
+  - **Carry the weight into further Fireball research** only if d is "within margin" and c is "weight better", after validity checks. Carrying means the next design may start from the weight; it does not become a default.
+  - If c is "weight better" and d is "cost unresolved", do not carry it. The play cost is unresolved at this sample, and a larger follow-up needs its own design.
+  - If d is "beyond margin", do not carry it, and report the trade-off.
+  - Otherwise the weight stays opt-in and off by default.
+  - **Every outcome:** no child is a promotion candidate, and gate passes are descriptive only. The refresh requirement, the `train-arm` learner and the current mix stand.
+- **Failures,** as in the eighth:
+  - An infrastructure failure gets one retry with identical settings.
+  - A collapse or non-finite stop is a recipe outcome, scored with the last good actor.
+  - An engineering-invalid child blocks the carry decision and the favorable labels.
+  - A missing primary score or capture makes the result incomplete.
+- **Sizing** (noncentral t, two-sided α = 0.05). The A children are expected to capture nothing, so a consistent B capture resolves its direction; its spread is unknown. The match margin is the harder part. The table gives the half-width of d's interval and the chance that d is "within margin":
+
+| SD of d | 12 pairs: half-width | true d = 0 | true d = −0.02 | 24 pairs: half-width | true d = 0 | true d = −0.02 |
+|---|---|---|---|---|---|---|
+| 0.058 (eighth) | 0.037 | 0.78 | 0.37 | 0.024 | 0.98 | 0.68 |
+| 0.082 (sixth) | 0.052 | 0.49 | 0.21 | 0.035 | 0.82 | 0.40 |
+| 0.130 (seventh) | 0.083 | 0.23 | 0.11 | 0.055 | 0.44 | 0.19 |
+
+  With 12 pairs at the sixth's spread, a weight that costs no play is "within margin" only about half the time.
+- **Sample size (the owner sets it before launch):**
+  - **12 pairs (default):** `FR`'s r6–r17.
+  - **24 pairs:** `FR`'s 12, plus 12 new end-to-end BC parents trained with `FR`'s BC command. They use seeds 20260736–20260747, about 3 minutes each on this host.
+    - Each new parent gets a training plan r18–r29 from the same generator, disjoint from every existing training and evaluation set. Each is initialized the same way.
+    - The reproduction check against the eighth covers r6–r17 only.
+  - Stage 1's population is the eighth's 12 children either way.
+- **Cost:** two arms like the eighth's A arm (no model opponents), about 6–8 minutes each with the arms side by side.
+  - 12 pairs: roughly 1.5–2 hours with evaluations, under a five-hour cap.
+  - 24 pairs: roughly 3.5–4.5 hours including the new parents, under a ten-hour cap.
+
+  The run is local only.
+
+#### Before freezing (go/no-go)
+
+- A code checkpoint with tests, and `PYTHON=/usr/local/bin/python3 npm test -- --test-concurrency=2` on this host. The tests cover:
+  - byte-identical collections and evaluations by default;
+  - the forced-decision replay and the aim restriction to capturing cells;
+  - the impact log on constructed lethal and cluster states, including a miss;
+  - bit identity at w = 1, and that only the chosen classes' opportunity rows are reweighted;
+  - that the learner's row classes match the collection-side classes on every row of a smoke collection;
+  - that the aim diagnostics leave collections byte for byte.
+- A Stage 1 smoke on a model outside its population (the sixth comparison's full-grid r6 child), using a few pairs.
+- For Stage 2, A-r6 must reproduce the eighth's A-r6 final weights. A B smoke runs on the pilot parent `b0-s20260718` with a throwaway plan, once per class setting.
+- Dry runs of both analyses on synthetic inputs, covering every label, every Stage 2 class selection, and the margin and carry paths.
+- One `FROZEN.txt` binds both stages' plans, runners, analyses, the source snapshot and the inputs before Stage 1 produces output. With 24 pairs, the new parents' BC and plan steps are part of the frozen runner.
+
+**What it does not test.** The `bfo` parents, the production learner, scales
+beyond 1,536 updates, Arrows, the elixir-punishment and pocket scenarios, and
+the capture value of the bank's own states.
+
+**Decisions (November 19 review, adopted in this revision).**
+1. **Stage 1 first,** with its stop rules. Stage 2 weights only the classes where capture resolves a match-point gain. Stage 1 also logs whether each forced cast landed, and reports the full-suite change.
+2. **w = 10,** a single diagnostic dose, with sampling and aim diagnostics per weighted class.
+3. **Match score stays primary,** with the −0.05 margin. Carrying the weight forward also requires capture to improve in the weighted class. This replaces the November 17 proposal, in which capture decided and match was only a guard.
+
+**Owner decision, November 19:** approved for implementation, with **24 Stage 2
+pairs**.
+
+**Implementation and preflight (November 19; not evidence).** Run directory
+`FG` = `~/edge_royale-runs/20261119-fireball-gap.noindex/`. `plan.md` restates
+the rules with this run's settings.
+- **Tooling** is in the [training doc](EDGER_TRAINING.md#decision-cadence-diagnostic-local-only-never-promotable): `fireball-branch`, `--opportunity-card-weight` with classes, and `--fireball-aim-diagnostics`. Every option is off by default.
+- **Tests:** `PYTHON=/usr/local/bin/python3 npm test -- --test-concurrency=2` gave 278/278, including 10 new tests in `tests/edger-fireball-gap.test.js` and 3 new learner tests.
+- **Source:** the base commit `5644331` plus `source.patch`. All 89 code files equal the working tree.
+- **BC:** BC requires a clean Git checkout, so the new parents train in `bcrepo`, a clean clone of `5644331`. The patch does not touch `scripts/edger-v2-training.py`. Retraining `b0-s20260724` there gave `FR`'s weights exactly (24/24 tensors; only the checkpoint ID, environment and commit differ).
+- **Plans:** one `replicate-seeds` call (r1–r17, w6–w17, smoke, smoke-w, r18–r29; `--training 768`).
+  - It reproduces 308 earlier 768-seed plans byte for byte. The one that differs is `SS`'s own smoke plan, which came from another order.
+  - r18–r29's 9,216 training seeds are disjoint from all 24,408 earlier seeds.
+  - The sixth's 36 inputs match `SL/SHA256SUMS`.
+- **A-r6 reproduction:** the full 24-iteration control from the frozen source, with aim diagnostics on, ended on exactly the eighth's A-r6 final weights.
+  - Its aim file and the learner agreed on every class count in 1,536/1,536 episodes, with 0 engine/globals disagreements.
+- **Promotion preflight:** `preflight.mjs` reproduced the sixth's gates for its full-grid r6 child, once run from the source directory. The parity check calls the Python learner by a relative path.
+- **Smokes** (`smoke/`, models and parents outside the comparison):
+  - **Stage 1:** `stage1.py` on the sixth's full-grid r6 child, 2 pairs per opponent. All 12 unforced games reproduced, branches and impacts were logged, and with one child the analysis gave "unresolved", with no launch.
+  - **Stage 2:** `run.py` on the pilot parent `b0-s20260718` and the throwaway smoke plan (6 iterations × 4 pairs), once per class setting (lethal, cluster, both). The "both" run also trained a throwaway BC parent in `bcrepo` and ran its pair.
+  - Every run passed iteration-0 identity and the plan checks, with 0 aim/learner mismatches.
+  - B weighted only the chosen class's rows, and A weighted none. A's children were identical across the runs.
+  - The evaluations, preflights and analysis completed, and `source/` and `bcrepo` were unchanged afterwards.
+- **Analysis dry runs** on synthetic inputs gave the expected decision in all 18 cases (`dryrun/`):
+  - Stage 1: lethal only, cluster only, both, both own-action-better, mixed, one child, identity failure, missing child.
+  - Stage 2: carry, cost unresolved, beyond margin, flat capture, blocked, instrument, reference failure, incomplete, lethal only.
+- **Pre-freeze exposure.** During implementation, a try-out of `fireball-branch` ran on **A-r6**, one of Stage 1's 12 children, instead of a model outside the population. Its summary was seen once:
+  - lethal: 60 branches, mean Δ +0.017, 51 landed;
+  - cluster: 129 branches, mean Δ +0.062, 78 landed;
+  - all 300 unforced games reproduced.
+
+  The output is kept in `FG/pre-freeze-exposure/` (SHA-256 `7e681f78…`). No rule changed after it. On November 19 the owner decided to proceed with this disclosure, with all 12 children. The frozen A-r6 result has the same games as the exposed file; only the run label differs.
+
+#### Ninth comparison Stage 1 result
+
+`FG` was frozen on November 19 (`FROZEN.txt`, 200 files) before any comparison output.
+- **Run:** `stage1.py` ran once, in 413 s, and exited 0, with no retry, cap or instrument failure. `shasum -a 256 -c FROZEN.txt` passes after the run, and `FG/SHA256SUMS` covers 2,930 files.
+- **Reproduction:** all 12 children completed, and all 3,600 unforced games reproduced the eighth's recorded hashes and points. No child's own action captured any opportunity, so every opportunity was branched.
+
+| Class | Per-branch Δ, mean over 12 children [95% t] | Label | Full-suite change [95% t] (no label) | Branches | Landed |
+|---|---|---|---|---|---|
+| lethal | +0.029 [−0.001, +0.060], SD 0.048 | unresolved | +0.005 [−0.001, +0.011] | 676 | 86% |
+| cluster | +0.022 [−0.021, +0.064], SD 0.067 | unresolved | +0.014 [−0.005, +0.033] | 1,764 | 62% |
+
+**Frozen decision: no class is "capture better", so Stage 2 does not run;
+stop and review with the owner.** Neither class is "own action better"
+either, so the gate question is not returned as a cost. Under the comparison
+rule, no extension or follow-up is chosen from this output.
+
+Descriptive (no labels):
+- Lethal: of 676 branches, the forced cast raised the match point in 50, lowered it in 32 and left it unchanged in 594.
+  - 96 games ended before the Fireball landed, and each of the other 580 casts destroyed its tower.
+  - The children's own games already scored 0.74–0.98 against each opponent.
+- Cluster: of 1,764 branches, 211 gained and 161 lost. Landed casts averaged Δ +0.055 and missed ones −0.015.
+- Per-child means ranged from −0.061 to +0.123 (lethal) and from −0.144 to +0.127 (cluster).
+- The replaced own cards were mostly Mini PEKKA (334 lethal, 1,045 cluster) and Musketeer (292, 570).
+- Limits, as designed: this is one forced cast per game, with the current children's aim and follow-up play, deterministic, against the three primary opponents.
+
+**Owner decision, November 20:** the comparison is closed as recorded, with
+no follow-up chosen from this output. The prepared Stage 2 stays frozen and
+unlaunched, and the opportunity weight stays opt-in and unmeasured. Work
+returns to the queue, starting with the league labelling repair
+([training contract](EDGER_TRAINING.md#5-scaling-and-snapshot-league)).
+
 ## Limits
 
 - The corpus is a 160-episode subset, not the production corpus.

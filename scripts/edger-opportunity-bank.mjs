@@ -12,6 +12,7 @@ import {
   sha256Hex, splitForEpisodeId, validateDatasetManifest, verifyTrainingEpisodeReplay, readCompressedEpisodeBytes,
 } from "./edger-corpus-core.mjs";
 import { PROMOTION_GATE_CONFIG } from "./edger-evaluation-core.mjs";
+import { capturesFireballOpportunity, classifyFireballOpportunity } from "./edger-fireball-opportunity.mjs";
 
 // v2 snapshots also carry the spawn/effect counters and the last tick's combat
 // events, which the v2 observation reads (globals 84, 85 and 87). v1 banks
@@ -29,25 +30,9 @@ export const OPPORTUNITY_MINIMUMS = Object.freeze({
 
 function hash(value) { return sha256Hex(canonicalCompactJson(value)); }
 
-function fireballTargets(engine, actor, action) {
-  return engine.state.entities.filter((entity) => entity.team !== actor && entity.hp > 0 &&
-    (entity.x - action.x) ** 2 + (entity.y - action.y) ** 2 <= FIREBALL_CONFIG.radius_tiles ** 2);
-}
-
-export function capturesFireballOpportunity(engine, actor, action, category) {
-  if (action?.type !== "PLAY_CARD" || action.cardId !== "fireball") return false;
-  const hits = fireballTargets(engine, actor, action);
-  return category === "lethal"
-    ? hits.some((e) => e.entity_type === "tower" && e.hp <= FIREBALL_CONFIG.tower_damage)
-    : hits.filter((e) => e.entity_type === "troop").length >= 3;
-}
-
-export function classifyFireballOpportunity(engine, actor, legalActions = enumerateLegalCardActions({ engine, actor })) {
-  const casts = legalActions.filter((a) => a.cardId === "fireball");
-  if (casts.some((a) => capturesFireballOpportunity(engine, actor, a, "lethal"))) return "lethal";
-  if (casts.some((a) => capturesFireballOpportunity(engine, actor, a, "cluster"))) return "cluster";
-  return null;
-}
+// The capture and class rules live in edger-fireball-opportunity.mjs, shared
+// with the diagnostic cadence tools; re-exported here unchanged.
+export { capturesFireballOpportunity, classifyFireballOpportunity };
 
 // Only the inference inputs, never observations derived by a learner or a
 // teacher action. Restore arena functions and ElixirTracker prototypes from

@@ -371,6 +371,17 @@ the live bot, the promotion evaluator or campaigns.
   - Collections record the ordered pool with scores and weights and every pair's pick. Before a refresh is learned from, `train-arm` re-derives the pool and picks from the plan and the hash-verified earlier collections, and stops with an `instrument:` reason on any difference. Resuming (`--start-iteration`) rebuilds the pool from verified iterations, sets the interrupted iteration's outputs aside, and reproduces the uninterrupted picks, bodies and weights (tested). Exported actors embed the collection checksum, so actor SHA-256 values differ between runs; compare runs on picks, bodies and weights.
   - `convert-collection` refuses snapshot league collections.
   - `evaluate --opponent-model <file> [--opponent <label>]` plays a v2 model as the opponent (head-to-head), binding both actors' SHA-256 values and checking both sides' legality and repeatability.
+- Fireball gap tooling (since November 19, 2026, for the [ninth comparison](EDGER_TACTICAL_REVIEW.md#ninth-comparison-fireball-capture-value-and-opportunity-weight)). It is diagnostic only. Every option is off by default; collections, headers, bodies, evaluations and the default learner command are unchanged (tested).
+  - `scripts/edger-fireball-opportunity.mjs` holds the bank's capture and class rules (lethal first), shared with the evaluation-only bank, which re-exports them unchanged. It also has the learner's globals rule (`fireballOpportunityFromGlobals`). The two agree on all 50 tactical fixtures and on every decision of the tested games.
+  - `fireball-branch --model <file> --evaluations <files> --out <file>` replays a model's own deterministic learned-cadence bot evaluations.
+    - Each unforced game must reproduce its recorded hashes and point; otherwise it writes the report and exits nonzero.
+    - Per class, the first decision of that class that did not already capture is replaced by a forced capturing Fireball (`decideForcedFireballCapture`): the placement head's best capturing cell, lowest index on ties, and the delay head's delay. The game is then replayed from the start.
+    - The report has Δ match point, the replaced card, and an impact log from the engine's `spell_impact` event. A lethal cast landed if it hit an intended tower; a cluster cast, if it hit at least three intended troops.
+  - `train-arm --opportunity-card-weight w --opportunity-card-weight-classes lethal|cluster|both` (defaults 1 and `both`) multiplies the card head's policy-gradient term by w on the Fireball opportunity rows of those classes, whatever card was sampled. Rows are classified by the targeted floor's globals rule.
+    - w = 1 passes no flag to the learner and is the earlier update exactly.
+    - The weight and classes cannot change within an arm.
+    - Learner metrics report, per class: rows, Fireball rows, weighted rows, and the mean V-trace advantage on Fireball and other rows (`conditional.opportunity_by_class`).
+  - `train-arm --fireball-aim-diagnostics` writes `iterN/fireball-aim.json`. Per episode and class, it counts the candidate's opportunity decisions, those that sampled Fireball, and those whose Fireball captured (bank rule). It also counts decisions where the globals rule disagrees with the engine rule. `collection.json` and the episode files stay byte for byte.
 - Checkpoints use `edger_v2_cadence_diagnostic_checkpoint_v1`, which production
   `load_checkpoint` rejects, and exports are labelled
   `diagnostic_only_not_promotable`. The diagnostic learner records the dirty

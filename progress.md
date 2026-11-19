@@ -1,5 +1,22 @@
 # Current State
 
+- November 19, 2026: the **ninth comparison** ([design and result](docs/EDGER_TACTICAL_REVIEW.md#ninth-comparison-stage-1-result)) was approved with 24 Stage 2 pairs, implemented, preflighted and frozen, and Stage 1 was run once. Run directory: `FG` = `~/edge_royale-runs/20261119-fireball-gap.noindex`.
+  - **Frozen Stage 1 decision: no class is "capture better", so Stage 2 did not run. On November 20 the owner reviewed it and closed the comparison as recorded; no follow-up is chosen from this output, and work returns to the queue (labelling repair next).**
+    - Forcing a capturing Fireball at each class's first opportunity changed the match point per branch by lethal +0.029 [−0.001, +0.060] (676 branches) and cluster +0.022 [−0.021, +0.064] (1,764 branches). Both are unresolved.
+    - The full-suite changes were +0.005 and +0.014 (no labels).
+    - Neither class is "own action better", so the gate question is not returned as a cost.
+  - Run: 413 s, exit 0, with no retry, cap or instrument failure. All 3,600 unforced games reproduced the eighth's hashes and points. `FROZEN.txt` (200 files) passes after the run, and `SHA256SUMS` covers 2,930 files.
+  - Descriptive: 86% of lethal casts and 62% of cluster casts landed. Every landed lethal cast destroyed its tower, but 594 of 676 lethal branches left the match point unchanged; 96 games ended before impact. The children never captured on their own.
+  - Disclosed pre-freeze exposure: a try-out had run Stage 1 on A-r6 before the freeze. The owner chose to proceed with it disclosed. The frozen A-r6 games equal the exposed file.
+  - Tooling (diagnostic only, off by default; committed locally November 20 with the result record): `fireball-branch`, `train-arm --opportunity-card-weight/--opportunity-card-weight-classes`, `--fireball-aim-diagnostics`, and the shared `scripts/edger-fireball-opportunity.mjs` ([training doc](docs/EDGER_TRAINING.md#decision-cadence-diagnostic-local-only-never-promotable)). The weight is unmeasured because Stage 2 did not run.
+  - Preflight (not evidence):
+    - A-r6 from the frozen source reproduced the eighth's final weights;
+    - BC in a clean clone reproduced `FR`'s `b0-s20260724`;
+    - the plans r18–r29 are disjoint from every earlier seed;
+    - the 18 dry-run cases and 4 smokes passed.
+
+    The prepared Stage 2 (`run.py`, 24 parents, BC seeds 20260736–20260747) is frozen but was not launched.
+  - Read from existing outputs (November 17): the eighth's 12 A children cast no Fireball in 3,600 primary games. At most 1.8% of their late opportunity rows sampled Fireball. The sixth's full-grid children also miss elixir punishment (8 of 12) and pocket pressure (11 of 12), so Fireball alone cannot make a child promotable.
 - November 15, 2026: the **eighth comparison (snapshot league against the current mix)** was approved with revisions, then implemented, frozen, run once and analyzed ([design and results](docs/EDGER_TACTICAL_REVIEW.md#eighth-comparison-result); run `SL` = `~/edge_royale-runs/20261115-snapshot-league.noindex`). **Frozen result: d = B − A = +0.025, 95% t interval [−0.012, +0.062]** (SD 0.058, n = 12): direction unresolved, size unresolved. **Under the frozen rule, the current mix stays**; snapshots are not carried into the next league design. The owner approved the result record, and the tooling and docs were committed on November 16 (local, not pushed).
   - Run: 2026-11-14T15:21:01Z–17:26:31Z UTC, one launch, exit 0, no retries or cap. Every built-in check passed for all 12 parents, all 24 children completed 1,536 updates and passed parity, and no child was engineering-invalid. B was above A in 9 of 12.
   - Secondary (no labels): gains over the parent A +0.199, B +0.224; per opponent live Edger +0.013, heuristic +0.018, aggressive +0.044 [+0.012, +0.077] (unadjusted); after iteration 5 +0.053 [−0.014, +0.120]; B's head-to-head point against A 0.522 [0.422, 0.622]; defender 1.000 for every child. The sampling learner's mean score against its own deterministic snapshots stayed below 0.5, so PFSP weights stayed near uniform. B made more decisions per game (645 against 279, higher in 9 of 12), and its one 1-tick child (B-r14, 0.993) also had the largest d.
@@ -152,20 +169,36 @@
 
 # Next Tasks
 
-1. **Next: the owner chooses the next experiment.** Under the eighth comparison's frozen decision ([result](docs/EDGER_TACTICAL_REVIEW.md#eighth-comparison-result)) the current mix stays and the snapshot mix stays opt-in; per the comparison rule, no extension or follow-up is chosen from its output. Stale-batch breakdown and the balancing weights (up to 30) remain hypotheses, each needing its own design and pre-set endpoint.
-2. **Full-grid placement (adopted for training, owner, November 13).** The live bootstrap keeps the shortlist. A promotable full-grid candidate must clear the tactical and held-out Fireball gates; all 24 full-grid diagnostic children so far fail both.
-3. Before the next production league campaign, make the approved separate labelling repair. Emit `edger` for model opponents and keep identity in provenance. Validate collection, cache and learner lookup on fresh rollout lineage, including the effect on episode IDs, splits, order and balancing weights. The historical contribution remains untested. See the [training contract](docs/EDGER_TRAINING.md#5-scaling-and-snapshot-league).
-4. Optional: repeat warm-up headed at DPR 2. Mobile/120 Hz need separate measurement. Protect decision-preserving speed-ups for review/fresh provenance; no forced-PASS shortcuts.
-5. Prepare timing-only `c7g.4xlarge` packet for separate approval: exact launch/SSM/download/termination, verified bundle, current official price ceiling, ≤60-minute lifetime/storage/cleanup. Cloud admission is pending the A$10/month whole-account budget. Keep existing-method p95 ≤5 ms.
-6. Re-scope September 21 BC-control/architecture ablations; do not judge by held-out cross-entropy alone. Candidates must satisfy capture and match-quality gates.
-7. Review the full accumulated diff against `main`, including protected runtime/parity commits and proposal 4, before publication. Obtain explicit push/PR approval; record full SHA/manifest hashes.
-8. Prepare fresh BC/scaling provenance and a new immutable campaign prefix. Freeze the compatible test bank before candidate evaluation. Never resume/retarget failed recovery or bypass its protected-runtime guard.
-9. Deferred (owner, November 10): if a future campaign needs the production learner, first run a separate paired episode-order comparison on fresh parents and rollouts, holding the split filter and weights fixed. The factorial's drop-O contrast resolved direction only. Any production change remains a separate owner decision; S's held-out splits would need another way to keep their purpose if S were ever removed.
-10. After local prerequisites/review, seek approval for a bounded reference-host pilot, separate from production learning/full evaluation. Re-measure parity k on that PyTorch/BLAS and use it to assess the kept 4-ULP rule for future campaigns; preserve smoke/production isolation, gates and cleanup. Timing-only profiling remains separate.
-11. Consider manual promotion only with a matching passed full-evaluation marker and separate approval; use an unmerged review PR and preserve live v1 until accepted.
-12. Standardize browser smoke: retain assertion diagnostics, investigate recurrence of iCloud/refetch/watchdog failures, and add group/KILL cleanup to the 120 s watchdog. M6 install/smoke passes; the original October 4 193/196 cause is unconfirmed. Preserve verified outside-iCloud freeze gates.
+1. **Next (owner, November 20): make the approved separate labelling repair**, before the next production league campaign. Emit `edger` for model opponents and keep identity in provenance. Validate collection, cache and learner lookup on fresh rollout lineage, including the effect on episode IDs, splits, order and balancing weights. The historical contribution remains untested. See the [training contract](docs/EDGER_TRAINING.md#5-scaling-and-snapshot-league).
+2. **Full-grid placement (adopted for training, owner, November 13).** The live bootstrap keeps the shortlist. A promotable full-grid candidate must clear the tactical and held-out Fireball gates; all 24 full-grid diagnostic children so far fail both. The ninth comparison (closed November 20) found no resolved match value for forced capture in the current children; the opportunity weight is unmeasured. Under the eighth's frozen decision the current mix stays. Stale-batch breakdown and the balancing weights (up to 30) remain hypotheses, each needing its own design and pre-set endpoint.
+3. Optional: repeat warm-up headed at DPR 2. Mobile/120 Hz need separate measurement. Protect decision-preserving speed-ups for review/fresh provenance; no forced-PASS shortcuts.
+4. Prepare timing-only `c7g.4xlarge` packet for separate approval: exact launch/SSM/download/termination, verified bundle, current official price ceiling, ≤60-minute lifetime/storage/cleanup. Cloud admission is pending the A$10/month whole-account budget. Keep existing-method p95 ≤5 ms.
+5. Re-scope September 21 BC-control/architecture ablations; do not judge by held-out cross-entropy alone. Candidates must satisfy capture and match-quality gates.
+6. Review the full accumulated diff against `main`, including protected runtime/parity commits and proposal 4, before publication. Obtain explicit push/PR approval; record full SHA/manifest hashes.
+7. Prepare fresh BC/scaling provenance and a new immutable campaign prefix. Freeze the compatible test bank before candidate evaluation. Never resume/retarget failed recovery or bypass its protected-runtime guard.
+8. Deferred (owner, November 10): if a future campaign needs the production learner, first run a separate paired episode-order comparison on fresh parents and rollouts, holding the split filter and weights fixed. The factorial's drop-O contrast resolved direction only. Any production change remains a separate owner decision; S's held-out splits would need another way to keep their purpose if S were ever removed.
+9. After local prerequisites/review, seek approval for a bounded reference-host pilot, separate from production learning/full evaluation. Re-measure parity k on that PyTorch/BLAS and use it to assess the kept 4-ULP rule for future campaigns; preserve smoke/production isolation, gates and cleanup. Timing-only profiling remains separate.
+10. Consider manual promotion only with a matching passed full-evaluation marker and separate approval; use an unmerged review PR and preserve live v1 until accepted.
+11. Standardize browser smoke: retain assertion diagnostics, investigate recurrence of iCloud/refetch/watchdog failures, and add group/KILL cleanup to the 120 s watchdog. M6 install/smoke passes; the original October 4 193/196 cause is unconfirmed. Preserve verified outside-iCloud freeze gates.
 
 # Validation
+
+November 19, 2026: ninth comparison Stage 1, in `FG`.
+- `EDGER_FROZEN_NODE="$(command -v node)" caffeinate -is /usr/local/bin/python3 -I -u stage1.py` ran once, in 413 s, and exited 0. `stage1/state.json` shows 12/12 done, with no instrument failure or cap.
+- `shasum -a 256 -c FROZEN.txt` passes after the run (200 files), and `shasum -a 256 -c SHA256SUMS` passes (2,930 files; `bcrepo/` is excluded and pinned by `bcrepo-commit.txt`).
+- `stage1/A-r6/branch.json` equals `pre-freeze-exposure/branch-A-r6.json` apart from the run label and wall times (compared with `jq -S`).
+
+November 19, 2026: ninth comparison code checkpoint and preflight (not evidence). `PYTHON=/usr/local/bin/python3 npm test -- --test-concurrency=2` gave 278/278. `/usr/local/bin/python3 -m pytest -q tests/test_edger_v2_cadence.py` gave 25/25. In `FG`:
+- `preflight/A-r6/reproduction.json`: the final weights equal the eighth's A-r6, with 0 aim/learner mismatches in 1,536 episodes.
+- `preflight/bc-clean/compare.json`: `model_state` identical to `FR`'s.
+- `dryrun/dryrun.py` exits 0 (18/18 cases).
+- `smoke/smoke-status.txt`: `stage1.py smoke/stage1` and `run.py smoke/s2-{lethal,cluster,both}` exited 0, with every built-in check passed and 0 aim mismatches.
+- `preflight.mjs`, run from `source/`, reproduced the sixth's gates for its full-grid r6 child.
+- The plan disjointness check used a scratch script over every `seed-plan-*.json` and replication plan under `~/edge_royale-runs`.
+
+November 19, 2026: ninth comparison design revised to adopt the review, docs only (`docs/EDGER_TACTICAL_REVIEW.md`, this file); no tests were run. The review's counts were recomputed with the commands below and matched. The 24-pair margin probabilities (0.98/0.82/0.44 at true d = 0) use scipy's noncentral t (`/usr/local/bin/python3`). `FR/run.log` gives about 3 minutes per BC parent. The review itself was also docs only. From `SL`, `jq -s '[(map(.sampled_play_summary.deployments_by_card.fireball // 0) | add), (map(.sampled_play_summary.games) | add)]' arms/A-r*/iter0/collection.json` gave `[608,768]`; the same command with `arms/A-r*/iter{18,19,20,21,22,23}/collection.json` gave `[205,4608]`. `jq -s 'map(.conditional.opportunity_rows) | add' arms/A-r*/iter{18,19,20,21,22,23}/learner-metrics.json` gave `11498`. `git diff --check` passed. No tests or experiment runs were needed.
+
+November 17, 2026: ninth comparison design, docs only (`docs/EDGER_TACTICAL_REVIEW.md`, this file); no tests were run. Its figures were read from `SL/arms/*/iter*/learner-metrics.json`, `SL/arms/A-r*/{edger,edger_heuristic,aggressive}.json` and `~/edge_royale-runs/20261112-full-grid.noindex/promotion-preflight/full-r*.json`. The guard probabilities use scipy's noncentral t (`/usr/local/bin/python3`).
 
 November 15, 2026: eighth comparison run and frozen analysis, in `SL` (docs-only record: `docs/EDGER_TACTICAL_REVIEW.md`, `docs/EDGER_TRAINING.md`, `docs/EDGER_LOCAL_CONSTRAINTS.md`, this file).
 - `run.py` ran 2026-11-14T15:21:01Z–17:26:31Z UTC and exited 0, with no retries, cap or instrument failure, then wrote `analysis.md`/`analysis.json` and `DONE`. All 12 parents passed every built-in check.

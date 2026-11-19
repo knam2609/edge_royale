@@ -23,7 +23,77 @@ function loadModel(modelPath) {
   return models.get(modelPath);
 }
 
+// One game of a Fireball capture-value branch set (ninth comparison, Stage 1):
+// the unforced game, which must reproduce its recorded hashes, then one
+// forced game per opportunity class whose first decision did not capture.
+function matchSummary(match) {
+  return {
+    candidate_point: match.candidate_point,
+    winner: match.winner,
+    reason: match.reason,
+    tick: match.tick,
+    score: match.score,
+    action_stream_hash: match.action_stream_hash,
+    final_state_hash: match.final_state_hash,
+  };
+}
+
+export function runFireballBranchSpec(spec) {
+  const wallStarted = performance.now();
+  const model = loadModel(spec.model_path);
+  const game = {
+    seed: spec.seed,
+    candidateActor: spec.candidate_actor,
+    model,
+    cadence: spec.cadence,
+    opponentBotId: spec.opponent,
+  };
+  const own = runEdgerV2CadenceMatch({ ...game, fireballOpportunityLog: true });
+  const output = {
+    spec_id: spec.spec_id,
+    pair_id: spec.pair_id,
+    match_index: spec.match_index ?? null,
+    seed: spec.seed,
+    candidate_actor: spec.candidate_actor,
+    opponent: spec.opponent,
+    own: matchSummary(own),
+    identity: own.action_stream_hash === spec.expected_action_stream_hash &&
+      own.final_state_hash === spec.expected_final_state_hash &&
+      own.candidate_point === spec.expected_candidate_point,
+    classes: {},
+  };
+  if (output.identity) {
+    for (const [category, first] of Object.entries(own.fireball_opportunities)) {
+      if (first === null) {
+        output.classes[category] = { opportunity: false };
+        continue;
+      }
+      output.classes[category] = { opportunity: true, first, branched: !first.own_captures };
+      if (first.own_captures) {
+        continue;
+      }
+      const branch = runEdgerV2CadenceMatch({
+        ...game,
+        forcedFireball: { decision_index: first.decision_index, category },
+      });
+      if (!branch.forced_fireball) {
+        throw new Error(`forced ${category} decision ${first.decision_index} was never reached`);
+      }
+      output.classes[category].forced = {
+        ...matchSummary(branch),
+        cast: branch.forced_fireball,
+        delta: branch.candidate_point - own.candidate_point,
+      };
+    }
+  }
+  output.wall_seconds = (performance.now() - wallStarted) / 1000;
+  return output;
+}
+
 export function runCadenceSpec(spec) {
+  if (spec.kind === "fireball-branch") {
+    return runFireballBranchSpec(spec);
+  }
   const wallStarted = performance.now();
   const model = loadModel(spec.model_path);
   // A model opponent (snapshot league or head-to-head); `opponent` is then
@@ -40,6 +110,7 @@ export function runCadenceSpec(spec) {
     recordRows: spec.kind === "collect",
     probeStride: spec.kind === "probe" ? spec.probe_stride : 0,
     rewardVersion: spec.reward_version ?? EDGER_V2_CADENCE_REWARD_VERSION,
+    recordFireballAim: spec.kind === "collect" && spec.fireball_aim === true,
   });
   const { rows, probes, ...summary } = match;
   const output = {

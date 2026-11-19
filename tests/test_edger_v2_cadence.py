@@ -416,6 +416,137 @@ class CadenceLearnerTests(unittest.TestCase):
         self.assertEqual(targeted_update["opportunity_rows"], 0)
         self.assertIsNone(targeted_update["card_kl_to_reference_given_opportunity"])
 
+    def _opportunity_episode(self, seed: int, classes: list[str | None]) -> dict:
+        """A learned-cadence episode whose rows have the given opportunity classes."""
+        _, episode = synthetic_episode(len(classes), mode="learned", seed=seed)
+        lethal = list(training.FIREBALL_LETHAL_GLOBALS)
+        episode["global"][:, lethal] = 0.0
+        episode["global"][:, training.FIREBALL_TROOP_HITS_GLOBAL] = 0.0
+        for row, name in enumerate(classes):
+            if name is None:
+                continue
+            episode["card_mask"][row, training.FIREBALL_CARD_INDEX] = 1
+            if name == "lethal":
+                episode["global"][row, lethal[row % 3]] = 1.0
+            else:
+                episode["global"][row, training.FIREBALL_TROOP_HITS_GLOBAL] = np.float32(4 / 8)
+        batch = cadence.episode_batch(episode, 0, len(classes), VOCAB["edger"])
+        codes = training.fireball_opportunity(batch.global_features, batch.card_mask).tolist()
+        names = {0: None, **{code: name for name, code in training.OPPORTUNITY_CLASSES.items()}}
+        self.assertEqual([names[code] for code in codes], classes)
+        return episode
+
+    def _update(self, episode: dict, **options) -> tuple[dict, "training.EdgerV2Policy"]:
+        model = seeded_policy()
+        update = cadence.train_cadence_episode(
+            model, episode, torch.optim.Adam(model.parameters(), lr=1e-3), delay_mode="learned",
+            stratum=VOCAB["edger"], batch_size=16, value_loss_weight=0.5, entropy_bonus=0.001,
+            reference=seeded_policy(7), decompose=True, **options,
+        )
+        return update, model
+
+    def test_a_unit_opportunity_weight_and_absent_classes_leave_the_update_unchanged(self) -> None:
+        episode = self._opportunity_episode(47, ["lethal"] * 20 + [None] * 20)
+        plain, plain_model = self._update(episode)
+        for options in (
+            {"opportunity_card_weight": 1.0, "opportunity_card_weight_classes": "lethal"},
+            {"opportunity_card_weight": 10.0, "opportunity_card_weight_classes": "cluster"},
+        ):
+            update, model = self._update(episode, **options)
+            self.assertEqual(update["gradient_norm"], plain["gradient_norm"], options)
+            for (name, left), (_, right) in zip(plain_model.named_parameters(), model.named_parameters()):
+                self.assertTrue(torch.equal(left, right), (name, options))
+            self.assertEqual(update["opportunity_by_class"]["lethal"]["weighted_rows"], 0)
+        for invalid in (
+            {"opportunity_card_weight": 0.0},
+            {"opportunity_card_weight": float("nan")},
+            {"opportunity_card_weight_classes": "all"},
+            {"opportunity_card_weight": 10.0, "loss_mode": "critic_only"},
+        ):
+            with self.assertRaises(ValueError):
+                self._update(episode, **invalid)
+
+    def test_the_opportunity_weight_multiplies_only_the_chosen_rows_card_term(self) -> None:
+        classes = ["lethal"] * 14 + ["cluster"] * 13 + [None] * 13
+        episode = self._opportunity_episode(53, classes)
+        update, _ = self._update(episode, opportunity_card_weight=10.0, opportunity_card_weight_classes="lethal")
+        advantage = torch.tensor(update["_advantages"], dtype=torch.float32)
+        fresh = seeded_policy()
+        batch = cadence.episode_batch(episode, 0, len(classes), VOCAB["edger"])
+        logits = training.forward_batch(fresh, batch)
+        joint = cadence.policy_log_probability(logits, batch, "learned")
+        card = cadence.card_log_probability(logits, batch)
+        lethal = torch.tensor([name == "lethal" for name in classes])
+        expected_loss = (-(joint * advantage).sum() - 9.0 * (card[lethal] * advantage[lethal]).sum()) / len(classes)
+        grads = torch.autograd.grad(expected_loss, list(fresh.parameters()), allow_unused=True)
+        expected = cadence.grouped_l2([(name, grad) for (name, _), grad in zip(fresh.named_parameters(), grads)])
+        measured = update["gradient_decomposition"]["group_norms"]["policy"]
+        for group in ("card", "trunk", "placement", "delay"):
+            self.assertTrue(math.isclose(measured[group], expected[group], rel_tol=1e-4), group)
+        plain, _ = self._update(episode)
+        self.assertNotAlmostEqual(measured["card"], plain["gradient_decomposition"]["group_norms"]["policy"]["card"])
+        self.assertTrue(math.isclose(
+            measured["placement"], plain["gradient_decomposition"]["group_norms"]["policy"]["placement"], rel_tol=1e-6))
+        cards = episode["card_index"]
+        fireball = cards == training.FIREBALL_CARD_INDEX
+        for name in ("lethal", "cluster"):
+            rows = np.array([value == name for value in classes])
+            counts = update["opportunity_by_class"][name]
+            self.assertEqual(counts["rows"], int(rows.sum()))
+            self.assertEqual(counts["fireball_rows"], int((rows & fireball).sum()))
+            self.assertEqual(counts["weighted_rows"], int(rows.sum()) if name == "lethal" else 0)
+            self.assertTrue(math.isclose(
+                counts["advantage_sum_other"], float(advantage[torch.from_numpy(rows & ~fireball)].sum()), abs_tol=1e-5))
+
+    def test_the_opportunity_weight_is_recorded_and_fixed_for_an_arm(self) -> None:
+        import json
+        import tempfile
+        from types import SimpleNamespace
+        from unittest import mock
+
+        episodes = {
+            f"ep{index}": self._opportunity_episode(60 + index, ["lethal"] * 6 + [None] * 6)
+            for index in range(2)
+        }
+        for episode_id, episode in episodes.items():
+            episode["header"] = {**episode["header"], "episode_id": episode_id}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            model = seeded_policy()
+            torch.save({
+                "schema_version": cadence.DIAGNOSTIC_CHECKPOINT_SCHEMA, "checkpoint_id": "parent",
+                "delay_mode": "learned", "loss_mode": "full", "model_state": model.state_dict(),
+                "optimizer_state": torch.optim.Adam(model.parameters(), lr=1e-3).state_dict(),
+                "opponent_stratum_vocabulary": VOCAB,
+            }, root / "parent.pt")
+            (root / "collection.json").write_text(json.dumps({"episodes": [
+                {"match_index": index, "header": str(root / f"{name}.json")} for index, name in enumerate(episodes)
+            ]}))
+            arguments = dict(
+                checkpoint=str(root / "parent.pt"), parent=str(root / "parent.pt"),
+                collection=str(root / "collection.json"), delay_mode="learned", arm="test", iteration=0,
+                out=str(root / "out.pt"), metrics_out=str(root / "metrics.json"), learning_rate=1e-3,
+                batch_size=16, value_loss_weight=0.5, entropy_bonus=0.001, loss_mode="full",
+                card_kl_coefficient=0.0, card_kl_rows="all", decompose_every=0, seed=1,
+            )
+            loader = lambda path: episodes[Path(path).stem]
+            with mock.patch.object(cadence, "load_cadence_episode", loader), mock.patch("builtins.print"):
+                cadence.run_train_iteration(SimpleNamespace(**arguments))
+                saved = torch.load(root / "out.pt", weights_only=False)
+                self.assertEqual(saved["opportunity_card_weight"], 1.0)
+                self.assertEqual(saved["opportunity_card_weight_classes"], "both")
+                metrics = json.loads((root / "metrics.json").read_text())
+                self.assertEqual(metrics["conditional"]["opportunity_by_class"]["lethal"]["rows"], 12)
+                self.assertEqual(metrics["conditional"]["opportunity_by_class"]["lethal"]["weighted_rows"], 0)
+                self.assertEqual(metrics["conditional"]["opportunity_by_class"]["cluster"]["rows"], 0)
+                self.assertIsNone(metrics["conditional"]["opportunity_by_class"]["cluster"]["mean_advantage_other"])
+                after = dict(arguments, checkpoint=str(root / "out.pt"), iteration=1, out=str(root / "out1.pt"))
+                with self.assertRaisesRegex(ValueError, "opportunity card weight changed within an arm"):
+                    cadence.run_train_iteration(SimpleNamespace(**after, opportunity_card_weight=10.0))
+                with self.assertRaisesRegex(ValueError, "opportunity card weight classes changed within an arm"):
+                    cadence.run_train_iteration(SimpleNamespace(**after, opportunity_card_weight_classes="lethal"))
+                cadence.run_train_iteration(SimpleNamespace(**after))
+
     def test_heldout_capture_below_the_parent_is_flagged(self) -> None:
         def capture(rows: int, argmax: int, p: float | None) -> dict:
             entry = {

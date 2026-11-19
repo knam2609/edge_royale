@@ -49,6 +49,14 @@ import {
   playstyleAfterStep,
   playstyleBeforeStep,
 } from "./edger-playstyle-core.mjs";
+import {
+  FIREBALL_CARD_INDEX,
+  FIREBALL_OPPORTUNITY_CATEGORIES,
+  capturesFireballOpportunity,
+  classifyFireballOpportunity,
+  fireballOpportunityFromGlobals,
+  intendedFireballTargets,
+} from "./edger-fireball-opportunity.mjs";
 
 export const EDGER_V2_CADENCE_EPISODE_SCHEMA = "edger_v2_cadence_episode_v1";
 export const EDGER_V2_CADENCES = Object.freeze({
@@ -361,6 +369,95 @@ export function decideEdgerV2WithCadence({
   };
 }
 
+// The forced decision of a Fireball capture branch (tactical review, ninth
+// comparison, Stage 1): Fireball, at the capturing cell the model's own
+// placement head ranks highest (first strictly greater logit, so the lowest
+// index on ties, as at runtime), with the delay its own delay head picks for
+// that card and cell. Deterministic; the same shape as
+// decideEdgerV2WithCadence under the learned cadence.
+export function decideForcedFireballCapture({ model, engine, actor, legalActions, category }) {
+  if (!FIREBALL_OPPORTUNITY_CATEGORIES.includes(category)) {
+    throw new Error(`unknown Fireball opportunity category ${category}`);
+  }
+  const capturing = legalActions.filter((action) =>
+    action.cardId === "fireball" && capturesFireballOpportunity(engine, actor, action, category));
+  if (capturing.length === 0) {
+    throw new Error(`no legal Fireball captures the ${category} opportunity`);
+  }
+  const observation = buildEdgerV2Observation({ engine, actor });
+  const encodedState = encodeEdgerV2PolicyState({ model, observation });
+  const cardMask = buildEdgerV2LegalMasks({ actor, legalActions }).card;
+  const cardLogits = computeEdgerV2CardLogits({ model, encodedState, mask: cardMask });
+  const placementMask = buildEdgerV2LegalMasks({
+    actor,
+    legalActions: capturing,
+    selectedCardIndex: FIREBALL_CARD_INDEX,
+  }).placement;
+  const placementLogits = computeEdgerV2PlacementLogits({
+    model,
+    encodedState,
+    cardIndex: FIREBALL_CARD_INDEX,
+    mask: placementMask,
+  });
+  const placementIndex = maskedArgmax(placementLogits, placementMask);
+  const delayMask = buildEdgerV2LegalMasks({ actor, legalActions, selectedCardIndex: FIREBALL_CARD_INDEX }).delay;
+  const delayLogits = computeEdgerV2DelayLogits({
+    model,
+    encodedState,
+    cardIndex: FIREBALL_CARD_INDEX,
+    placementIndex,
+    mask: delayMask,
+  });
+  const delayIndex = maskedArgmax(delayLogits, delayMask);
+  const decoded = decodeEdgerV2Action({
+    actor,
+    cardIndex: FIREBALL_CARD_INDEX,
+    placementIndex,
+    delayIndex,
+  });
+  if (!capturing.some((action) => action.x === decoded.action.x && action.y === decoded.action.y)) {
+    throw new Error("forced Fireball cell is not a capturing legal action");
+  }
+  return {
+    action: decoded.action,
+    delayTicks: decoded.delayTicks,
+    indices: { card_index: FIREBALL_CARD_INDEX, placement_index: placementIndex, delay_index: delayIndex },
+    observation,
+    cardMask,
+    placementMask,
+    delayMask,
+    logits: { card: cardLogits, placement: placementLogits, delay: delayLogits },
+    logProbabilities: null,
+    capturing_cells: capturing.length,
+  };
+}
+
+// The impact record of a forced cast, from its spell_impact event and the
+// entities right after the impact step. A lethal cast landed if it hit at
+// least one intended tower; a cluster cast if it hit at least three intended
+// troops.
+export function forcedFireballImpact({ forced, event, entities }) {
+  const impacted = new Set(event.impacted_entity_ids);
+  const hit = forced.intended_target_ids.filter((id) => impacted.has(id));
+  return {
+    impact: {
+      tick: event.tick,
+      impacted_entity_ids: event.impacted_entity_ids,
+      intended_hit_ids: hit,
+      intended_fallen_ids: hit.filter((id) => {
+        const entity = entities.find((candidate) => candidate.id === id);
+        return !entity || entity.hp <= 0;
+      }),
+    },
+    landed: forced.category === "lethal" ? hit.length >= 1 : hit.length >= 3,
+  };
+}
+
+function emptyFireballAim() {
+  return Object.fromEntries(FIREBALL_OPPORTUNITY_CATEGORIES.map((category) =>
+    [category, { rows: 0, fireball_rows: 0, capture_rows: 0 }]));
+}
+
 // Same potential and terminal reward as deriveDecisionSequence (reward v1).
 export function scorePotentialForActor(engine, actor) {
   return v1PotentialForActor(engine, actor);
@@ -447,6 +544,18 @@ export function actionStreamHash(actions) {
 // plays a model: deterministic selectEdgerV2PolicyDecision over legal actions
 // enumerated for that model, waiting its own learned delay. Bot opponents are
 // unchanged, and their results carry no model-opponent fields.
+//
+// Fireball diagnostics (ninth comparison), all off by default and absent from
+// the result unless requested:
+// - `fireballOpportunityLog`: the candidate's first decision of each
+//   opportunity class (bank rule, lethal first) and whether its own action
+//   captured it.
+// - `forcedFireball` ({ decision_index, category }): replace exactly that
+//   decision with decideForcedFireballCapture and log the cast's impact. The
+//   decision must still be of that class, or the branch has diverged.
+// - `recordFireballAim`: per class, the candidate's opportunity decisions,
+//   those that chose Fireball and those whose Fireball captured, plus the
+//   decisions where the learner's globals rule disagrees with the engine rule.
 export function runEdgerV2CadenceMatch({
   seed,
   candidateActor,
@@ -460,12 +569,24 @@ export function runEdgerV2CadenceMatch({
   returnReplay = false,
   maxTicks = EDGER_V2_CADENCE_MAX_TICKS,
   rewardVersion = EDGER_V2_CADENCE_REWARD_VERSION,
+  fireballOpportunityLog = false,
+  forcedFireball = null,
+  recordFireballAim = false,
 }) {
   assertCadence(cadence);
   assertRewardVersion(rewardVersion);
   if (mode !== "deterministic" && mode !== "sample") {
     throw new Error(`unknown cadence match mode ${mode}`);
   }
+  if (forcedFireball && (mode !== "deterministic" || cadence !== EDGER_V2_CADENCES.LEARNED)) {
+    throw new Error("forced Fireball branches replay deterministic learned-cadence games");
+  }
+  const classifyDecisions = fireballOpportunityLog || forcedFireball !== null || recordFireballAim;
+  const firstOpportunities = { lethal: null, cluster: null };
+  const fireballAim = recordFireballAim ? { classes: emptyFireballAim(), global_class_mismatches: 0 } : null;
+  let forced = null;
+  let forcedCastPending = false;
+  let eventCursor = 0;
   const engine = createProductionEngine({ seed });
   const initialCardState = returnReplay ? cloneProductionInitialCardState(engine) : null;
   const opponentActor = candidateActor === "blue" ? "red" : "blue";
@@ -500,16 +621,74 @@ export function runEdgerV2CadenceMatch({
     }
     if (tick >= candidateNextTick) {
       const legalActions = enumerateLegalCardActions({ engine, actor: candidateActor, model });
+      const decisionIndex = stats.decisions;
+      const category = classifyDecisions
+        ? classifyFireballOpportunity(engine, candidateActor, legalActions)
+        : null;
+      const forceHere = forcedFireball !== null && decisionIndex === forcedFireball.decision_index;
+      if (forceHere && category !== forcedFireball.category) {
+        throw new Error(`forced branch diverged: decision ${decisionIndex} is ${category}, not ${forcedFireball.category}`);
+      }
       const started = performance.now();
-      const decision = decideEdgerV2WithCadence({
-        model,
-        engine,
-        actor: candidateActor,
-        legalActions,
-        cadence,
-        sampler,
-      });
+      const decision = forceHere
+        ? decideForcedFireballCapture({
+            model,
+            engine,
+            actor: candidateActor,
+            legalActions,
+            category,
+          })
+        : decideEdgerV2WithCadence({
+            model,
+            engine,
+            actor: candidateActor,
+            legalActions,
+            cadence,
+            sampler,
+          });
       stats.inference_ms += performance.now() - started;
+      if (category && fireballOpportunityLog && firstOpportunities[category] === null) {
+        firstOpportunities[category] = {
+          decision_index: decisionIndex,
+          tick,
+          own_action: decision.action,
+          own_card: EDGER_V2_CARD_ACTIONS[decision.indices.card_index],
+          own_captures: capturesFireballOpportunity(engine, candidateActor, decision.action, category),
+        };
+      }
+      if (forceHere) {
+        const intended = intendedFireballTargets(engine, candidateActor, decision.action, category);
+        forced = {
+          decision_index: decisionIndex,
+          tick,
+          category,
+          action: decision.action,
+          delay_ticks: decision.delayTicks,
+          capturing_cells: decision.capturing_cells,
+          intended_target_ids: intended.map((entity) => entity.id),
+          intended_target_types: intended.map((entity) => entity.entity_type),
+          cast_played: false,
+          effect_id: null,
+          impact: null,
+          landed: false,
+        };
+        forcedCastPending = true;
+      }
+      if (fireballAim) {
+        if (fireballOpportunityFromGlobals(decision.observation.global, decision.cardMask) !== category) {
+          fireballAim.global_class_mismatches += 1;
+        }
+        if (category) {
+          const counts = fireballAim.classes[category];
+          counts.rows += 1;
+          if (decision.indices.card_index === FIREBALL_CARD_INDEX) {
+            counts.fireball_rows += 1;
+          }
+          if (capturesFireballOpportunity(engine, candidateActor, decision.action, category)) {
+            counts.capture_rows += 1;
+          }
+        }
+      }
       // Outside the timed region, so inference timings stay comparable.
       addDecisionDiagnostics(
         stats.policy_diagnostics,
@@ -644,6 +823,24 @@ export function runEdgerV2CadenceMatch({
       engine.setOvertime(true);
     }
     playstyleAfterStep(playstyle, engine);
+    if (forced) {
+      const events = engine.state.replay.events;
+      for (; eventCursor < events.length; eventCursor += 1) {
+        const event = events[eventCursor];
+        if (forcedCastPending && event.type === "card_played" && event.actor === candidateActor &&
+            event.card_id === "fireball") {
+          forced.cast_played = true;
+          forced.effect_id = event.effect_id;
+          forced.resolve_tick = event.resolve_tick;
+        } else if (forced.effect_id !== null && forced.impact === null && event.type === "spell_impact" &&
+            event.effect_id === forced.effect_id) {
+          Object.assign(forced, forcedFireballImpact({ forced, event, entities: engine.state.entities }));
+        }
+      }
+      forcedCastPending = false;
+    } else if (forcedFireball) {
+      eventCursor = engine.state.replay.events.length;
+    }
   }
   const result = engine.getMatchResult();
   if (!result) {
@@ -710,6 +907,9 @@ export function runEdgerV2CadenceMatch({
     },
     action_stream_hash: actionStreamHash(actionStream),
     final_state_hash: engine.getStateHash(),
+    ...(fireballOpportunityLog ? { fireball_opportunities: firstOpportunities } : {}),
+    ...(forcedFireball ? { forced_fireball: forced } : {}),
+    ...(fireballAim ? { fireball_aim: fireballAim } : {}),
     rows: recordRows ? rows : null,
     probes: probeStride > 0 ? probes : null,
     replay: returnReplay

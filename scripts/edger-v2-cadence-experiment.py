@@ -67,6 +67,9 @@ DEFAULT_REWARD_VERSION = REWARD_VERSIONS[0]
 # Rows the card KL penalty covers: every row, or only Fireball opportunity rows
 # (tactical review proposal 3, option 1, the targeted floor).
 CARD_KL_ROWS = ("all", "opportunity")
+# Fireball opportunity classes whose card-head policy term the opportunity
+# card weight multiplies (tactical review, ninth comparison).
+OPPORTUNITY_WEIGHT_CLASSES = ("lethal", "cluster", "both")
 DTYPES = {
     "Int32Array": np.dtype("<i4"),
     "Int16Array": np.dtype("<i2"),
@@ -183,6 +186,20 @@ def head_log_probabilities(logits: dict[str, Tensor], batch: Any) -> dict[str, T
         training.mask_logits(logits["delay"], batch.delay_mask), dim=1
     ).gather(1, batch.delay[:, None]).squeeze(1)
     return {"card": card, "placement": placement, "delay": delay}
+
+
+def card_log_probability(logits: dict[str, Tensor], batch: Any) -> Tensor:
+    """The selected card's log-probability alone, with gradient."""
+    return F.log_softmax(
+        training.mask_logits(logits["card"], batch.card_mask), dim=1
+    ).gather(1, batch.card[:, None]).squeeze(1)
+
+
+def opportunity_weight_rows(opportunity_class: Tensor, classes: str) -> Tensor:
+    """Rows whose card-head policy term the opportunity weight multiplies."""
+    if classes == "both":
+        return opportunity_class != training.OPPORTUNITY_NONE
+    return opportunity_class == training.OPPORTUNITY_CLASSES[classes]
 
 
 def policy_log_probability(logits: dict[str, Tensor], batch: Any, delay_mode: str) -> Tensor:
@@ -332,6 +349,8 @@ def train_cadence_episode(
     reference: training.EdgerV2Policy | None = None,
     card_kl_coefficient: float = 0.0,
     card_kl_rows: str = "all",
+    opportunity_card_weight: float = 1.0,
+    opportunity_card_weight_classes: str = "both",
 ) -> dict[str, Any]:
     """One production-style V-trace update from one fresh episode.
 
@@ -349,6 +368,13 @@ def train_cadence_episode(
     collapse. Zero leaves the update exactly the production one.
     ``card_kl_rows="opportunity"`` applies it, with the same per-row weight,
     only on Fireball opportunity rows, so ordinary card choices learn freely.
+
+    ``opportunity_card_weight`` w multiplies the card head's policy-gradient
+    term by w on the Fireball opportunity rows of
+    ``opportunity_card_weight_classes``: the policy loss gains
+    -(w - 1) * log pi(card) * advantage on those rows, whatever card was
+    sampled (tactical review, ninth comparison). w = 1 adds nothing and is
+    exactly the earlier update.
     """
     if loss_mode not in LOSS_MODES:
         raise ValueError(f"unknown loss mode {loss_mode}")
@@ -360,6 +386,12 @@ def train_cadence_episode(
         raise ValueError("a card KL term needs a reference policy")
     if card_kl_coefficient > 0 and loss_mode in CRITIC_LOSS_MODES:
         raise ValueError(f"{loss_mode} has no actor loss to add a card KL term to")
+    if opportunity_card_weight_classes not in OPPORTUNITY_WEIGHT_CLASSES:
+        raise ValueError(f"unknown opportunity weight classes {opportunity_card_weight_classes}")
+    if not math.isfinite(opportunity_card_weight) or opportunity_card_weight <= 0:
+        raise ValueError("opportunity card weight must be a positive number")
+    if opportunity_card_weight != 1.0 and loss_mode in CRITIC_LOSS_MODES:
+        raise ValueError(f"{loss_mode} has no actor loss to weight")
     count = episode["rows"]
     behavior = behavior_log_probability(episode, delay_mode)
     ranges = microbatch_ranges(count, batch_size)
@@ -404,6 +436,13 @@ def train_cadence_episode(
     card_kl_total = 0.0
     opportunity_card_kl_total = 0.0
     opportunity_rows = 0
+    # Per class: rows, rows that sampled Fireball, weighted rows and the V-trace
+    # advantage summed over Fireball and other rows (descriptive).
+    by_class = {
+        name: {"rows": 0, "fireball_rows": 0, "weighted_rows": 0,
+               "advantage_sum_fireball": 0.0, "advantage_sum_other": 0.0}
+        for name in training.OPPORTUNITY_CLASSES
+    }
     value_loss_total = 0.0
     for start, end in ranges:
         batch = episode_batch(episode, start, end, stratum)
@@ -415,6 +454,13 @@ def train_cadence_episode(
         fused = logits["fused"].detach() if detach_fused else logits["fused"]
         value = model.value(fused, batch.stratum)
         policy_loss = -(log_probability * advantage.detach() * batch.sample_weight).sum()
+        opportunity_class = training.fireball_opportunity(batch.global_features, batch.card_mask)
+        weighted = opportunity_weight_rows(opportunity_class, opportunity_card_weight_classes)
+        if opportunity_card_weight != 1.0 and bool(weighted.any()):
+            extra = card_log_probability(logits, batch)[weighted] * advantage.detach()[weighted]
+            policy_loss = policy_loss - (opportunity_card_weight - 1.0) * (
+                extra * batch.sample_weight[weighted]
+            ).sum()
         value_loss = F.mse_loss(value, vtrace_target[start:end], reduction="sum")
         if loss_mode in CRITIC_LOSS_MODES:
             loss = (value_loss_weight * value_loss) / count
@@ -430,9 +476,7 @@ def train_cadence_episode(
             # contribute exactly zero. Detached unless it enters the loss.
             card = logits["card"] if card_kl_coefficient > 0 else logits["card"].detach()
             card_kl = training.categorical_kl(reference_card, card, batch.card_mask)
-            opportunity = training.fireball_opportunity(
-                batch.global_features, batch.card_mask
-            ) != training.OPPORTUNITY_NONE
+            opportunity = opportunity_class != training.OPPORTUNITY_NONE
             penalized_kl = card_kl if card_kl_rows == "all" else card_kl[opportunity]
             if card_kl_coefficient > 0:
                 loss = loss + card_kl_coefficient * penalized_kl.sum() / count
@@ -466,6 +510,15 @@ def train_cadence_episode(
                 card_kl_total += float(card_kl.sum())
                 opportunity_card_kl_total += float(card_kl[opportunity].sum())
                 opportunity_rows += int(opportunity.sum())
+            fireball = batch.card == training.FIREBALL_CARD_INDEX
+            for name, code in training.OPPORTUNITY_CLASSES.items():
+                rows_of_class = opportunity_class == code
+                counts = by_class[name]
+                counts["rows"] += int(rows_of_class.sum())
+                counts["fireball_rows"] += int((rows_of_class & fireball).sum())
+                counts["weighted_rows"] += int((rows_of_class & weighted).sum()) if opportunity_card_weight != 1.0 else 0
+                counts["advantage_sum_fireball"] += float(advantage[rows_of_class & fireball].sum())
+                counts["advantage_sum_other"] += float(advantage[rows_of_class & ~fireball].sum())
             value_loss_total += float(value_loss)
     group_norms = group_gradient_norms(model)
     decomposition = None
@@ -533,6 +586,7 @@ def train_cadence_episode(
             opportunity_card_kl_total / opportunity_rows
             if reference is not None and opportunity_rows else None
         ),
+        "opportunity_by_class": by_class,
         "value_loss_vs_vtrace": value_loss_total / count,
         "critic_mse_vs_vtrace_before": float(np.mean(residual**2)),
         "critic_mse_vs_return_before": float(np.mean((returns_array - values_array) ** 2)),
@@ -719,6 +773,8 @@ def run_train_iteration(args: argparse.Namespace) -> None:
     reward_version = getattr(args, "reward_version", DEFAULT_REWARD_VERSION)
     if reward_version not in REWARD_VERSIONS:
         raise ValueError(f"--reward-version must be one of {REWARD_VERSIONS}")
+    opportunity_card_weight = float(getattr(args, "opportunity_card_weight", 1.0))
+    opportunity_card_weight_classes = getattr(args, "opportunity_card_weight_classes", "both")
     training.seed_everything(args.seed)
     checkpoint, model = load_any_checkpoint(args.checkpoint)
     parent_checkpoint, parent = load_any_checkpoint(args.parent)
@@ -749,6 +805,10 @@ def run_train_iteration(args: argparse.Namespace) -> None:
             raise ValueError("card KL coefficient changed within an arm")
         if checkpoint.get("card_kl_rows", "all") != args.card_kl_rows:
             raise ValueError("card KL rows changed within an arm")
+        if checkpoint.get("opportunity_card_weight", 1.0) != opportunity_card_weight:
+            raise ValueError("opportunity card weight changed within an arm")
+        if checkpoint.get("opportunity_card_weight_classes", "both") != opportunity_card_weight_classes:
+            raise ValueError("opportunity card weight classes changed within an arm")
         if checkpoint.get("reward_version", DEFAULT_REWARD_VERSION) != reward_version:
             raise ValueError("reward version changed within an arm")
         optimizer.load_state_dict(checkpoint["optimizer_state"])
@@ -792,6 +852,8 @@ def run_train_iteration(args: argparse.Namespace) -> None:
             reference=parent,
             card_kl_coefficient=args.card_kl_coefficient,
             card_kl_rows=args.card_kl_rows,
+            opportunity_card_weight=opportunity_card_weight,
+            opportunity_card_weight_classes=opportunity_card_weight_classes,
         )
         advantages.extend(update.pop("_advantages"))
         ratios.extend(update.pop("_ratios"))
@@ -819,6 +881,20 @@ def run_train_iteration(args: argparse.Namespace) -> None:
     choice_rows = int(choice.sum())
     play_rows = int(play.sum())
     opportunity_rows = sum(update["opportunity_rows"] for update in updates)
+    by_class = {}
+    for name in training.OPPORTUNITY_CLASSES:
+        totals = {key: sum(update["opportunity_by_class"][name][key] for update in updates)
+                  for key in updates[0]["opportunity_by_class"][name]} if updates else {}
+        other_rows = totals.get("rows", 0) - totals.get("fireball_rows", 0)
+        by_class[name] = {
+            "rows": totals.get("rows", 0),
+            "fireball_rows": totals.get("fireball_rows", 0),
+            "weighted_rows": totals.get("weighted_rows", 0),
+            "mean_advantage_fireball": (
+                totals["advantage_sum_fireball"] / totals["fireball_rows"] if totals.get("fireball_rows") else None
+            ),
+            "mean_advantage_other": totals["advantage_sum_other"] / other_rows if other_rows else None,
+        }
     decomposed = [update["gradient_decomposition"] for update in updates if update["gradient_decomposition"]]
     cosines = [item["trunk_cosine_policy_value"] for item in decomposed if item["trunk_cosine_policy_value"] is not None]
     metrics = {
@@ -835,6 +911,8 @@ def run_train_iteration(args: argparse.Namespace) -> None:
         "entropy_bonus": args.entropy_bonus,
         "card_kl_coefficient": args.card_kl_coefficient,
         "card_kl_rows": args.card_kl_rows,
+        "opportunity_card_weight": opportunity_card_weight,
+        "opportunity_card_weight_classes": opportunity_card_weight_classes,
         "optimizer_restored": optimizer_restored,
         "budget": {
             "episodes": len(updates),
@@ -903,6 +981,7 @@ def run_train_iteration(args: argparse.Namespace) -> None:
                 if choice_rows else None
             ),
             "opportunity_rows": opportunity_rows,
+            "opportunity_by_class": by_class,
             "card_kl_to_reference_given_opportunity": (
                 sum(update["card_kl_to_reference_given_opportunity"] * update["opportunity_rows"]
                     for update in updates if update["opportunity_rows"]) / opportunity_rows
@@ -958,6 +1037,8 @@ def run_train_iteration(args: argparse.Namespace) -> None:
         "reward_version": reward_version,
         "card_kl_coefficient": args.card_kl_coefficient,
         "card_kl_rows": args.card_kl_rows,
+        "opportunity_card_weight": opportunity_card_weight,
+        "opportunity_card_weight_classes": opportunity_card_weight_classes,
         "warm_start": warm_start,
         "iteration": args.iteration,
         "seed": args.seed,
@@ -1205,6 +1286,14 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument(
         "--card-kl-rows", default="all", choices=CARD_KL_ROWS,
         help="rows the card KL covers: all, or only Fireball opportunity rows",
+    )
+    train.add_argument(
+        "--opportunity-card-weight", type=float, default=1.0,
+        help="multiply the card head's policy term on Fireball opportunity rows by this weight (1 = off)",
+    )
+    train.add_argument(
+        "--opportunity-card-weight-classes", default="both", choices=OPPORTUNITY_WEIGHT_CLASSES,
+        help="opportunity classes the card weight applies to",
     )
     train.add_argument(
         "--decompose-every", type=int, default=0,
