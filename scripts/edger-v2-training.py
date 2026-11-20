@@ -477,6 +477,34 @@ def make_parquet_stratum_vocab(path: str | Path) -> dict[str, int]:
     return {value: index for index, value in enumerate(sorted(values or {"unknown"}))}
 
 
+def parquet_stratum_values(path: str | Path) -> set[str | None]:
+    parquet = pq.ParquetFile(path)
+    values: set[str | None] = set()
+    for row_group in range(parquet.num_row_groups):
+        column = parquet.read_row_group(row_group, columns=["opponent_stratum"]).column(0)
+        values.update(column.to_pylist())
+    return values
+
+
+def require_strata_in_vocabulary(path: str | Path, vocab: dict[str, int]) -> None:
+    """Refuse a cache whose critic strata the parent cannot look up.
+
+    The row lookup falls back to index 0 for an unknown stratum. League
+    rollouts once recorded model ids there, so their rows silently used the
+    parent's first stratum; a learner fed from a parent vocabulary rejects
+    such caches instead.
+    """
+    missing = sorted(
+        (value for value in parquet_stratum_values(path) if value not in vocab),
+        key=lambda value: (value is None, str(value)),
+    )
+    if missing:
+        raise ValueError(
+            f"cache {path} has opponent strata missing from the parent vocabulary "
+            f"{sorted(vocab)}: {missing}"
+        )
+
+
 def loader_for(
     rows: list[dict[str, Any]],
     vocab: dict[str, int],
@@ -1420,6 +1448,7 @@ def run_vtrace(args: argparse.Namespace) -> None:
     if metadata.get("action_space_version", ACTION_SCHEMA) != model.action_space_version:
         raise ValueError("cache and checkpoint action spaces differ")
     vocab = parent["opponent_stratum_vocabulary"]
+    require_strata_in_vocabulary(args.dataset, vocab)
     validation_samples = count_parquet_rows(args.dataset, split="validation")
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
     optimizer_restored = False

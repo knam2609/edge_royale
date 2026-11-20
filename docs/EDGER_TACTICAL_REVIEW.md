@@ -1823,6 +1823,7 @@ the code reading below, the owner chose to test the snapshot league.
   - The parent's vocabulary is `{aggressive: 0, defender: 1, edger: 2, edger_heuristic: 3, random: 4}`. This was read from copies of the archived `parent.pt` and the league `candidate.pt` (`79a095af…`). The learner maps an unknown stratum to index 0.
   - The code and schedule imply that 792 of the collected games had the model-id label. Rows with that label resolve to the aggressive embedding. This is inferred from the code and checkpoint vocabulary. The archived rows were not inspected.
   - The label enters the value head, and those values affect the policy gradients through V-trace advantages. Its contribution to the regression is untested. The production fix is a separate change for fresh campaigns. See [training contract](EDGER_TRAINING.md#5-scaling-and-snapshot-league).
+  - The fix landed on November 20, 2026 for fresh rollouts: model opponents record `edger`, and `vtrace` refuses strata missing from the parent vocabulary ([training contract](EDGER_TRAINING.md#5-scaling-and-snapshot-league)).
 
 **Question.** Does filling the league's snapshot buckets with the learner's
 own earlier policies give better children than the current champion and

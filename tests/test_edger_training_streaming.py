@@ -80,7 +80,8 @@ def decision_row(index: int, split: str) -> dict[str, object]:
         "policy_league_rating": None,
         "split": split,
         "result_winner": "blue",
-        "compatibility_cohort": "test-cohort",
+        # Real cohorts end in the action space; V-trace keeps only matching rows.
+        "compatibility_cohort": f"test-cohort|{training.ACTION_SCHEMA}",
         "reward_version": "edger_potential_reward_v1",
         "per_tick_gamma": 0.9997,
         "balance_stratum": "simulator|edger_heuristic|loss",
@@ -568,6 +569,56 @@ class StreamingTrainingTest(TrainingFixture):
         self.assertGreaterEqual(gradients[0]["mean"], gradients[0]["minimum"])
         self.assertGreaterEqual(gradients[0]["minimum"], 0.0)
         self.assertLessEqual(gradients[0]["clipped_updates"], 6)
+
+    def test_vtrace_refuses_strata_missing_from_the_parent_vocabulary(self) -> None:
+        rows = [
+            decision_row(index, "train" if index < 6 else "validation")
+            for index in range(8)
+        ]
+        dataset = self.root / "known.parquet"
+        self.prepare(rows, dataset)
+        checkpoint = self.root / "bc.pt"
+        run_training(
+            [
+                "bc", "--dataset", str(dataset), "--out", str(checkpoint),
+                "--seed", "20260718", "--epochs", "1", "--batch-size", "2",
+                "--learning-rate", "1e-3",
+            ],
+            cwd=self.git_root,
+        )
+        vocab = torch.load(checkpoint, map_location="cpu", weights_only=False)[
+            "opponent_stratum_vocabulary"
+        ]
+        self.assertEqual(vocab, {"edger_heuristic": 0})
+        training.require_strata_in_vocabulary(dataset, vocab)
+
+        # The pre-repair league label: a model id that the row lookup would
+        # have mapped to index 0 without an error.
+        stale = [
+            {**row, "opponent_stratum": "edger_policy_bootstrap_20260701"}
+            if index % 2 else row
+            for index, row in enumerate(rows)
+        ]
+        stale_dataset = self.root / "stale.parquet"
+        self.prepare(stale, stale_dataset)
+        self.assertEqual(
+            training.parquet_stratum_values(stale_dataset),
+            {"edger_heuristic", "edger_policy_bootstrap_20260701"},
+        )
+        with self.assertRaisesRegex(ValueError, "edger_policy_bootstrap_20260701"):
+            training.require_strata_in_vocabulary(stale_dataset, vocab)
+        output = self.root / "stale-vtrace.pt"
+        with self.assertRaises(subprocess.CalledProcessError) as raised:
+            run_training(
+                [
+                    "vtrace", "--dataset", str(stale_dataset),
+                    "--checkpoint", str(checkpoint), "--out", str(output),
+                    "--seed", "20260718", "--epochs", "1", "--batch-size", "2",
+                ],
+                cwd=self.git_root,
+            )
+        self.assertIn("missing from the parent vocabulary", raised.exception.stderr)
+        self.assertFalse(output.exists())
 
 
 class VtraceFreshnessTest(unittest.TestCase):

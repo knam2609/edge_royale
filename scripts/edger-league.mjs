@@ -5,10 +5,8 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { Worker } from "node:worker_threads";
 
-import { HEURISTIC_BOT_ID } from "../src/ai/botRuntime.js";
 import { validateEdgerPolicyModel } from "../src/ai/mlPolicy.js";
 import { validateEdgerV2PolicyModel } from "../src/ai/v2/policy.js";
-import { createRng } from "../src/sim/random.js";
 import {
   DEFAULT_CORPUS_STORE,
   buildDatasetManifest,
@@ -17,6 +15,7 @@ import {
   readDatasetManifest,
   writeDatasetManifest,
 } from "./edger-corpus-core.mjs";
+import { makeMatchSpecs } from "./edger-league-core.mjs";
 import { assertScalingReportPassed } from "./edger-scaling-gate.mjs";
 import { spawnNativePython } from "./python-runtime.mjs";
 
@@ -164,72 +163,6 @@ function loadLeague(args, mainModel) {
     contenders: (raw.contenders ?? []).map((snapshot, index) =>
       normalizeSnapshot(snapshot, `contender_${index}`)),
   };
-}
-
-function weightedChoice(items, weights, rng) {
-  const total = weights.reduce((sum, weight) => sum + weight, 0);
-  let roll = rng() * total;
-  for (let index = 0; index < items.length; index += 1) {
-    roll -= weights[index];
-    if (roll <= 0) {
-      return items[index];
-    }
-  }
-  return items.at(-1);
-}
-
-function selectOpponent(league, rng) {
-  const allocation = rng();
-  if (allocation < 0.4) {
-    return { bucket: "champion", opponent: league.champion };
-  }
-  if (allocation < 0.6) {
-    return {
-      bucket: "heuristic",
-      opponent: {
-        kind: "bot",
-        policy_id: HEURISTIC_BOT_ID,
-        checkpoint_id: null,
-        league_rating: null,
-      },
-    };
-  }
-  if (allocation < 0.8) {
-    const pool = league.historical.length > 0 ? league.historical : [league.champion];
-    return {
-      bucket: "historical_uniform",
-      opponent: pool[Math.floor(rng() * pool.length)],
-    };
-  }
-  const pool = [...league.historical, ...league.contenders];
-  const candidates = pool.length > 0 ? pool : [league.champion];
-  const weights = candidates.map(
-    (snapshot) => (1 - snapshot.score) ** 2 + 0.05,
-  );
-  return {
-    bucket: "pfsp",
-    opponent: weightedChoice(candidates, weights, rng),
-  };
-}
-
-function makeMatchSpecs({ matches, seed, league }) {
-  const rng = createRng(seed);
-  const specs = [];
-  for (let pairIndex = 0; pairIndex < matches / 2; pairIndex += 1) {
-    const matchSeed = 1 + Math.floor(rng() * 2_000_000_000);
-    const selection = selectOpponent(league, rng);
-    for (const mainActor of ["blue", "red"]) {
-      specs.push({
-        match_index: specs.length,
-        pair_index: pairIndex,
-        seed: matchSeed,
-        main_actor: mainActor,
-        allocation_bucket: selection.bucket,
-        opponent: selection.opponent,
-      });
-    }
-  }
-  return specs;
 }
 
 function runWorker(workerData) {
@@ -385,6 +318,10 @@ try {
     historical_anchor_ids: league.historical.map((snapshot) => snapshot.policy_id),
     allocation: specs.reduce((counts, spec) => {
       counts[spec.allocation_bucket] = (counts[spec.allocation_bucket] ?? 0) + 1;
+      return counts;
+    }, {}),
+    opponent_strata: results.reduce((counts, result) => {
+      counts[result.opponent_stratum] = (counts[result.opponent_stratum] ?? 0) + 1;
       return counts;
     }, {}),
     results,
