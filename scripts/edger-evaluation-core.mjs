@@ -405,9 +405,13 @@ export function evaluateScenarioLeague(model, { minimums = PROMOTION_GATE_CONFIG
   const passedMinimums = Object.values(categories).every((category) => category.passed);
   const improved = candidateAggregate > heuristicAggregate;
 
+  // "passed" means every category minimum is met. Beating the heuristic's
+  // aggregate is reported only: the heuristic fails its own pocket minimum and
+  // no policy has passed that rule (owner, November 20, 2026;
+  // docs/EDGER_GATE_REVIEW.md). Promotion reports this suite; it is not a gate.
   return {
     schema_version: TACTICAL_SUITE_VERSION,
-    passed: passedMinimums && improved,
+    passed: passedMinimums,
     candidate_aggregate: Number(candidateAggregate.toFixed(4)),
     heuristic_aggregate: Number(heuristicAggregate.toFixed(4)),
     improved_over_heuristic: improved,
@@ -638,9 +642,6 @@ export function collectPromotionFailures(report) {
       failures.push(`${gateName}: ${gate?.reason ?? "failed"}`);
     }
   }
-  if (report.scenarios && !report.scenarios.passed) {
-    failures.push("scenario_league: candidate did not beat heuristic aggregate and category minimums");
-  }
   return failures;
 }
 
@@ -689,20 +690,12 @@ export function evaluateCandidateModel(model, {
       determinism,
       replay,
       benchmark,
-      scenario_league: scenarios.passed
-        ? passGate({
-            candidate_aggregate: scenarios.candidate_aggregate,
-            heuristic_aggregate: scenarios.heuristic_aggregate,
-          })
-        : failGate("candidate did not beat heuristic aggregate and category minimums", {
-            candidate_aggregate: scenarios.candidate_aggregate,
-            heuristic_aggregate: scenarios.heuristic_aggregate,
-          }),
       timing: timing.passed ? passGate(timing) : failGate("runtime scoring p95 exceeded budget", timing),
       browser_ui_exposure: browserUi,
     },
     benchmark: benchmark.pairs ? { pairs: benchmark.pairs } : null,
-    scenarios,
+    // Reported, not a gate (owner, November 20, 2026; docs/EDGER_GATE_REVIEW.md).
+    scenarios: { ...scenarios, blocking: false },
     timing,
   };
   report.promotion = checkPromotionReport(report);
@@ -723,7 +716,7 @@ export function summarizeBenchmarkForConsole(report) {
   }
   lines.push(`deterministic_same_seed=${report.gates.determinism.passed ? "yes" : "no"}`);
   lines.push(`replay_round_trip=${report.gates.replay.passed ? "yes" : "no"}`);
-  lines.push(`scenario_league=${report.gates.scenario_league.passed ? "yes" : "no"}`);
+  lines.push(`scenario_minimums_met=${report.scenarios?.passed ? "yes" : "no"} (reported, not a gate)`);
   lines.push(`timing_p95_ms=${report.timing.p95_ms} budget_ms=${report.timing.budget_ms}`);
   lines.push(`promotion_passed=${report.promotion.passed ? "yes" : "no"}`);
   if (!report.promotion.passed) {

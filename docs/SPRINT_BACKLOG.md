@@ -22,6 +22,7 @@
 
 - `AI-GATES-001` Resolve full-evaluation failures locally before a new learning/full-evaluation cloud run.
   - Follow [the September diagnosis](EDGER_EVALUATION_DIAGNOSIS.md): validate candidate quality in a bounded real-corpus experiment using the corrected parity gate. Review found that the first mid-match bank forced PASS throughout; it now covers every legal card branch and its selected placement. `83.886` is an advisory scale warning, not a proven parity cutoff or training-abort rule. Target freshness, tactical fixtures, preflight, convolution performance, and lossless export have local fixes. The failed candidate remains rejected. No dispatch, promotion, or Git publication is authorized.
+  - November 20 [gate review](EDGER_GATE_REVIEW.md): no existing policy, the heuristic included, passed the tactical or held-out Fireball gate, and both ran before any match. The owner decided that the strongest legal play is enough, and adopted the recommendation: both are now reported measures, with in-match card usage and Fireball capture added, and the strict heuristic-aggregate rule is dropped. Parity, timing and every match gate are unchanged.
 
 - `AI-DATA-001` Build the first compatible full-match corpus.
   - Done when simulator collection has useful opponent/outcome coverage and replay validation is clean.
@@ -75,7 +76,7 @@
 - Browser smoke supervisor/worker split and identity-free replay-download assertions.
 - Deterministic paired-seed worker scheduling, snapshot/PFSP allocation, exact-JS rollout episodes, and V-trace learner.
 - Daily corpus-health/canary workflow and separate cumulative campaign workflow.
-- Full v2 evaluator with two champion blocks, paired bootstrap, anchor regression, weak baselines, frozen league, 10,000 repeated safety games, replay, parity, tactical, timing, test, and browser gates.
+- Full v2 evaluator with two champion blocks, paired bootstrap, anchor regression, weak baselines, frozen league, 10,000 repeated safety games, replay, parity, timing, test, and browser gates. Tactical scenarios, held-out Fireball captures and in-match card usage and Fireball capture are reported, not gated (owner, November 20, 2026; [gate review](EDGER_GATE_REVIEW.md)).
 - Checksum-bound v2 promotion refusal and successful-campaign pull-request automation.
 - Bounded-memory two-pass cache generation, deterministic BC/offline row-group training, and fresh episode V-trace targets with accumulated microbatch gradients.
 - Strict ten-report collection aggregation, parallel full-corpus validation, and base-manifest/current-rollout league lineage.

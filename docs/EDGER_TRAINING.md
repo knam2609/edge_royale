@@ -181,7 +181,8 @@ Every checkpoint is immutable and contains parent checkpoint ID, optimizer state
 **Adopted (owner, November 13, 2026):** new Edger training and comparisons
 use the full-grid action space, with reward v1 and no critic warm-up. Live
 Edger keeps the legacy shortlist until a full-grid candidate passes
-promotion, including the tactical and held-out Fireball gates. Code defaults
+promotion. Since November 20, 2026 the tactical and held-out Fireball results
+are reported, not gates ([gate review](EDGER_GATE_REVIEW.md)). Code defaults
 are unchanged, so legacy checkpoints, caches and completed runs still
 reproduce; branch new work with `initialize-full-grid`.
 
@@ -620,13 +621,30 @@ The corpus, BC, offline-improvement, scaling, league/V-trace, parity, large-samp
 - weak-baseline floors
 - frozen-league improvement/worst-anchor floors
 - 10,000-match illegal-action and repeatability proof
-- tactical, replay, determinism, full-suite, browser, and `p95 ≤ 5 ms` gates
+- replay, determinism, full-suite, browser, and `p95 ≤ 5 ms` gates
+- `skill_report_inputs`: a feasible tactical suite and a valid frozen
+  opportunity bank with both classes, so every report carries the reported
+  measures below
 
 Failed campaigns retain reports/checkpoints and never update the promoted artifact.
 
-Parity, tactical feasibility/quality, held-out Fireball capture, and timing run before the match workers.
+**Reported, not gates (owner, November 20, 2026; [gate review](EDGER_GATE_REVIEW.md)).**
+Schema `edger_v2_evaluation_report_v2` keeps three measures in `reported`,
+outside `gates`. None of them can pass or fail promotion.
+- `tactical_scenarios`: the synthetic suite below, with `minimums_met` meaning every category minimum is met. Beating the heuristic's aggregate is shown as `improved_over_heuristic`; it is no longer part of any pass rule.
+- `heldout_fireball`: the frozen bank's captures and card choices against the 0.80/0.70 minimums.
+- `match_skills` (`edger_v2_match_skills_v1`, `scripts/edger-match-skills.mjs`): from the evaluator's own games, per group and pooled over every group except safety. It records the candidate's legal plays per card. At each candidate decision, PASS included, it records Fireball opportunities by class, Fireball choices and legal captures, using the shared opportunity rules. It also counts games with an opportunity and games with a capture. The tracker only reads engine state, and it is tested to leave every game unchanged. Other callers of the match worker, such as the champion reference, leave it off.
+
+`edger:evaluate:v2` and `edger:promote:v2` print the reported measures. The
+promote command refuses a report that lacks any of them, and every schema v1
+report. They inform the owner's separate promotion approval: a candidate may
+promote without casting Fireball. The legacy v1 evaluator also reports its
+tactical suite instead of gating on it.
+
+Parity, timing and the reported-measure inputs run before the match workers.
 A failed preflight produces a rejected report with `generated_matches=0`,
-`match_suite_skipped=true`, and failed/skipped match gates. The tactical suite
+`match_suite_skipped=true`, and failed/skipped match gates. Tactical and
+Fireball shortfalls never skip the match suite. The tactical suite
 uses six-tower production arenas and complete fixed decks. Every category floor
 must be reachable by an enumerated legal action; the spell-cluster fixture has
 three targets so its unchanged 0.70 floor is achievable. Parity checks the
@@ -653,8 +671,8 @@ Defense requires an intercept in the threat's lane, between it and its target
 tower, with deployment plus estimated closure preceding tower contact.
 Punishment requires a troop in the front rows (canonical y 12.5–16.5) while
 enemy elixir is at most 2; back-row and spell credit is zero. All five existing
-category minimums and the strict aggregate improvement over the heuristic stay
-unchanged. The defense base moves from the old center Giant to the actual
+category minimums stay unchanged. The strict aggregate improvement over the
+heuristic was kept until November 20, 2026, when it became reported only. The defense base moves from the old center Giant to the actual
 bridge lane, because interception was otherwise unreachable in the existing
 placement action set. The timing gate keeps the original five input states.
 
@@ -676,15 +694,16 @@ observation and v1 per-action features must equal the live replay engine's,
 or the build fails. Validation requires exactly that field set and rejects
 schema v1 banks, whose snapshots dropped those three fields.
 
-V2 evaluation requires `--opportunity-bank <frozen-bank.json>`. The new
-`heldout_fireball` preflight gate scores **correctly aimed, legal Fireballs**;
+V2 evaluation requires `--opportunity-bank <frozen-bank.json>`. The
+`heldout_fireball` measure scores **correctly aimed, legal Fireballs**;
 card choice is reported separately. It reuses the existing tower-finishing
 0.80 and spell-value 0.70 numbers as the lethal and cluster capture-rate
-minimums. These are explicit new capture gates, not recalibrated synthetic
-score units or thresholds fitted to a baseline. Missing/invalid banks, empty
-classes and failed capture prevent match dispatch and promotion. Reports bind
-the bank's logical and file checksums; old reports without this gate cannot
-promote. Freeze the source manifest, sampling rule and bank before evaluating
+minimums. These are not recalibrated synthetic score units or thresholds
+fitted to a baseline. From November 2 to November 20, 2026 they were a
+blocking gate; they are now reported only. Missing or invalid banks and empty
+classes still fail `skill_report_inputs` and prevent match dispatch. A low
+capture rate does neither. Reports bind the bank's logical and file
+checksums. Freeze the source manifest, sampling rule and bank before evaluating
 candidates; do not tune them against candidate scores. The production driver
 builds the bank in `full-cache` before offline/league learning and passes that
 same artifact to full evaluation. A new campaign still needs fresh compatible

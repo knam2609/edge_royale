@@ -229,9 +229,12 @@ npm run edger:promote:v2 -- \
 
 The promotion command refuses smoke profiles, artifact checksum mismatches, missing external reports, or any failed gate. Campaign automation opens a pull request after it succeeds.
 
-The evaluator runs parity, tactical feasibility/quality, and timing first. A
-failed preflight writes a rejected report with the match gates explicitly
-skipped, avoiding the expensive match suite. See
+The evaluator runs parity, timing, and the reported-measure inputs (a feasible
+tactical suite and a valid opportunity bank) first. A failed preflight writes a
+rejected report with the match gates explicitly skipped, avoiding the expensive
+match suite. The tactical scenarios, held-out Fireball captures, and in-match
+card usage and Fireball capture are reported for review, not gates (owner,
+November 20, 2026; [`docs/EDGER_GATE_REVIEW.md`](docs/EDGER_GATE_REVIEW.md)). See
 [`docs/EDGER_EVALUATION_DIAGNOSIS.md`](docs/EDGER_EVALUATION_DIAGNOSIS.md) for the
 September 2026 failure evidence, local corrections, and remaining cloud blockers.
 

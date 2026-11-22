@@ -6,6 +6,7 @@ import path from "node:path";
 import {
   EDGER_V2_EVALUATION_PROFILES,
   evaluateEdgerV2Candidate,
+  summarizeReportedSkills,
 } from "./edger-v2-evaluation-core.mjs";
 
 function parseArgs(argv) {
@@ -87,6 +88,9 @@ try {
   console.log(`wrote ${output}`);
   console.log(`generated_matches=${report.generated_matches}`);
   console.log(`promotion_passed=${report.promotion.passed ? "yes" : "no"}`);
+  for (const line of summarizeReportedSkills(report.reported)) {
+    console.log(`reported (not a gate): ${line}`);
+  }
   for (const failure of report.promotion.failures) {
     console.log(`promotion_gate_failed: ${failure}`);
   }

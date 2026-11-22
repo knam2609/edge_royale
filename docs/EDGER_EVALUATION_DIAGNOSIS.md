@@ -1072,6 +1072,12 @@ mean pool and the hybrid `max(1e-5, 4 ULP)` tolerance landed the same day.)*
 
 ## Exact next cloud plan — not authorized or dispatch-ready
 
+*(November 20, 2026: the owner made the tactical scenarios and held-out
+Fireball bank reported measures rather than promotion gates, and dropped the
+heuristic-improvement rule. Read "tactical floors/heuristic improvement" and
+"tactical feasibility/quality" below in that light; see the
+[gate review](EDGER_GATE_REVIEW.md).)*
+
 1. **Finish local prerequisites first.** Use the corrected branch-aware parity gate and the bounded local experiment above. Keep the parity contract (since October 25, 2026: `max(1e-5, 4 ULP)` with identical argmax and tie sets), deterministic ties, tactical floors/heuristic improvement and quality gates unchanged. Logit magnitude is advisory; the failed candidate and parent have measured parity failures, not mathematical proof that every large-logit model must fail. No currently tested candidate qualifies for promotion.
 2. **Prepare a new provenance path for review.** Proposed fresh prefix: `s3://edge-royale-edger-REDACTED-ACCOUNT-ID-ap-southeast-2/campaigns/20260911-v2-gate-fixes`. It has not been created or reserved. The current launcher/recovery validator hard-codes the old recovery target, and `src/ai/v2` is a protected recovery path. This change therefore cannot simply retarget and resume recovery. Prepare fresh BC/scaling from the unchanged frozen corpus under the new code; retain the unchanged canonical cache schema and lossless-content checks. A separate provenance design would need explicit review; do not remove or bypass protected-path checks.
 3. **Obtain explicit approval to commit/publish the reviewed local work and campaign preparation.** Record the resulting full SHA and new manifest checksums. Neither exists yet; no fabricated SHA can make a dispatch command valid. Verify clean checkout, launcher ancestry, empty new prefix, credentials/limits, and zero matching active runners.

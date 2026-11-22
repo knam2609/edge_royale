@@ -1,5 +1,17 @@
 # Current State
 
+- November 20, 2026: **the tactical scenarios and the held-out Fireball bank are now reported, not promotion gates.** The owner reviewed the [gate review](docs/EDGER_GATE_REVIEW.md) and decided that the strongest legal play is enough, adopting its recommendation: option C plus D as reported measures, and dropping the strict heuristic-aggregate rule. **Implemented and tested; not committed.**
+  - Report schema `edger_v2_evaluation_report_v2`. The `reported` section holds:
+    - `tactical_scenarios` and `heldout_fireball`, with `minimums_met` in place of `passed`;
+    - the new `match_skills` (`scripts/edger-match-skills.mjs`): the candidate's legal plays per card, plus Fireball opportunities, choices and legal captures at its own decisions, per group and pooled over every group except safety.
+  - None of these can block promotion. The evaluate and promote commands print them for the owner's separate approval, and promotion refuses v1 reports and reports missing any section.
+  - A new `skill_report_inputs` gate keeps a missing or invalid bank, or an infeasible suite, failing closed before matches. Parity, timing and every match gate are unchanged.
+  - The tactical pass rule is now category minimums only; `improved_over_heuristic` is still reported. The legacy v1 evaluator reports its suite instead of gating on it.
+  - Review findings, read-only in `GR` = `~/edge_royale-runs/20261120-gate-review.noindex`:
+    - no policy had passed either gate: the heuristic 0.852 (pocket 0; lethal 20/27), live v1 0.522, and the 24 finished full-grid children 0.224–0.518 (0/80 captures, no Fireball choices);
+    - without spells the tactical ceiling is 0.680;
+    - over the eighth's RL, Fireball fell from 0.79 to 0.06 per game and Giant from 1.89 to 0.37;
+    - on reused development seeds the eighth's A children beat live v1 0.740–0.930, but the match suite never measured them.
 - November 20, 2026: the **league labelling repair** is implemented, validated and, after owner review, committed locally with the streaming-test fixture fix (not pushed). League rollouts now record `edger` as the critic stratum of every model opponent and keep bot ids (`scripts/edger-league-core.mjs`). Each opponent's policy and checkpoint ids stay in `policies` provenance, and the league report counts `opponent_strata`. `vtrace` refuses a cache whose strata are missing from the parent vocabulary instead of silently using index 0 (`aggressive`). The pure spec generator moved verbatim into the core module. A test reproduces the September 396/104 allocation from seed `20260718`.
   - Validation on fresh rollout lineage (`LL` = `~/edge_royale-runs/20261120-league-labelling.noindex`). It used clean clones of `4678166` (old) and `4678166` plus the repair (new), a shared fresh 64-game base, and 64 league games per lineage (52 champion, 12 heuristic). The main model was the out-of-population pilot parent `b0-s20260718`, and each clone ran the production `edger-dataset.mjs` and `vtrace`.
     - Play unchanged: all 64 games have identical action streams, final states, results and provenance, and all 5,217 cache rows are equal apart from the label columns.
@@ -120,6 +132,7 @@
 
 # Source of Truth
 
+- Gate review: [review](docs/EDGER_GATE_REVIEW.md). `GR` = `~/edge_royale-runs/20261120-gate-review.noindex/`: `gate-review.mjs`, `match-usage.py`, `gate-review.json`, `match-usage.json`, `README.md` (commands), and a 5-file `SHA256SUMS` (list hash `e9634454…`).
 - League labelling validation `LL` = `~/edge_royale-runs/20261120-league-labelling.noindex/`: `README.md`, `base.mjs`, `collect.mjs`, `analyze.py`, `source.patch`, `comparison.json`, `base/`, `old-out/`, `new-out/`, `cross/`, clean clones `old/` and `new/`, and a 536-file `SHA256SUMS` (excluding the clones' `.git`).
 - Eighth comparison `SL` = `~/edge_royale-runs/20261115-snapshot-league.noindex/`: `plan.md`, `config.json`, `run.py`, `analyze.py`, `diagnostics.mjs`, `source/` (`source-base.txt` + `source.patch`), `inputs/`, `reference/`, and `FROZEN.txt` (133 files). Outputs: `arms/`, `results.json`, `run-state.json`, `runner.log`, `DONE`, the frozen `analysis.md` and `analysis.json`, `README.md`, and a 40,903-file `SHA256SUMS`. Not evidence: `preflight/` (control reproduction, `freeze.sh`), `smoke/` (`smoke-check.txt`, `tamper-check.txt`) and `dryrun/` (`check.txt`).
 - Seventh comparison `FV` = `~/edge_royale-runs/20261113-full-grid-reward.noindex/`: `plan.md`, `run.py`, `diagnostics.mjs` (byte-identical to the sixth's), source snapshot (`7101186` + `source.patch`) and 36 inputs in `FROZEN.txt` (129 files). Results are in `analysis.json`, the post hoc weight check in `posthoc.md`, and `SHA256SUMS` covers 10,339 files. `smoke/` is not evidence.
@@ -149,6 +162,10 @@
 
 # What Works
 
+- Reported promotion measures (November 20): `reported.tactical_scenarios`, `reported.heldout_fireball` and `reported.match_skills` in every v2 evaluation report.
+  - Match-skill tracking is opt-in for the match worker (`trackSkills`), and tests show tracked and untracked games are identical.
+  - A candidate below every tactical and Fireball minimum reaches the full match suite (tested on the smoke profile).
+  - Tracking cost about 4–5% of match time locally.
 - Playstyle diagnostics (`scripts/edger-playstyle-core.mjs`): the tracker only reads engine state. Tests check it against an independent recount from each game's replay, and against scripted boundary cases. The `diagnostics` command reports `playstyle: null` for evaluations that predate it, and refuses a mixture of older and newer files.
 - Reward v2 (`scripts/edger-reward-core.mjs`, frozen; `EDGER_REWARD_V2_TERM_WEIGHTS` puts R at 0): `collect`/`train-arm --reward edger_potential_reward_v2`. The learner refuses mixed versions within a collection or an arm; `convert-collection` accepts v1 only. With the default reward, `FR` A-r6 iteration 0 reproduced 64/64 bodies. `scripts/edger-reward-duels.mjs` is deterministic.
 - `convert-collection` (`f09fccf`) converts a train-arm collection, with pruned bodies, into production episodes and a manifest. It fails closed, with no manifest, on any model, header-body or derived-row mismatch, and the labels that set the split and order are fixed in code ([training doc](docs/EDGER_TRAINING.md#decision-cadence-diagnostic-local-only-never-promotable)).
@@ -169,7 +186,7 @@
   - R, now diagnostic only, lets one counter reduce the charge of several threats.
 - Before the November 20 repair, the production league recorded a model opponent's `policy_id` as its critic stratum, which fell back to index 0 (`aggressive`). It probably affected about 80% of the September league rollout; whether it mattered is untested. The repair is validated only at small scale (`LL`); a production campaign will see different weight changes against the 10,000-game base. Pre-repair rollouts must not be merged with post-repair ones ([training doc](docs/EDGER_TRAINING.md#5-scaling-and-snapshot-league)).
 - Live Edger uses the four-cell shortlist plus pockets. The full-grid training and evaluation path is implemented. All 12 full-grid diagnostic children failed tactical and held-out Fireball preflight.
-- Candidate quality remains unresolved. Expanded synthetic aggregate: v1 0.522 versus heuristic 0.852; v1 fails spell/finishing/pocket floors. Neither baseline passes the real-state capture gate. Scores/corpus selection changed, without policy improvement.
+- Candidate quality remains unresolved. Expanded synthetic aggregate: v1 0.522 versus heuristic 0.852; v1 fails spell/finishing/pocket floors. Neither baseline passes the real-state capture gate. The 24 finished full-grid children score 0.224–0.518 and capture 0/80. Since November 20 these are reported, not gates ([gate review](docs/EDGER_GATE_REVIEW.md)), but no full-grid child has yet been through the full match suite, and none is a candidate (reused development seeds). Scores/corpus selection changed, without policy improvement.
 - Eighty one-decision states are bounded local evidence, correlated within episodes. Interception is a geometric time proxy; capture uses decision-time geometry without projectile forecasting or strategic value. Production corpus coverage/cloud wiring remain unvalidated end to end.
 - The pilot measures one old recipe, cache and host with shared torch seed. Other recipes, conditional RL-only variance and poor-run frequency are unmeasured. Matched-difference SD is known for rollout freshness only (0.075 at 384 updates, 0.229 at 1,536). Freshness was tested at two scales with the `train-arm` learner and opponents. Mean stale regression at 1,536 is unresolved at 12 pairs, and the degeneration pattern is post hoc. The production learner path costs about 0.1 on identical refreshed data at 1,536 games. The factorial (`PF`) tested its three behaviors (split filter, ID order, balancing weights); attribution is unresolved. All three average effects were inconclusive at this size, and SOW's interaction label was blocked by five parity failures. Four corner contrasts resolved a direction (drop O and all three add-one contrasts), each favoring the `train-arm` level, with size unresolved. The September league used the same nominal champion and heuristic mix as `train-arm`, with empty snapshot buckets. Snapshot opponents were tested once (the arm's own actors every 256 updates, 1,536 updates, 12 pairs): direction unresolved at +0.025 [−0.012, +0.062]. Other snapshot sources and schedules and the historical scale (about 11,318 updates) are untested. Training scores did not distinguish r4. Cross-host shifts (−0.166 to +0.080) are separate; evaluation-seed intervals omit training-run uncertainty.
 - V4 retains structural placement ties; geometry was dropped after the measured tradeoff. Spell-global RL gains remain a lean; the shared-policy explanation of the floor cost is inferred. Opportunity diagnostics decode the whole validation cache; production V-trace has no KL option.
@@ -177,10 +194,10 @@
 
 # Next Tasks
 
-1. **Full-grid placement (adopted for training, owner, November 13).** The live bootstrap keeps the shortlist. A promotable full-grid candidate must clear the tactical and held-out Fireball gates; all 24 full-grid diagnostic children so far fail both. The ninth comparison (closed November 20) found no resolved match value for forced capture in the current children; the opportunity weight is unmeasured. Under the eighth's frozen decision the current mix stays. Stale-batch breakdown and the balancing weights (up to 30) remain hypotheses, each needing its own design and pre-set endpoint.
+1. **Full-grid placement (adopted for training, owner, November 13).** The live bootstrap keeps the shortlist. Since November 20 the tactical and Fireball results are reported, not gates, so a full-grid candidate is judged by the match gates and the owner's approval. None exists: the next candidate needs fresh provenance and the full match suite (task 6). The owner reviews the gate implementation before commit. The ninth comparison (closed November 20) found no resolved match value for forced capture in the current children; the opportunity weight is unmeasured. Under the eighth's frozen decision the current mix stays. Stale-batch breakdown and the balancing weights (up to 30) remain hypotheses, each needing its own design and pre-set endpoint.
 2. Optional: repeat warm-up headed at DPR 2. Mobile/120 Hz need separate measurement. Protect decision-preserving speed-ups for review/fresh provenance; no forced-PASS shortcuts.
 3. Prepare timing-only `c7g.4xlarge` packet for separate approval: exact launch/SSM/download/termination, verified bundle, current official price ceiling, ≤60-minute lifetime/storage/cleanup. Cloud admission is pending the A$10/month whole-account budget. Keep existing-method p95 ≤5 ms.
-4. Re-scope September 21 BC-control/architecture ablations; do not judge by held-out cross-entropy alone. Candidates must satisfy capture and match-quality gates.
+4. Re-scope September 21 BC-control/architecture ablations; do not judge by held-out cross-entropy alone. Candidates must satisfy the match-quality gates; capture is reported (November 20).
 5. Review the full accumulated diff against `main`, including protected runtime/parity commits and proposal 4, before publication. Obtain explicit push/PR approval; record full SHA/manifest hashes.
 6. Prepare fresh BC/scaling provenance and a new immutable campaign prefix. Any league campaign needs fresh rollout lineage under the repaired labelling code and records its own ID, split, order and weight changes against the real base. Freeze the compatible test bank before candidate evaluation. Never resume/retarget failed recovery or bypass its protected-runtime guard.
 7. Deferred (owner, November 10): if a future campaign needs the production learner, first run a separate paired episode-order comparison on fresh parents and rollouts, holding the split filter and weights fixed. The factorial's drop-O contrast resolved direction only. Any production change remains a separate owner decision; S's held-out splits would need another way to keep their purpose if S were ever removed.
@@ -189,6 +206,21 @@
 10. Standardize browser smoke: retain assertion diagnostics, investigate recurrence of iCloud/refetch/watchdog failures, and add group/KILL cleanup to the 120 s watchdog. M6 install/smoke passes; the original October 4 193/196 cause is unconfirmed. Preserve verified outside-iCloud freeze gates.
 
 # Validation
+
+November 20, 2026: the gate decision's implementation (evaluator, promotion and legacy-evaluator tooling; no gameplay, Edger runtime, heuristic or client change).
+- `PYTHON=/usr/local/bin/python3 npm test -- --test-concurrency=2`: 288/288 (7 new tests in `tests/edger-match-skills.test.js`, `tests/edger-v2-evaluation.test.js` and `tests/edger-training-pipeline.test.js`). `git diff --check` passes.
+- A scratch smoke-profile evaluation of the sixth's full-grid r6 child against the real QB bank, run from the repository root with `PYTHON=/usr/local/bin/python3`, not evidence:
+  - preflight passed and 16 matches ran;
+  - reported: tactical 0.236, bank 0/27 and 0/53, no Giant or Fireball plays, 0 of 7 opportunity decisions captured.
+- Run from the repository root, the evaluator's parity check finds `scripts/edger-v2-training.py` by relative path, which is existing behavior.
+- Overhead: 90 non-safety specs, 6 workers, untracked and tracked, two runs each way: 6.41/6.75 s against 6.66/7.06 s.
+- The bot benchmark and browser smoke were not run: Edger's runtime, the heuristic and the client are unchanged.
+
+November 20, 2026: gate review, docs only (`docs/EDGER_GATE_REVIEW.md`, this file); no tests were needed. These read-only commands ran in `GR` at HEAD `c042a9f` with a clean tree:
+- `node gate-review.mjs ~/Developer/edge_royale ~/edge_royale-runs gate-review.json`. It reproduces live v1's 0.522, the heuristic's 0.852 and the proposal 4 bank counts (v1 8/10/27 and 22/25/53; heuristic 20 and 40).
+- `/usr/local/bin/python3 -I match-usage.py ~/edge_royale-runs match-usage.json`.
+- `shasum -a 256 -c SHA256SUMS` passes (5/5).
+- Inputs bound: the 12 eighth A models pass `SL/SHA256SUMS` (12/12), each sixth full-grid `model.json` equals the `model_sha256` in its three evaluations (12/12), and the bank passes `QB/SHA256SUMS`.
 
 November 20, 2026: league labelling repair, with `LL` as above.
 - `PYTHON=/usr/local/bin/python3 npm test`: 281/281. The 3 new tests are in `tests/edger-league.test.js`: the stratum rule, the September allocation, and a worker end to end with provenance.
@@ -424,6 +456,8 @@ November 7, 2026: converter code checkpoint, then preflight, run and frozen anal
 - Pilot validation (November 3): frozen `bash run.sh` ran 2026-11-02T14:27:30Z–15:13:09Z, all 54 steps exit 0; `python3 -I analyze.py > analysis.md` verified reference checksums, and `python3 -I posthoc.py > posthoc.md` was explicitly post hoc. `replicate-seeds` reproduced earlier r1/r2 byte for byte; all six parity passes, worst tolerance ratio 0.381.
 
 # Risks / Notes
+
+- Since November 20 a promoted Edger may never cast Fireball and may rarely play Giant. The owner accepted this: the strongest legal play is enough. The reported measures make it visible at promotion approval, but no threshold blocks it. The children's play style is measured only against the scripted opponents and live v1, never against humans.
 
 - Reward v2 is hand-designed shaping. In theory potential-based shaping leaves the best policy unchanged, but with limited training it can still steer learning toward the owner's model of good play. The comparison, judged on match results rather than the reward, decides.
   - The counter table encodes engine-specific duel facts, for example that Fireball (688) cannot kill a 721-HP Musketeer.

@@ -29,8 +29,12 @@ import {
 } from "./edger-evaluation-core.mjs";
 import { spawnNativePython } from "./python-runtime.mjs";
 import { evaluateOpportunityBankFile } from "./edger-opportunity-bank.mjs";
+import { summarizeMatchSkills } from "./edger-match-skills.mjs";
 
-export const EDGER_V2_EVALUATION_REPORT_SCHEMA = "edger_v2_evaluation_report_v1";
+// v2 (November 20, 2026, docs/EDGER_GATE_REVIEW.md): the tactical scenarios
+// and the held-out Fireball bank moved from gates to the reported section, and
+// in-match skills were added there. v1 reports cannot promote.
+export const EDGER_V2_EVALUATION_REPORT_SCHEMA = "edger_v2_evaluation_report_v2";
 export const EDGER_V2_REFERENCE_REPORT_SCHEMA = "edger_v2_reference_report_v1";
 
 export const EDGER_V2_EVALUATION_PROFILES = Object.freeze({
@@ -246,6 +250,7 @@ export async function executeEdgerV2EvaluationSpecs({
   candidateModelPath,
   specs,
   workers,
+  trackSkills = false,
 }) {
   const partitions = Array.from(
     { length: Math.min(workers, specs.length) },
@@ -260,6 +265,7 @@ export async function executeEdgerV2EvaluationSpecs({
         runWorker({
           candidateModelPath: path.resolve(candidateModelPath),
           specs: partition,
+          trackSkills,
         })),
     )
   ).flat();
@@ -753,28 +759,71 @@ export function checkCandidateParity(modelPath, model) {
 }
 
 
+// Reported sections never pass or fail promotion. Their top-level and
+// per-category "passed" become "minimums_met" so they cannot be read as gates.
+function asReported(section) {
+  const { passed, categories, ...rest } = section;
+  return {
+    blocking: false,
+    minimums_met: passed,
+    ...rest,
+    ...(categories ? {
+      categories: Object.fromEntries(Object.entries(categories).map(([name, category]) => {
+        const { passed: categoryPassed, ...categoryRest } = category;
+        return [name, { ...categoryRest, minimum_met: categoryPassed }];
+      })),
+    } : {}),
+  };
+}
+
+// The reported suites need valid inputs: a feasible tactical suite and a valid
+// frozen bank with both classes. Missing or invalid inputs still stop the
+// evaluation, so every report carries both measures.
+function skillReportInputsGate(feasibility, bank) {
+  const bankValid = typeof bank.bank_sha256 === "string" && Boolean(bank.categories) &&
+    Object.values(bank.categories).every((category) => category.count > 0);
+  if (!feasibility.passed) {
+    return fail("tactical fixture minimum is unreachable or production setup is invalid", {
+      tactical_feasibility: feasibility,
+    });
+  }
+  if (!bankValid) {
+    return fail(bank.reason?.startsWith("held-out Fireball capture")
+      ? "opportunity bank has an empty class"
+      : bank.reason ?? "opportunity bank is invalid");
+  }
+  return pass({
+    tactical_schema_version: feasibility.schema_version,
+    bank_sha256: bank.bank_sha256,
+    bank_artifact_checksum: bank.artifact_checksum,
+  });
+}
+
 export function evaluateEdgerV2Preflight({ candidateModelPath, candidate, referenceHardware, opportunityBankPath = null }) {
   const scenarios = evaluateScenarioLeague(candidate);
   const feasibility = evaluateScenarioFeasibility();
   const timing = evaluateTiming(candidate, { samples: 100, budgetMs: 5 });
+  const bank = evaluateOpportunityBankFile(candidate, opportunityBankPath);
   const gates = {
     pytorch_js_parity: checkCandidateParity(candidateModelPath, candidate),
-    tactical_scenarios: {
-      passed: feasibility.passed && scenarios.passed,
-      ...(!feasibility.passed
-        ? { reason: "tactical fixture minimum is unreachable or production setup is invalid" }
-        : !scenarios.passed ? { reason: "tactical scenario league failed" } : {}),
-      candidate_aggregate: scenarios.candidate_aggregate,
-      heuristic_aggregate: scenarios.heuristic_aggregate,
-      feasibility,
-      schema_version: scenarios.schema_version,
-    },
-    heldout_fireball: evaluateOpportunityBankFile(candidate, opportunityBankPath),
+    skill_report_inputs: skillReportInputsGate(feasibility, bank),
     generated_js_timing: timing.passed
       ? pass({ ...timing, reference_hardware: referenceHardware })
       : fail("generated-JS p95 exceeded 5 ms", { ...timing, reference_hardware: referenceHardware }),
   };
-  return { passed: Object.values(gates).every((gate) => gate.passed), gates, scenarios, timing };
+  const reported = {
+    tactical_scenarios: asReported({
+      passed: scenarios.passed,
+      candidate_aggregate: scenarios.candidate_aggregate,
+      heuristic_aggregate: scenarios.heuristic_aggregate,
+      improved_over_heuristic: scenarios.improved_over_heuristic,
+      categories: scenarios.categories,
+      feasibility_passed: feasibility.passed,
+      schema_version: scenarios.schema_version,
+    }),
+    heldout_fireball: asReported(bank),
+  };
+  return { passed: Object.values(gates).every((gate) => gate.passed), gates, reported, scenarios, timing };
 }
 
 function safetyGate(results, requiredMatches) {
@@ -858,6 +907,7 @@ export async function evaluateEdgerV2Candidate({
     candidateModelPath,
     specs,
     workers,
+    trackSkills: true,
   }) : [];
   const byGroup = new Map();
   for (const result of results) {
@@ -977,8 +1027,7 @@ export async function evaluateEdgerV2Candidate({
     weak_baselines: weakGate,
     frozen_league: frozenGate,
     safety: safetyGate(results, profile.safety_games),
-    tactical_scenarios: preflight.gates.tactical_scenarios,
-    heldout_fireball: preflight.gates.heldout_fireball,
+    skill_report_inputs: preflight.gates.skill_report_inputs,
     replay: replayPassed
       ? pass({ checked_matches: allReplayChecked.length })
       : fail("generated-action replay verification failed", {
@@ -1029,6 +1078,12 @@ export async function evaluateEdgerV2Candidate({
     scenarios,
     timing,
     gates,
+    // Never gates: shown beside the match gates for the owner's separate
+    // promotion approval (docs/EDGER_GATE_REVIEW.md, November 20, 2026).
+    reported: {
+      ...preflight.reported,
+      match_skills: summarizeMatchSkills(results),
+    },
     promotion: {
       passed: failures.length === 0,
       failures,
@@ -1036,9 +1091,43 @@ export async function evaluateEdgerV2Candidate({
   };
 }
 
+// Plain-text lines for the reported (non-gating) sections, printed by the
+// evaluate and promote commands.
+export function summarizeReportedSkills(reported) {
+  if (!reported) return [];
+  const lines = [];
+  const fixed = (value) => (typeof value === "number" ? value.toFixed(3) : "n/a");
+  const tactical = reported.tactical_scenarios;
+  if (tactical) {
+    const categories = Object.entries(tactical.categories ?? {})
+      .map(([name, category]) => `${name} ${fixed(category.candidate_score)}`).join(", ");
+    lines.push(`tactical aggregate ${fixed(tactical.candidate_aggregate)} (heuristic ${fixed(tactical.heuristic_aggregate)}); ` +
+      `category minimums met: ${tactical.minimums_met ? "yes" : "no"} [${categories}]`);
+  }
+  const bank = reported.heldout_fireball;
+  if (bank?.categories) {
+    const classes = Object.entries(bank.categories)
+      .map(([name, category]) => `${name} ${category.candidate_captures}/${category.count}`).join(", ");
+    lines.push(`held-out Fireball captures ${classes}; minimums met: ${bank.minimums_met ? "yes" : "no"}`);
+  } else if (bank) {
+    lines.push(`held-out Fireball: ${bank.reason ?? "not evaluated"}`);
+  }
+  const pooled = reported.match_skills?.pooled_excluding_safety;
+  if (pooled) {
+    const usage = Object.entries(pooled.deployments_per_game)
+      .map(([card, value]) => `${card} ${fixed(value)}`).join(", ");
+    lines.push(`in-match deployments per game over ${pooled.games} non-safety games: ${usage}`);
+    const capture = Object.entries(pooled.fireball_opportunities)
+      .map(([name, entry]) => `${name} ${entry.captures}/${entry.decisions} decisions, ` +
+        `${entry.games_with_capture}/${entry.games_with_opportunity} games`).join("; ");
+    lines.push(`in-match Fireball capture: ${capture}`);
+  }
+  return lines;
+}
+
 export function createEdgerV2ReferenceReport(evaluationReport) {
   if (evaluationReport.schema_version !== EDGER_V2_EVALUATION_REPORT_SCHEMA) {
-    throw new Error("reference source must be an edger_v2_evaluation_report_v1");
+    throw new Error(`reference source must be an ${EDGER_V2_EVALUATION_REPORT_SCHEMA}`);
   }
   return {
     schema_version: EDGER_V2_REFERENCE_REPORT_SCHEMA,

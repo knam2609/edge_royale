@@ -73,3 +73,25 @@ test("promotion report refuses failed gates", () => {
   assert.equal(result.passed, false);
   assert.deepEqual(result.failures, ["benchmark: benchmark gate failed"]);
 });
+
+test("tactical pass means every category minimum is met; beating the heuristic is reported only", () => {
+  const strict = evaluateScenarioLeague(EDGER_POLICY_MODEL);
+  // Live v1 misses the spell, finishing and pocket minimums.
+  assert.equal(strict.passed, false);
+  assert.equal(strict.categories.spell_value.passed, false);
+  const lenient = evaluateScenarioLeague(EDGER_POLICY_MODEL, {
+    minimums: { defense: 0, spell_value: 0, tower_finishing: 0, elixir_punishment: 0, pocket_pressure: 0 },
+  });
+  // Below the heuristic's aggregate, yet passing once every minimum is met.
+  assert.ok(lenient.candidate_aggregate < lenient.heuristic_aggregate);
+  assert.equal(lenient.improved_over_heuristic, false);
+  assert.equal(lenient.passed, true);
+});
+
+test("legacy promotion check ignores the reported tactical scenarios", () => {
+  const result = checkPromotionReport({
+    gates: { schema: { passed: true }, benchmark: { passed: true } },
+    scenarios: { passed: false, blocking: false },
+  });
+  assert.deepEqual(result, { passed: true, failures: [] });
+});
