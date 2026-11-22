@@ -1,6 +1,6 @@
 # Current State
 
-- November 20, 2026: **the tactical scenarios and the held-out Fireball bank are now reported, not promotion gates.** The owner reviewed the [gate review](docs/EDGER_GATE_REVIEW.md) and decided that the strongest legal play is enough, adopting its recommendation: option C plus D as reported measures, and dropping the strict heuristic-aggregate rule. **Implemented and tested; not committed.**
+- November 20, 2026: **the tactical scenarios and the held-out Fireball bank are now reported, not promotion gates.** The owner reviewed the [gate review](docs/EDGER_GATE_REVIEW.md) and decided that the strongest legal play is enough, adopting its recommendation: option C plus D as reported measures, and dropping the strict heuristic-aggregate rule. **Implemented, tested and committed (9c4dd51).**
   - Report schema `edger_v2_evaluation_report_v2`. The `reported` section holds:
     - `tactical_scenarios` and `heldout_fireball`, with `minimums_met` in place of `passed`;
     - the new `match_skills` (`scripts/edger-match-skills.mjs`): the candidate's legal plays per card, plus Fireball opportunities, choices and legal captures at its own decisions, per group and pooled over every group except safety.
@@ -194,7 +194,7 @@
 
 # Next Tasks
 
-1. **Full-grid placement (adopted for training, owner, November 13).** The live bootstrap keeps the shortlist. Since November 20 the tactical and Fireball results are reported, not gates, so a full-grid candidate is judged by the match gates and the owner's approval. None exists: the next candidate needs fresh provenance and the full match suite (task 6). The owner reviews the gate implementation before commit. The ninth comparison (closed November 20) found no resolved match value for forced capture in the current children; the opportunity weight is unmeasured. Under the eighth's frozen decision the current mix stays. Stale-batch breakdown and the balancing weights (up to 30) remain hypotheses, each needing its own design and pre-set endpoint.
+1. **Full-grid placement (adopted for training, owner, November 13).** The live bootstrap keeps the shortlist. Since November 20 the tactical and Fireball results are reported, not gates, so a full-grid candidate is judged by the match gates and the owner's approval. None exists: the next candidate needs fresh provenance and the full match suite (task 6). The ninth comparison (closed November 20) found no resolved match value for forced capture in the current children; the opportunity weight is unmeasured. Under the eighth's frozen decision the current mix stays. Stale-batch breakdown and the balancing weights (up to 30) remain hypotheses, each needing its own design and pre-set endpoint.
 2. Optional: repeat warm-up headed at DPR 2. Mobile/120 Hz need separate measurement. Protect decision-preserving speed-ups for review/fresh provenance; no forced-PASS shortcuts.
 3. Prepare timing-only `c7g.4xlarge` packet for separate approval: exact launch/SSM/download/termination, verified bundle, current official price ceiling, ≤60-minute lifetime/storage/cleanup. Cloud admission is pending the A$10/month whole-account budget. Keep existing-method p95 ≤5 ms.
 4. Re-scope September 21 BC-control/architecture ablations; do not judge by held-out cross-entropy alone. Candidates must satisfy the match-quality gates; capture is reported (November 20).
