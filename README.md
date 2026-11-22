@@ -15,7 +15,7 @@ There are no player-facing bot levels, unlock gates, model selectors, self-play 
 
 ## Runtime model
 
-The live browser opponent still imports the promoted `edger_policy_model_v1` artifact synchronously from `src/ai/generated/edgerPolicyCurrent.js`. The compact `edger_policy_model_v2` actor exists beside it in shadow mode and cannot become live until every v2 scaling, safety, quality, replay, timing, test, and browser gate passes.
+The live browser opponent still imports the promoted `edger_policy_model_v1` artifact synchronously from `src/ai/generated/edgerPolicyCurrent.js`. The compact `edger_policy_model_v2` actor exists beside it in shadow mode and cannot become live until a full evaluation passes every safety, quality, replay, timing, test, and browser gate, and the owner separately approves promotion. The fixed 1%/10%/100% data-scaling proof gates the production league-training path, not promotion (owner, November 23, 2026; [candidate campaign review](docs/EDGER_CANDIDATE_CAMPAIGN.md)).
 
 V2 uses:
 
@@ -227,7 +227,7 @@ npm run edger:promote:v2 -- \
   --report /path/to/evaluation-report.json
 ```
 
-The promotion command refuses smoke profiles, artifact checksum mismatches, missing external reports, or any failed gate. Campaign automation opens a pull request after it succeeds.
+The promotion command refuses smoke profiles, artifact checksum mismatches, missing external reports, or any failed gate. Both commands refuse a model whose `training.promotion_status` is `diagnostic_only_not_promotable` (the `train-arm` diagnostic exports): the evaluator before any match under the full profile, and promotion whatever the report says. Smoke-profile evaluation of such a model stays allowed. Campaign automation opens a pull request after it succeeds.
 
 The evaluator runs parity, timing, and the reported-measure inputs (a feasible
 tactical suite and a valid opportunity bank) first. A failed preflight writes a

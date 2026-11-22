@@ -55,6 +55,55 @@ function writeUnitBank(filePath) {
   fs.writeFileSync(filePath, JSON.stringify(bank));
 }
 
+const PROMOTION_GATE_NAMES = [
+  "acceptance_profile",
+  "schema_and_size",
+  "pytorch_js_parity",
+  "champion",
+  "anchors",
+  "weak_baselines",
+  "frozen_league",
+  "safety",
+  "skill_report_inputs",
+  "replay",
+  "generated_js_timing",
+  "full_test_suite",
+  "browser_smoke",
+];
+
+// A full report that passes every gate, bound to the model's ID and checksum.
+// Its reported sections fall short of every tactical and Fireball minimum.
+function passingPromotionReport(model, checksum) {
+  return {
+    schema_version: "edger_v2_evaluation_report_v2",
+    profile: "full",
+    candidate_model_id: model.model_id,
+    candidate_artifact_checksum: checksum,
+    matchups: {},
+    frozen_league_mean: 0.5,
+    gates: Object.fromEntries(PROMOTION_GATE_NAMES.map((name) => [name, { passed: true }])),
+    reported: {
+      tactical_scenarios: {
+        blocking: false, minimums_met: false, candidate_aggregate: 0.3, heuristic_aggregate: 0.852,
+        categories: { spell_value: { candidate_score: 0, minimum_met: false } },
+      },
+      heldout_fireball: {
+        blocking: false, minimums_met: false,
+        categories: { lethal: { count: 27, candidate_captures: 0 }, cluster: { count: 53, candidate_captures: 0 } },
+      },
+      match_skills: {
+        blocking: false,
+        pooled_excluding_safety: {
+          games: 2,
+          deployments_per_game: { fireball: 0, giant: 0.5 },
+          fireball_opportunities: { lethal: { captures: 0, decisions: 3, games_with_capture: 0, games_with_opportunity: 1 } },
+        },
+      },
+    },
+    promotion: { passed: true, failures: [] },
+  };
+}
+
 function modelDescriptor(policyId) {
   return {
     kind: "model",
@@ -212,51 +261,9 @@ test("v2 promotion preserves the exact evaluated model bytes", () => {
   const modelBytes = Buffer.from(JSON.stringify(model));
   fs.writeFileSync(modelPath, modelBytes);
   const checksum = createHash("sha256").update(modelBytes).digest("hex");
-  const gateNames = [
-    "acceptance_profile",
-    "schema_and_size",
-    "pytorch_js_parity",
-    "champion",
-    "anchors",
-    "weak_baselines",
-    "frozen_league",
-    "safety",
-    "skill_report_inputs",
-    "replay",
-    "generated_js_timing",
-    "full_test_suite",
-    "browser_smoke",
-  ];
   // The reported sections fall short of every tactical and Fireball minimum,
   // and promotion still proceeds: they are shown for review, not gated.
-  fs.writeFileSync(reportPath, JSON.stringify({
-    schema_version: "edger_v2_evaluation_report_v2",
-    profile: "full",
-    candidate_model_id: model.model_id,
-    candidate_artifact_checksum: checksum,
-    matchups: {},
-    frozen_league_mean: 0.5,
-    gates: Object.fromEntries(gateNames.map((name) => [name, { passed: true }])),
-    reported: {
-      tactical_scenarios: {
-        blocking: false, minimums_met: false, candidate_aggregate: 0.3, heuristic_aggregate: 0.852,
-        categories: { spell_value: { candidate_score: 0, minimum_met: false } },
-      },
-      heldout_fireball: {
-        blocking: false, minimums_met: false,
-        categories: { lethal: { count: 27, candidate_captures: 0 }, cluster: { count: 53, candidate_captures: 0 } },
-      },
-      match_skills: {
-        blocking: false,
-        pooled_excluding_safety: {
-          games: 2,
-          deployments_per_game: { fireball: 0, giant: 0.5 },
-          fireball_opportunities: { lethal: { captures: 0, decisions: 3, games_with_capture: 0, games_with_opportunity: 1 } },
-        },
-      },
-    },
-    promotion: { passed: true, failures: [] },
-  }));
+  fs.writeFileSync(reportPath, JSON.stringify(passingPromotionReport(model, checksum)));
   fs.mkdirSync(path.join(root, "src/ai/generated"), { recursive: true });
   const completeReport = JSON.parse(fs.readFileSync(reportPath, "utf8"));
   const promote = (report) => {
@@ -308,12 +315,81 @@ test("v2 promotion preserves the exact evaluated model bytes", () => {
   fs.rmSync(root, { recursive: true, force: true });
 });
 
+function diagnosticModel(modelId) {
+  const model = createEdgerV2BootstrapModel({ modelId });
+  model.training.promotion_status = "diagnostic_only_not_promotable";
+  return model;
+}
+
+test("v2 promotion refuses a diagnostic export even with a matching, otherwise passing report", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "edger-v2-promote-diagnostic-"));
+  try {
+    fs.mkdirSync(path.join(root, "src/ai/generated"), { recursive: true });
+    const promoteWith = (model, name) => {
+      const modelPath = path.join(root, `${name}.json`);
+      const reportPath = path.join(root, `${name}-report.json`);
+      const modelBytes = Buffer.from(JSON.stringify(model));
+      fs.writeFileSync(modelPath, modelBytes);
+      const checksum = createHash("sha256").update(modelBytes).digest("hex");
+      fs.writeFileSync(reportPath, JSON.stringify(passingPromotionReport(model, checksum)));
+      return spawnSync(process.execPath, [
+        path.resolve("scripts/edger-v2-promote.mjs"), "--model", modelPath, "--report", reportPath,
+      ], { cwd: root, encoding: "utf8" });
+    };
+    const promotedModel = path.join(root, "artifacts/edger-training/promoted/edger_policy_current.json");
+
+    const refused = promoteWith(diagnosticModel("diagnostic-child"), "diagnostic");
+    assert.notEqual(refused.status, 0);
+    assert.match(refused.stderr, /v2 promotion refused: model diagnostic-child is labelled training\.promotion_status=diagnostic_only_not_promotable/);
+    assert.equal(fs.existsSync(promotedModel), false);
+    assert.equal(fs.readdirSync(path.join(root, "src/ai/generated")).length, 0);
+
+    // The control differs only in the label, so the report really passes.
+    const control = diagnosticModel("diagnostic-child");
+    control.training.promotion_status = "shadow_candidate_unreviewed";
+    const accepted = promoteWith(control, "control");
+    assert.equal(accepted.status, 0, accepted.stderr);
+    assert.equal(JSON.parse(fs.readFileSync(promotedModel, "utf8")).training.promotion_status, "shadow_candidate_unreviewed");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a full v2 evaluation refuses a diagnostic export before any match", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "edger-v2-evaluate-diagnostic-"));
+  try {
+    const candidateModelPath = path.join(root, "candidate.json");
+    fs.writeFileSync(candidateModelPath, JSON.stringify(diagnosticModel("diagnostic-child")));
+    const refusal = /v2 full evaluation refused: model diagnostic-child is labelled training\.promotion_status=diagnostic_only_not_promotable/;
+    // An unknown profile name falls back to the full profile, so it is refused too.
+    for (const profileName of ["full", "unknown"]) {
+      await assert.rejects(
+        evaluateEdgerV2Candidate({ candidateModelPath, championModelPath: CHAMPION_MODEL, profileName, workers: 1 }),
+        refusal,
+      );
+    }
+    const out = path.join(root, "report.json");
+    const result = spawnSync(process.execPath, [
+      "scripts/edger-v2-evaluate.mjs", "--candidate", candidateModelPath, "--profile", "full", "--workers", "1", "--out", out,
+    ], { encoding: "utf8" });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, refusal);
+    assert.equal(fs.existsSync(out), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("tactical and Fireball shortfalls no longer stop the match suite; in-match skills are reported", { timeout: 120_000 }, async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "edger-reported-skills-"));
   try {
     const candidateModelPath = path.join(root, "candidate.json");
     const bankPath = path.join(root, "bank.json");
-    fs.writeFileSync(candidateModelPath, JSON.stringify(playingModel()));
+    // Labelled like a cadence export: smoke diagnostics of never-promotable
+    // models stay allowed, since a smoke report cannot promote.
+    const candidate = playingModel();
+    candidate.training.promotion_status = "diagnostic_only_not_promotable";
+    fs.writeFileSync(candidateModelPath, JSON.stringify(candidate));
     writeUnitBank(bankPath);
     const report = await evaluateEdgerV2Candidate({
       candidateModelPath,

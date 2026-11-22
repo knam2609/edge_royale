@@ -37,6 +37,25 @@ import { summarizeMatchSkills } from "./edger-match-skills.mjs";
 export const EDGER_V2_EVALUATION_REPORT_SCHEMA = "edger_v2_evaluation_report_v2";
 export const EDGER_V2_REFERENCE_REPORT_SCHEMA = "edger_v2_reference_report_v1";
 
+// Training labels that can never reach an acceptance evaluation or promotion
+// (owner, November 23, 2026; docs/EDGER_CANDIDATE_CAMPAIGN.md). The cadence
+// `train-arm` exports carry the first. Smoke-profile diagnostics stay allowed:
+// a smoke report cannot promote.
+export const EDGER_V2_NON_PROMOTABLE_STATUSES = Object.freeze([
+  "diagnostic_only_not_promotable",
+]);
+
+export function assertEdgerV2ModelPromotable(model, { context }) {
+  const status = model?.training?.promotion_status ?? null;
+  if (EDGER_V2_NON_PROMOTABLE_STATUSES.includes(status)) {
+    throw new Error(
+      `${context} refused: model ${model?.model_id ?? "(unknown)"} is labelled ` +
+        `training.promotion_status=${status}`,
+    );
+  }
+  return model;
+}
+
 export const EDGER_V2_EVALUATION_PROFILES = Object.freeze({
   full: Object.freeze({
     champion_games: 800,
@@ -887,6 +906,11 @@ export async function evaluateEdgerV2Candidate({
   const candidate = validateEdgerV2PolicyModel(
     JSON.parse(fs.readFileSync(candidateModelPath, "utf8")),
   );
+  // An unknown profile name falls back to the full profile above, so the
+  // refusal keys on the profile itself. It runs before any match is played.
+  if (profile.acceptance_profile) {
+    assertEdgerV2ModelPromotable(candidate, { context: "v2 full evaluation" });
+  }
   const campaignGitCommit = candidate.training?.git_commit ?? null;
   const candidateBytes = fs.statSync(candidateModelPath).size;
   const champion = descriptorForModel(championModelPath);

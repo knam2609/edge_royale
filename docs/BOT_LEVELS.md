@@ -69,4 +69,4 @@ npm run smoke:browser
 npm run edger:canary -- --seed 20260718 --canary-ticks 80
 ```
 
-The legacy `npm run edger:evaluate` and `npm run edger:promote` commands apply to v1 only. V2 uses `npm run edger:evaluate:v2` and `npm run edger:promote:v2`; promotion remains blocked until the large-sample contract in `docs/EDGER_TRAINING.md` has actually passed.
+The legacy `npm run edger:evaluate` and `npm run edger:promote` commands apply to v1 only. V2 uses `npm run edger:evaluate:v2` and `npm run edger:promote:v2`; promotion remains blocked until the large-sample contract in `docs/EDGER_TRAINING.md` has actually passed. Both v2 commands refuse `diagnostic_only_not_promotable` models.

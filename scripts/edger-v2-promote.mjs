@@ -7,6 +7,7 @@ import path from "node:path";
 import { validateEdgerV2PolicyModel } from "../src/ai/v2/policy.js";
 import {
   EDGER_V2_EVALUATION_REPORT_SCHEMA,
+  assertEdgerV2ModelPromotable,
   createEdgerV2ReferenceReport,
   summarizeReportedSkills,
 } from "./edger-v2-evaluation-core.mjs";
@@ -74,6 +75,9 @@ function writeJson(filePath, value) {
 
 const args = parseArgs(process.argv.slice(2));
 const model = validateEdgerV2PolicyModel(JSON.parse(fs.readFileSync(args.model, "utf8")));
+// Checked first, whatever the report says. The report's artifact checksum
+// binds the exact bytes, so relabelling the model breaks that match.
+assertEdgerV2ModelPromotable(model, { context: "v2 promotion" });
 const report = JSON.parse(fs.readFileSync(args.report, "utf8"));
 if (report.schema_version !== EDGER_V2_EVALUATION_REPORT_SCHEMA) {
   throw new Error(`report schema must be ${EDGER_V2_EVALUATION_REPORT_SCHEMA}`);

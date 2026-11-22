@@ -9,7 +9,7 @@ Edger v2 is a shadow pipeline:
 1. persistent full-match corpus
 2. structured behavior cloning
 3. one conservative offline advantage-weighted actor phase with a frozen behavior-value critic
-4. fixed 1%/10%/100% data-scaling proof
+4. fixed 1%/10%/100% data-scaling proof (it gates production league training, not promotion; owner, November 23, 2026)
 5. exact-JavaScript snapshot-league IMPALA/V-trace campaigns
 6. separate reviewed promotion after every v2 gate passes
 
@@ -387,7 +387,8 @@ the live bot, the promotion evaluator or campaigns.
   `load_checkpoint` rejects, and exports are labelled
   `diagnostic_only_not_promotable`. The diagnostic learner records the dirty
   worktree diff hash instead of requiring a clean tree; it is not authoritative
-  training.
+  training. `edger:evaluate:v2 --profile full` and `edger:promote:v2` refuse
+  that label (smoke-profile evaluation stays allowed).
 
 ## 5. Scaling and snapshot league
 
@@ -637,7 +638,16 @@ outside `gates`. None of them can pass or fail promotion.
 
 `edger:evaluate:v2` and `edger:promote:v2` print the reported measures. The
 promote command refuses a report that lacks any of them, and every schema v1
-report. They inform the owner's separate promotion approval: a candidate may
+report.
+
+**Diagnostic exports never promote (owner, November 23, 2026).** Both commands
+refuse a model whose `training.promotion_status` is
+`diagnostic_only_not_promotable`
+(`EDGER_V2_NON_PROMOTABLE_STATUSES` in `scripts/edger-v2-evaluation-core.mjs`).
+The evaluator refuses under the full profile, before parity or any match; the
+promote command refuses before reading the report. The report's artifact
+checksum binds the exact model bytes, so relabelling a diagnostic export
+breaks that match. They inform the owner's separate promotion approval: a candidate may
 promote without casting Fireball. The legacy v1 evaluator also reports its
 tactical suite instead of gating on it.
 
