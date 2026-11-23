@@ -1157,7 +1157,11 @@ def run_lineage(entry: dict[str, Any]) -> dict[str, Any]:
     status_path = work / "arm-status.json"
     status = read_json_file(status_path)
     chain = []
+    # A stopped iteration (collapse, learner failure) has a record but no
+    # checkpoint; the chain holds completed iterations only.
     for record in status["iterations"]:
+        if not record.get("checkpoint_sha256"):
+            continue
         folder = work / f"iter{record['iteration']}"
         chain.append({
             "iteration": record["iteration"],
@@ -1333,10 +1337,14 @@ def build_candidate_manifest(
         if not Path(entry["bc_checkpoint"]).exists() or not status_path.exists():
             record.update({"lineage": None, "problems": ["the run did not train"]})
         else:
-            record["lineage"] = run_lineage(entry)
-            record["problems"] = lineage_problems(
-                entry, record["lineage"], git_commit=state["head"], bc_dataset_sha256=bc_dataset_sha256,
-                recipe=recipe)
+            try:
+                record["lineage"] = run_lineage(entry)
+                record["problems"] = lineage_problems(
+                    entry, record["lineage"], git_commit=state["head"], bc_dataset_sha256=bc_dataset_sha256,
+                    recipe=recipe)
+            except (OSError, KeyError, ValueError, RuntimeError) as error:
+                record.setdefault("lineage", None)
+                record["problems"] = [f"the lineage could not be read: {type(error).__name__}: {error}"]
         record["lineage_valid"] = record["problems"] == []
         entries.append(record)
     manifest = {

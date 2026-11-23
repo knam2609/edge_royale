@@ -271,6 +271,18 @@ entry = {"run": "c1", "bc_seed": 77, "bc_checkpoint": str(work / "bc.pt"), "plan
          "work_dir": str(work / "c1")}
 missing = {"run": "c2", "bc_seed": 78, "bc_checkpoint": str(work / "missing.pt"), "plan": str(work / "plan.json"),
            "work_dir": str(work / "c2")}
+# c3 stopped in its second iteration: a record without a checkpoint.
+import shutil
+shutil.copytree(work / "c1", work / "c3")
+status = json.loads((work / "c3" / "arm-status.json").read_text())
+status["iterations"][1] = {key: value for key, value in status["iterations"][1].items()
+                           if key not in ("checkpoint", "checkpoint_sha256", "model", "model_sha256")}
+status["stop_reason"] = "collapse: zero successful deployments in iteration 1"
+(work / "c3" / "arm-status.json").write_text(json.dumps(status))
+stopped = {**entry, "run": "c3", "work_dir": str(work / "c3")}
+broken = {**entry, "run": "c4", "work_dir": str(work / "c4")}
+(work / "c4").mkdir()
+(work / "c4" / "arm-status.json").write_text("{}")
 out = {}
 
 def error(call):
@@ -280,10 +292,13 @@ def error(call):
         return f"{type(caught).__name__}: {caught}"
     return None
 
-manifest = cadence.build_candidate_manifest([entry, missing], campaign_id="test", bc_dataset_sha256=dataset,
-                                            out=work / "manifest.json", recipe=recipe)
+manifest = cadence.build_candidate_manifest([entry, missing, stopped, broken], campaign_id="test",
+                                            bc_dataset_sha256=dataset, out=work / "manifest.json", recipe=recipe)
 out["valid"] = {item["run"]: item["lineage_valid"] for item in manifest["runs"]}
 out["c2_problems"] = manifest["runs"][1]["problems"]
+out["c3_problems"] = manifest["runs"][2]["problems"]
+out["c3_chain"] = [link["iteration"] for link in manifest["runs"][2]["lineage"]["chain"]]
+out["c4_problems"] = manifest["runs"][3]["problems"]
 out["strict_problems"] = cadence.lineage_problems(entry, manifest["runs"][0]["lineage"],
     git_commit=manifest["git_commit"], bc_dataset_sha256=dataset)
 out["wrong_bc_seed"] = cadence.lineage_problems({**entry, "bc_seed": 99}, manifest["runs"][0]["lineage"],
@@ -372,8 +387,12 @@ test("only the selected run, with its whole lineage verified, is exported as a c
 
     fs.writeFileSync(path.join(directory, "lineage.py"), LINEAGE_SCRIPT);
     const out = JSON.parse(python([path.join(directory, "lineage.py"), directory]).trim().split("\n").at(-1));
-    assert.deepEqual(out.valid, { c1: true, c2: false });
+    assert.deepEqual(out.valid, { c1: true, c2: false, c3: false, c4: false });
     assert.deepEqual(out.c2_problems, ["the run did not train"]);
+    assert.deepEqual(out.c3_chain, [0]);
+    assert.ok(out.c3_problems.includes("the arm stopped with 'collapse: zero successful deployments in iteration 1'"));
+    assert.ok(out.c3_problems.includes("the arm did not complete every iteration"));
+    assert.match(out.c4_problems[0], /^the lineage could not be read: FileNotFoundError/);
     assert.ok(out.strict_problems.includes("arm setting iterations is 2, not 24"));
     assert.ok(out.strict_problems.includes("arm setting pairs_per_iteration is 1, not 32"));
     assert.deepEqual(out.wrong_bc_seed, ["the BC parent's seed 77 is not 99"]);
