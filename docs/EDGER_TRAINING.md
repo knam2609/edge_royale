@@ -623,7 +623,7 @@ npm run edger:scaling:recover -- \
 
 ## 8. Promotion gate
 
-The corpus, BC, offline-improvement, scaling, league/V-trace, parity, large-sample evaluator, checksum-bound promotion, and campaign PR foundations are implemented. V2 remains shadow-only until a real full report passes:
+The corpus, BC, offline-improvement, scaling, league/V-trace, parity, large-sample evaluator, checksum-bound promotion, and campaign PR foundations are implemented. V2 remains shadow-only until a real full report passes and the owner approves promotion. The first passing report is the [candidate campaign's](EDGER_CANDIDATE_CAMPAIGN.md#result-november-23-2026) (November 23, 2026); it awaits that decision. The gates:
 
 - paired champion bootstrap bounds
 - heuristic and anchor non-regression bounds

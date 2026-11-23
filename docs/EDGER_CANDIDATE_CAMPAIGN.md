@@ -5,10 +5,11 @@ bottleneck is the fresh-provenance task in `progress.md`: no model exists
 that could be promoted, even if it is strong enough. This review proposes how
 to produce one, for the owner's decision.
 
-**Status: approved with one change, November 23, 2026** (see
-[Owner decision](#owner-decision-november-23-2026)). The guard and the
-campaign tooling (items 2–5 below) are implemented; the run directory is item
-6. The proposal below is kept as
+**Status: run once on November 23, 2026; the selected run passed every gate
+of the full evaluation** ([result](#result-november-23-2026)). It awaits the
+owner's separate promotion decision; nothing was promoted. The owner approved
+the design that day with one change (see
+[Owner decision](#owner-decision-november-23-2026)). The proposal below is kept as
 written at HEAD `6a522e8`; where it differs from the decision, the decision
 wins. Every number below is read from saved outputs or from that code.
 
@@ -46,6 +47,73 @@ promotion remains a separate decision.
    `diagnostic_only_not_promotable`. A test shows promotion refusing a
    diagnostic export whose report matches and otherwise passes, while the same
    model with a candidate label promotes.
+
+## Result (November 23, 2026)
+
+Run directory `CC` = `~/edge_royale-runs/20261123-candidate-campaign.noindex`
+(`README.md`, `plan.md`, 21,665-file `SHA256SUMS`). The source was the clean
+commit `567ec98` (campaign tooling `4ac6bc1` plus a manifest robustness fix).
+The design was frozen in `FROZEN.txt` (81 files) at 05:15:27Z, before any
+campaign output.
+
+**Frozen before output:**
+- training plans r30–r41: the ninth's 43 plans reproduced byte for byte, then
+  r30–r41;
+- final evaluator seed **758784396**: the first labelled candidate
+  (`edger-candidate-final-evaluation-20261123`) whose 5,650 full-schedule and
+  100 reference match seeds miss a 281,954-seed ledger. The ledger holds the
+  frozen suites (including September's league schedules and the `20260718`
+  suite), the 507 plan files under `~/edge_royale-runs`, 13,240 recorded seed
+  values, and generator reconstructions of every default seed in the scripts;
+- 100 selection seeds (`edger-candidate-select-20261123`), outside the ledger,
+  r30–r41 and the final evaluation.
+
+**Disclosed:** one r30 training seed equals a value of the precautionary
+20260927 stream reconstruction. The scripts use that stream only for
+opponent-allocation draws, and the value is in no plan or record. r30–r41 are
+disjoint from every plan file, the frozen suites, every recorded seed and the
+match-schedule generators.
+
+**Run:** one launch, 05:15:34Z–06:32:08Z (76.6 min), exit 0, with no retry,
+cap or failure.
+- QA (295/295 and the browser smoke) ran at the campaign commit before
+  training.
+- All 12 BC parents and all 12 runs completed on the first attempt (1,536
+  updates each).
+- All 12 lineages were valid, and all 12 runs were eligible.
+
+Selection means against live v1, the heuristic and aggressive (200 games
+each): mean 0.869, SD 0.040, range 0.793–0.918. The eighth's A children
+scored 0.851 mean on the reused development seeds.
+
+**c3 was selected** (0.905, 0.955, 0.895; mean 0.918) and exported as
+`edger_v2_candidate_20261123-L_c3` (SHA-256 `26a56150…`, binding in
+`CC/candidate/binding.json`).
+
+**Full evaluation (seed 758784396, full profile): passed, no gate failed.**
+
+| Gate | Result |
+|---|---|
+| Champion (live v1, 800 games) | 0.900, paired-bootstrap lower bound 0.880 (blocks 0.895, 0.905) |
+| Heuristic (200 games) | 0.935, lower bound 0.900; live v1's reference at this seed 0.520 |
+| Frozen league | +0.415 over live v1's reference mean |
+| Weak baselines | random 1.000, aggressive 0.910, defender 1.000 |
+| Safety | 10,000 games, 0 illegal actions; 100 replay checks |
+| Parity, timing, size | max logit difference 1.9e-6; p95 1.40 ms (budget 5 ms); 36,946 actor parameters |
+| QA | `npm test` and browser smoke reports at `567ec98` |
+
+**Reported, not gates**, for the promotion review:
+- tactical aggregate 0.236 against the heuristic's 0.852: defense 1.000, spell
+  value 0, tower finishing 0, elixir punishment 0, pocket pressure 0.180;
+- held-out Fireball bank: 0/27 lethal and 0/53 cluster;
+- in the evaluator's 1,300 non-safety games, the candidate plays its five
+  cheap troops about five times per game each, Arrows 0.016 and Giant 0.005
+  times per game, and never Fireball. It captured none of its 614 lethal or
+  1,370 cluster Fireball opportunities.
+
+The design expected the Fireball and Giant result (see Limits); the owner
+accepted it on November 20. Promotion stays a separate owner decision, with an
+unmerged review PR that keeps live v1 until accepted.
 
 ## Summary
 
@@ -223,6 +291,7 @@ passed parity, with zero illegal attempts.
    - `plan.md`, the runner and a dry run of the selection rule on synthetic results;
    - a smoke on an out-of-population parent (`b0-s20260718`), never a campaign run;
    - then the freeze.
+   - **Done November 23** ([result](#result-november-23-2026)). The dry run passed 11/11 cases. The smoke ran the runner end to end: BC seed 20260718 at the campaign commit, one injected kill and resume, a deliberately failing second run, and the smoke evaluation profile.
 
 ## Questions for the owner
 
