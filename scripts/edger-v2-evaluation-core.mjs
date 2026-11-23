@@ -241,6 +241,42 @@ export function buildEdgerV2EvaluationSpecs({
   return specs;
 }
 
+export const EDGER_V2_WEAK_BASELINES = Object.freeze(["random", "aggressive", "defender"]);
+
+// The distinct match seeds an evaluation schedule plays, in first-use order.
+// They come from buildEdgerV2EvaluationSpecs itself, with placeholder
+// opponents: the seeds depend only on the seed, the profile and the number of
+// anchors, never on the models. Used to check a new evaluator seed for overlap
+// before it is frozen (candidate campaign, owner decision of November 23, 2026).
+export function edgerV2EvaluationScheduleSeeds({ seed, profileName = "full", anchorCount = 0 }) {
+  const profile = EDGER_V2_EVALUATION_PROFILES[profileName];
+  if (!profile) {
+    throw new Error(`unknown evaluation profile ${profileName}`);
+  }
+  if (!Number.isInteger(seed)) {
+    throw new Error("the evaluator seed must be an integer");
+  }
+  const placeholder = (policyId) => ({ kind: "model", policy_id: policyId, checkpoint_id: null, model_path: null });
+  const specs = buildEdgerV2EvaluationSpecs({
+    seed,
+    profile,
+    champion: placeholder("champion"),
+    heuristic: descriptorForBot(HEURISTIC_BOT_ID),
+    anchors: Array.from({ length: anchorCount }, (_, index) => placeholder(`anchor_${index}`)),
+    weakBaselines: EDGER_V2_WEAK_BASELINES.map(descriptorForBot),
+  });
+  return [...new Set(specs.map((spec) => spec.seed))];
+}
+
+// The live-champion reference (edger:reference:v2) plays consecutive seeds
+// from its --seed, the same pair seeds against every opponent.
+export function edgerV2ReferenceMatchSeeds({ seed, gamesPerOpponent = 200 }) {
+  if (!Number.isInteger(seed)) {
+    throw new Error("the reference seed must be an integer");
+  }
+  return Array.from({ length: gamesPerOpponent / 2 }, (_, pairIndex) => seed + pairIndex);
+}
+
 function runWorker(workerData) {
   return new Promise((resolve, reject) => {
     const worker = new Worker(
@@ -916,7 +952,7 @@ export async function evaluateEdgerV2Candidate({
   const champion = descriptorForModel(championModelPath);
   const anchors = anchorModelPaths.map(descriptorForModel);
   const heuristic = descriptorForBot(HEURISTIC_BOT_ID);
-  const weakBaselines = ["random", "aggressive", "defender"].map(descriptorForBot);
+  const weakBaselines = EDGER_V2_WEAK_BASELINES.map(descriptorForBot);
   const specs = buildEdgerV2EvaluationSpecs({
     seed,
     profile,

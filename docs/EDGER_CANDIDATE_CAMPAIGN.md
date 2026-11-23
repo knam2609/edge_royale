@@ -6,8 +6,9 @@ that could be promoted, even if it is strong enough. This review proposes how
 to produce one, for the owner's decision.
 
 **Status: approved with one change, November 23, 2026** (see
-[Owner decision](#owner-decision-november-23-2026)). The guard is implemented;
-the campaign is not yet built, frozen or run. The proposal below is kept as
+[Owner decision](#owner-decision-november-23-2026)). The guard and the
+campaign tooling (items 2–5 below) are implemented; the run directory is item
+6. The proposal below is kept as
 written at HEAD `6a522e8`; where it differs from the decision, the decision
 wins. Every number below is read from saved outputs or from that code.
 
@@ -206,12 +207,18 @@ passed parity, with zero illegal attempts.
      - the iteration chain of collection and checkpoint hashes.
    - It records the campaign ID and the manifest hash in `training`.
    - It refuses anything else.
-3. **Final evaluation seed (decision 5):** pick a new seed and check the match seeds its full schedule actually generates against every training, development, selection and archived evaluation input, including September's league schedules and the `20260718` suite. Freeze it before any candidate output.
+   - **Done November 23:** `candidate-manifest` and `export-candidate` in
+     `scripts/edger-v2-cadence-experiment.py`
+     ([commands](EDGER_TRAINING.md#decision-cadence-diagnostic-local-only-never-promotable)).
+     The manifest is written once, after training and before selection, so the
+     selection and the export bind its hash.
+3. **Final evaluation seed (decision 5):** pick a new seed and check the match seeds its full schedule actually generates against every training, development, selection and archived evaluation input, including September's league schedules and the `20260718` suite. Freeze it before any candidate output. **Tooling done November 23:** `edgerV2EvaluationScheduleSeeds` and `edgerV2ReferenceMatchSeeds` (`scripts/edger-v2-evaluation-core.mjs`) give the exact seeds; the pick is the run directory's seed ledger.
 4. **Selection seed set:**
    - a labelled derivation and plan schema for a candidate-selection set;
    - `evaluate --seed-set selection`;
    - the same frozen-suite and cross-plan exclusions as `confirmation`.
-5. **QA reports:** a local writer of the driver's `edger_external_qa_report_v1` reports, run only after the commands exit 0.
+   - **Done November 23:** `selection-seeds` and `evaluate --seed-set selection`, which also refuse the final evaluation's seeds.
+5. **QA reports:** a local writer of the driver's `edger_external_qa_report_v1` reports, run only after the commands exit 0. **Done November 23:** `scripts/edger-qa-report.mjs`.
 6. **Run directory:**
    - `plan.md`, the runner and a dry run of the selection rule on synthetic results;
    - a smoke on an out-of-population parent (`b0-s20260718`), never a campaign run;

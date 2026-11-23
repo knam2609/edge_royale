@@ -218,7 +218,8 @@ supply demonstrations with unknown behavior probabilities for both sides.
 `scripts/edger-v2-cadence-experiment.mjs` (with `edger-v2-cadence-core.mjs`,
 `edger-v2-cadence-worker.mjs` and `edger-v2-cadence-experiment.py`) compares
 the shipped learned delay against a fixed one-tick cadence. It is not used by
-the live bot, the promotion evaluator or campaigns.
+the live bot, the promotion evaluator or production campaigns. The local
+candidate campaign's selected run is its only promotable output (below).
 
 - `learned`: card, placement, then a 1–200 tick delay, exactly as
   `selectEdgerV2PolicyDecision`.
@@ -383,9 +384,16 @@ the live bot, the promotion evaluator or campaigns.
     - The weight and classes cannot change within an arm.
     - Learner metrics report, per class: rows, Fireball rows, weighted rows, and the mean V-trace advantage on Fireball and other rows (`conditional.opportunity_by_class`).
   - `train-arm --fireball-aim-diagnostics` writes `iterN/fireball-aim.json`. Per episode and class, it counts the candidate's opportunity decisions, those that sampled Fireball, and those whose Fireball captured (bank rule). It also counts decisions where the globals rule disagrees with the engine rule. `collection.json` and the episode files stay byte for byte.
+- Candidate campaign tooling (since November 23, 2026, for the [candidate campaign](EDGER_CANDIDATE_CAMPAIGN.md)). It adds a path for one selected run to become a candidate; every other output stays diagnostic.
+  - `selection-seeds --label <label> --count 100 --final-evaluation-seed <seed> [--exclude-seed-plans <files>] [--exclude-seed-lists <json>] --out <file>` writes an `edger_v2_candidate_selection_seed_plan_v1` plan. Its labelled seeds avoid the frozen suites, every seed array in the excluded plans, every named extra list, and the match seeds of the campaign's final evaluation: the full schedule at that seed (`edgerV2EvaluationScheduleSeeds`, 5,650 seeds without anchors) and the live-v1 reference's 100 consecutive seeds (`edgerV2ReferenceMatchSeeds`). It records every exclusion file's SHA-256.
+  - `evaluate --seed-set selection` plays only that set. It re-derives the final evaluation's seeds from the plan's evaluator seed and refuses any overlap, as well as the usual frozen-suite and cross-plan overlaps.
+  - `edger-v2-cadence-experiment.py candidate-manifest --campaign-id <id> --runs <runs.json> --bc-dataset-sha256 <sha> --out <file>` writes `edger_v2_candidate_campaign_manifest_v1` once after training, from a clean checkout. For every run it records the lineage read from disk: the BC parent (checksum, seed, dataset, commit, data recipe), the full-grid initialization, the seed plan, the arm status and the chain of collection, checkpoint and model hashes. It also lists every way the run differs from the campaign commit and the measured recipe (`CANDIDATE_RECIPE`: learned cadence, `full` loss, reward v1, no card KL, no opportunity weight, no warm start, the plan mix, 24 × 32 pairs, torch seed 20260926, learning rate 0.001, full grid, default BC recipe). The checks cover each iteration's games against the plan's pairs and opponents, each checkpoint's input, collection and settings, clean provenance at the campaign commit, and each `model.json` against its checkpoint's export.
+  - `export-candidate --manifest <file> --selection <file> --run <id> --out <file> --binding-out <file>` is the only command that labels a cadence checkpoint `shadow_candidate_unreviewed`. It requires a clean checkout at the manifest's commit, the measured recipe, an `edger_v2_candidate_selection_v1` file made on that manifest that selects this run, a valid manifest entry, and the run's files re-read from disk equal to the manifest. The export's weights must equal the selected run's final `model.json`, the model that played selection. `training.campaign` records the campaign ID, the manifest and selection hashes, the run, and the final and BC checkpoint hashes. The binding file (`edger_v2_candidate_export_binding_v1`) adds the export's SHA-256 and weights digest. Tests run the positive path on a two-iteration arm through the same functions with a smaller recipe; the command itself refuses it.
+- `scripts/edger-qa-report.mjs --kind npm-test|browser-smoke --out <file> [-- <npm arguments>]` (since November 23, 2026) writes the driver's `edger_external_qa_report_v1` report locally. It runs the command itself and writes the report only if the command exits 0 and the checkout is clean, at the same commit, before and after. The production driver builds its reports with the same function.
 - Checkpoints use `edger_v2_cadence_diagnostic_checkpoint_v1`, which production
   `load_checkpoint` rejects, and exports are labelled
-  `diagnostic_only_not_promotable`. The diagnostic learner records the dirty
+  `diagnostic_only_not_promotable`, except a campaign's `export-candidate`
+  output (above). The diagnostic learner records the dirty
   worktree diff hash instead of requiring a clean tree; it is not authoritative
   training. `edger:evaluate:v2 --profile full` and `edger:promote:v2` refuse
   that label (smoke-profile evaluation stays allowed).
@@ -647,7 +655,12 @@ refuse a model whose `training.promotion_status` is
 The evaluator refuses under the full profile, before parity or any match; the
 promote command refuses before reading the report. The report's artifact
 checksum binds the exact model bytes, so relabelling a diagnostic export
-breaks that match. They inform the owner's separate promotion approval: a candidate may
+breaks that match. The label check is a denylist: a model labelled
+`shadow_candidate_unreviewed` is judged by its report alone. That is also the
+default label of `edger:export:v2` and `initialize-full-grid` outputs. A
+candidate campaign's export carries `training.campaign` and a binding file
+(`export-candidate`, above), which the owner's promotion review checks; the
+promote command does not. They inform the owner's separate promotion approval: a candidate may
 promote without casting Fireball. The legacy v1 evaluator also reports its
 tactical suite instead of gating on it.
 

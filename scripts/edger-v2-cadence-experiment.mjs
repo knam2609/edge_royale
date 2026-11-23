@@ -32,6 +32,7 @@ import {
   runEdgerV2CadenceMatch,
 } from "./edger-v2-cadence-core.mjs";
 import { assertRewardVersion } from "./edger-reward-core.mjs";
+import { edgerV2EvaluationScheduleSeeds, edgerV2ReferenceMatchSeeds } from "./edger-v2-evaluation-core.mjs";
 import {
   EDGER_V2_PLAYSTYLE_DIAGNOSTICS_SCHEMA,
   PLAYSTYLE_CHECKPOINT_TICKS,
@@ -338,12 +339,89 @@ export function buildReplicationSeedPlans(basePlan, { replicates = ["r1", "r2"],
   };
 }
 
+export const CANDIDATE_SELECTION_SEED_PLAN_SCHEMA = "edger_v2_candidate_selection_seed_plan_v1";
+// The final evaluation of a candidate campaign: the full profile without
+// anchors, and the live-v1 reference at the same seed (production driver).
+export const CANDIDATE_FINAL_EVALUATION = Object.freeze({ profile: "full", anchors: 0, reference_games_per_opponent: 200 });
+
+// The match seeds a candidate campaign's final evaluation plays: its full
+// schedule and the live-v1 reference run at the same evaluator seed.
+export function candidateFinalEvaluationSeeds(seed) {
+  return {
+    schedule: edgerV2EvaluationScheduleSeeds({
+      seed, profileName: CANDIDATE_FINAL_EVALUATION.profile, anchorCount: CANDIDATE_FINAL_EVALUATION.anchors,
+    }),
+    reference: edgerV2ReferenceMatchSeeds({
+      seed, gamesPerOpponent: CANDIDATE_FINAL_EVALUATION.reference_games_per_opponent,
+    }),
+  };
+}
+
+// Selection seeds of a candidate campaign (docs/EDGER_CANDIDATE_CAMPAIGN.md):
+// one labelled set, disjoint from the frozen suites, from every seed set in
+// the excluded plans (earlier training, development, probe and confirmation
+// sets, and the campaign's own training plans), from every extra named list
+// (for example archived evaluation seeds) and from the match seeds of the
+// campaign's frozen final evaluation, so selection never plays an evaluator
+// seed.
+export function buildCandidateSelectionSeedPlan({
+  label, count = 100, finalEvaluationSeed, excludePlans = [], extraExclusions = {},
+}) {
+  if (typeof label !== "string" || label.length === 0) {
+    throw new Error("a selection seed plan needs a label");
+  }
+  if (!Number.isInteger(count) || count < 1) {
+    throw new Error(`count must be a positive integer; got ${count}`);
+  }
+  if (!Number.isInteger(finalEvaluationSeed)) {
+    throw new Error("a selection seed plan needs the campaign's final evaluation seed");
+  }
+  const frozen = frozenSuiteSeeds();
+  const final = candidateFinalEvaluationSeeds(finalEvaluationSeed);
+  const exclude = new Set([...frozen, ...final.schedule, ...final.reference]);
+  let planSeeds = 0;
+  for (const plan of excludePlans) {
+    for (const seeds of Object.values(collectPlanSeedSets(plan))) {
+      seeds.forEach((seed) => exclude.add(seed));
+      planSeeds += seeds.length;
+    }
+  }
+  const extra = {};
+  for (const [name, seeds] of Object.entries(extraExclusions)) {
+    if (!Array.isArray(seeds) || !seeds.every(Number.isInteger)) {
+      throw new Error(`extra exclusion ${name} must be a list of integer seeds`);
+    }
+    seeds.forEach((seed) => exclude.add(seed));
+    extra[name] = seeds.length;
+  }
+  return {
+    schema_version: CANDIDATE_SELECTION_SEED_PLAN_SCHEMA,
+    label,
+    selection: deriveLabelledSeeds({ label, count, exclude }),
+    final_evaluation: {
+      seed: finalEvaluationSeed,
+      ...CANDIDATE_FINAL_EVALUATION,
+      schedule_match_seeds: final.schedule.length,
+      reference_match_seeds: final.reference.length,
+    },
+    exclusions: {
+      frozen_suite_seeds: frozen.size,
+      excluded_plans: excludePlans.length,
+      excluded_plan_seeds: planSeeds,
+      extra,
+      distinct_excluded_seeds: exclude.size,
+    },
+  };
+}
+
 // Evaluation seed sets and the plan schema that carries each: development
 // seeds live in base and per-run plans, reserved confirmation seeds only in
-// the replication plan.
+// the replication plan, and a candidate campaign's selection seeds in their
+// own plan.
 export const CADENCE_EVALUATION_SEED_SETS = Object.freeze({
   development: "edger_v2_cadence_seed_plan_v1",
   confirmation: "edger_v2_cadence_replication_seed_plan_v1",
+  selection: CANDIDATE_SELECTION_SEED_PLAN_SCHEMA,
 });
 
 // Every seed array in a plan, keyed by its path (nested replicate plans
@@ -400,6 +478,18 @@ export function selectEvaluationSeeds(plan, { set, pairs, excludePlans = [] }) {
     ...excludePlans.flatMap((other, index) => Object.entries(collectPlanSeedSets(other))
       .map(([name, seeds]) => [`excluded plan ${index} ${name}`, seeds])),
   ];
+  if (set === "selection") {
+    // Re-derived from the plan's evaluator seed, never trusted from the file.
+    const finalSeed = plan.final_evaluation?.seed;
+    if (!Number.isInteger(finalSeed)) {
+      throw new Error("a selection seed plan must name its final evaluation seed");
+    }
+    const final = candidateFinalEvaluationSeeds(finalSeed);
+    others.push(
+      [`the final evaluation schedule of seed ${finalSeed}`, final.schedule],
+      [`the final evaluation reference of seed ${finalSeed}`, final.reference],
+    );
+  }
   for (const [name, seeds] of others) {
     const shared = seeds.find((seed) => chosen.has(seed));
     if (shared !== undefined) {
@@ -847,6 +937,40 @@ async function commandReplicateSeeds(args) {
   const master = path.join(outDir, "replication-seed-plan.json");
   writeJson(master, { ...replication, base_plan_sha256: sha256File(basePath), replicate_files: files });
   console.log(JSON.stringify({ master, sha256: sha256File(master), replicate_files: files }));
+}
+
+async function commandSelectionSeeds(args) {
+  const excludeFiles = asList(args["exclude-seed-plans"]).map((file) => path.resolve(file));
+  const extraFiles = asList(args["exclude-seed-lists"]).map((file) => path.resolve(file));
+  const extraExclusions = {};
+  for (const file of extraFiles) {
+    for (const [name, seeds] of Object.entries(JSON.parse(fs.readFileSync(file, "utf8")))) {
+      const key = `${path.basename(file)}:${name}`;
+      if (extraExclusions[key]) {
+        throw new Error(`extra exclusion ${key} is given twice`);
+      }
+      extraExclusions[key] = seeds;
+    }
+  }
+  const plan = buildCandidateSelectionSeedPlan({
+    label: String(required(args, "label")),
+    count: Number(args.count ?? 100),
+    finalEvaluationSeed: Number(required(args, "final-evaluation-seed")),
+    excludePlans: excludeFiles.map((file) => JSON.parse(fs.readFileSync(file, "utf8"))),
+    extraExclusions,
+  });
+  const out = required(args, "out");
+  if (fs.existsSync(out)) {
+    throw new Error(`selection seed plan already exists: ${out}`);
+  }
+  writeJson(out, {
+    ...plan,
+    exclusion_files: {
+      seed_plans: excludeFiles.map((file) => ({ path: file, sha256: sha256File(file) })),
+      seed_lists: extraFiles.map((file) => ({ path: file, sha256: sha256File(file) })),
+    },
+  });
+  console.log(JSON.stringify({ out: path.resolve(out), sha256: sha256File(out), selection: plan.selection.length }));
 }
 
 async function commandEvaluate(args) {
@@ -2067,6 +2191,7 @@ async function commandSummarize(args) {
 const COMMANDS = {
   seeds: commandSeeds,
   "replicate-seeds": commandReplicateSeeds,
+  "selection-seeds": commandSelectionSeeds,
   evaluate: commandEvaluate,
   "fireball-branch": commandFireballBranch,
   probe: commandProbe,

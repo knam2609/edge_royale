@@ -15,6 +15,10 @@ import {
 import {
   validateRecoveryManifest,
 } from "./edger-scaling-recovery.mjs";
+import {
+  buildEdgerExternalQaReport,
+  serializeEdgerExternalQaReport,
+} from "./edger-qa-report.mjs";
 
 const SEED = 20260718;
 const MEMORY_LIMIT_KIB = 28 * 1024 * 1024;
@@ -764,21 +768,13 @@ async function main() {
   const qaDir = path.join(args.workDir, "qa");
   await runStage("qa", async ({ stageDir, run }) => {
     run("npm", ["test"]);
-    fs.writeFileSync(path.join(stageDir, "test-report.json"), `${JSON.stringify({
-      schema_version: "edger_external_qa_report_v1",
-      kind: "npm-test",
-      command: "npm test",
-      git_commit: gitCommit,
-      passed: true,
-    }, null, 2)}\n`);
+    fs.writeFileSync(path.join(stageDir, "test-report.json"), serializeEdgerExternalQaReport(
+      buildEdgerExternalQaReport({ kind: "npm-test", command: "npm test", gitCommit }),
+    ));
     run("npm", ["run", "smoke:browser"]);
-    fs.writeFileSync(path.join(stageDir, "browser-report.json"), `${JSON.stringify({
-      schema_version: "edger_external_qa_report_v1",
-      kind: "browser-smoke",
-      command: "npm run smoke:browser",
-      git_commit: gitCommit,
-      passed: true,
-    }, null, 2)}\n`);
+    fs.writeFileSync(path.join(stageDir, "browser-report.json"), serializeEdgerExternalQaReport(
+      buildEdgerExternalQaReport({ kind: "browser-smoke", command: "npm run smoke:browser", gitCommit }),
+    ));
   });
 
   await runStage("full-evaluation", async ({ stageDir, run }) => {

@@ -19,7 +19,9 @@ comparison; a later arm starts from it with ``--start-from-warmup``.
 
 Outputs are never promotable: checkpoints use a separate diagnostic schema that
 production ``load_checkpoint`` rejects, and exported actors are labelled
-``diagnostic_only_not_promotable``.
+``diagnostic_only_not_promotable``. The one exception is ``export-candidate``:
+the selected run of a candidate campaign, exported only after its whole
+lineage matches the campaign manifest and the measured recipe.
 """
 
 from __future__ import annotations
@@ -1083,6 +1085,378 @@ def run_export(args: argparse.Namespace) -> None:
     print(json.dumps({"model": str(output.resolve()), "model_id": payload["model_id"]}))
 
 
+# ---------------------------------------------------------------------------
+# Candidate campaign lineage (docs/EDGER_CANDIDATE_CAMPAIGN.md, owner decision
+# of November 23, 2026). A campaign's runs are ordinary train-arm runs; only
+# the selected run's final checkpoint may be exported as a candidate, and only
+# after its whole lineage matches the campaign manifest and the measured
+# recipe below. Every other export stays diagnostic_only_not_promotable.
+
+CANDIDATE_MANIFEST_SCHEMA = "edger_v2_candidate_campaign_manifest_v1"
+CANDIDATE_SELECTION_SCHEMA = "edger_v2_candidate_selection_v1"
+CANDIDATE_BINDING_SCHEMA = "edger_v2_candidate_export_binding_v1"
+CANDIDATE_PROMOTION_STATUS = "shadow_candidate_unreviewed"
+EMPTY_DIFF_SHA256 = hashlib.sha256(b"").hexdigest()
+# The eighth comparison's arm A: initialize-full-grid from a default-recipe BC
+# parent, then train-arm with these settings and nothing else.
+CANDIDATE_RECIPE = {
+    "cadence": "learned",
+    "loss_mode": "full",
+    "reward_version": "edger_potential_reward_v1",
+    "card_kl_coefficient": 0,
+    "opportunity_card_weight": 1,
+    "opportunity_card_weight_classes": "both",
+    "warm_start": False,
+    "opponent_mix": "plan",
+    "iterations": 24,
+    "pairs_per_iteration": 32,
+    "torch_seed": 20260926,
+    "learning_rate": 0.001,
+    "decompose_every": 0,
+    "action_space_version": training.FULL_GRID_ACTION_SCHEMA,
+    "bc_card_teacher_filter": "none",
+    "bc_opportunity_oversample": 1,
+}
+
+
+class LineageError(ValueError):
+    pass
+
+
+def git_state(root: Path = ROOT) -> dict[str, Any]:
+    def git(*arguments: str) -> str:
+        return subprocess.check_output(["git", *arguments], cwd=root, text=True)
+
+    return {
+        "head": git("rev-parse", "HEAD").strip(),
+        "clean": git("status", "--porcelain", "--untracked-files=normal").strip() == "",
+    }
+
+
+def read_json_file(path: str | Path) -> Any:
+    return json.loads(Path(path).read_text())
+
+
+def export_weights(checkpoint: dict[str, Any], model: training.EdgerV2Policy) -> dict[str, Any]:
+    shim = {
+        "phase": "lineage_check", "seed": None, "git_commit": None, "checkpoint_id": "lineage_check",
+        "parent_checkpoint": None, "manifest_hash": None, "dataset_checksum": None, "environment": None,
+        "metrics": {},
+    }
+    return training.export_model_payload(shim, model, "lineage_check")["weights"]
+
+
+def run_lineage(entry: dict[str, Any]) -> dict[str, Any]:
+    """Hashes and recorded settings of one campaign run, read from disk.
+
+    ``entry`` names the run, its BC seed, BC checkpoint, seed plan and
+    train-arm work directory (initial.pt/json, arm-status.json, iter<i>/)."""
+    work = Path(entry["work_dir"])
+    bc_checkpoint = torch.load(entry["bc_checkpoint"], map_location="cpu", weights_only=False)
+    initial_checkpoint = torch.load(work / "initial.pt", map_location="cpu", weights_only=False)
+    status_path = work / "arm-status.json"
+    status = read_json_file(status_path)
+    chain = []
+    for record in status["iterations"]:
+        folder = work / f"iter{record['iteration']}"
+        chain.append({
+            "iteration": record["iteration"],
+            "collection_sha256": training.sha256_file(folder / "collection.json"),
+            "checkpoint_sha256": training.sha256_file(folder / "checkpoint.pt"),
+            "model_sha256": training.sha256_file(folder / "model.json"),
+        })
+    recipe = bc_checkpoint.get("metrics", {}).get("data_recipe", {})
+    return {
+        "run": entry["run"],
+        "bc": {
+            "checkpoint": str(Path(entry["bc_checkpoint"]).resolve()),
+            "sha256": training.sha256_file(entry["bc_checkpoint"]),
+            "checkpoint_id": bc_checkpoint.get("checkpoint_id"),
+            "phase": bc_checkpoint.get("phase"),
+            "seed": bc_checkpoint.get("seed"),
+            "parent_checkpoint": bc_checkpoint.get("parent_checkpoint"),
+            "dataset_checksum": bc_checkpoint.get("dataset_checksum"),
+            "git_commit": bc_checkpoint.get("git_commit"),
+            "card_teacher_filter": recipe.get("card_teacher_filter"),
+            "opportunity_oversample": recipe.get("opportunity_oversample"),
+        },
+        "initial": {
+            "checkpoint_sha256": training.sha256_file(work / "initial.pt"),
+            "checkpoint_id": initial_checkpoint.get("checkpoint_id"),
+            "model_sha256": training.sha256_file(work / "initial.json"),
+            "phase": initial_checkpoint.get("phase"),
+            "source_checkpoint_sha256": initial_checkpoint.get("metrics", {}).get("source_checkpoint_sha256"),
+            "parent_checkpoint": initial_checkpoint.get("parent_checkpoint"),
+            "action_space_version": initial_checkpoint.get("action_space_version"),
+            "git_commit": initial_checkpoint.get("git_commit"),
+        },
+        "plan": {"path": str(Path(entry["plan"]).resolve()), "sha256": training.sha256_file(entry["plan"])},
+        "work_dir": str(work.resolve()),
+        "arm_status_sha256": training.sha256_file(status_path),
+        "arm": status.get("arm"),
+        "stop_reason": status.get("stop_reason"),
+        "resumed_at_iteration": status.get("resumed_at_iteration"),
+        "chain": chain,
+    }
+
+
+def lineage_problems(
+    entry: dict[str, Any], lineage: dict[str, Any], *, git_commit: str, bc_dataset_sha256: str,
+    recipe: dict[str, Any] = CANDIDATE_RECIPE,
+) -> list[str]:
+    """Every way a run differs from the campaign and the recipe; [] if none."""
+    problems: list[str] = []
+
+    def expect(condition: bool, message: str) -> None:
+        if not condition:
+            problems.append(message)
+
+    work = Path(entry["work_dir"])
+    bc = lineage["bc"]
+    expect(bc["phase"] == "bc" and bc["parent_checkpoint"] is None, "the BC parent is not a fresh BC checkpoint")
+    expect(bc["seed"] == entry["bc_seed"], f"the BC parent's seed {bc['seed']} is not {entry['bc_seed']}")
+    expect(bc["dataset_checksum"] == bc_dataset_sha256, "the BC parent was trained on another dataset")
+    expect(bc["git_commit"] == git_commit, "the BC parent was trained at another commit")
+    expect(bc["card_teacher_filter"] == recipe["bc_card_teacher_filter"]
+           and bc["opportunity_oversample"] == recipe["bc_opportunity_oversample"],
+           "the BC parent did not use the default data recipe")
+    initial = lineage["initial"]
+    expect(initial["phase"] == "full_grid_initialization"
+           and initial["source_checkpoint_sha256"] == bc["sha256"]
+           and initial["parent_checkpoint"] == bc["checkpoint_id"],
+           "initial.pt is not the full-grid initialization of the BC parent")
+    expect(initial["action_space_version"] == recipe["action_space_version"], "initial.pt is not full grid")
+    expect(initial["git_commit"] == git_commit, "initial.pt was written at another commit")
+    initial_checkpoint, initial_model = load_any_checkpoint(work / "initial.pt")
+    expect(read_json_file(work / "initial.json")["weights"] == export_weights(initial_checkpoint, initial_model),
+           "initial.json is not the export of initial.pt")
+
+    status = read_json_file(work / "arm-status.json")
+    settings = {
+        "cadence": status.get("cadence"),
+        "loss_mode": status.get("loss_mode"),
+        "reward_version": status.get("reward_version"),
+        "card_kl_coefficient": status.get("card_kl_coefficient"),
+        "opportunity_card_weight": status.get("opportunity_card_weight"),
+        "opportunity_card_weight_classes": status.get("opportunity_card_weight_classes"),
+        "warm_start": "initial_checkpoint" in status,
+        "opponent_mix": status.get("opponent_mix", "plan"),
+        "iterations": status.get("iterations_planned"),
+        "pairs_per_iteration": status.get("pairs_per_iteration"),
+        "torch_seed": status.get("torch_seed"),
+        "learning_rate": status.get("learning_rate"),
+        "decompose_every": status.get("decompose_every"),
+    }
+    for key, value in settings.items():
+        expect(value == recipe[key], f"arm setting {key} is {value!r}, not {recipe[key]!r}")
+    expect("snapshot_league" not in status, "the arm used a snapshot league")
+    expect(status.get("parent_checkpoint_sha256") == initial["checkpoint_sha256"]
+           and status.get("parent_model_sha256") == initial["model_sha256"],
+           "the arm did not start from initial.pt and initial.json")
+    expect(status.get("seeds_file_sha256") == lineage["plan"]["sha256"], "the arm trained on another seed plan")
+    expect(status.get("stop_reason") == "completed", f"the arm stopped with {status.get('stop_reason')!r}")
+    iterations = [record["iteration"] for record in status["iterations"]]
+    expect(iterations == list(range(recipe["iterations"])) and all(
+        record.get("checkpoint_sha256") for record in status["iterations"]),
+        "the arm did not complete every iteration")
+    if problems:
+        return problems
+
+    plan = read_json_file(entry["plan"])
+    pairs = recipe["pairs_per_iteration"]
+    previous_checkpoint = initial["checkpoint_sha256"]
+    previous_model = initial["model_sha256"]
+    for record, link in zip(status["iterations"], lineage["chain"]):
+        iteration = record["iteration"]
+        folder = work / f"iter{iteration}"
+        label = f"iteration {iteration}"
+        expect(record["checkpoint_sha256"] == link["checkpoint_sha256"]
+               and record["model_sha256"] == link["model_sha256"], f"{label}: files differ from the arm status")
+        expect(record["input_model_sha256"] == previous_model, f"{label}: played by another model")
+        collection = read_json_file(folder / "collection.json")
+        expect(collection.get("iteration") == iteration and collection.get("cadence") == recipe["cadence"]
+               and collection.get("reward_version") == recipe["reward_version"]
+               and collection.get("action_space_version") == recipe["action_space_version"]
+               and collection.get("model_sha256") == previous_model
+               and "snapshot_league" not in collection and "opponent_mix" not in collection,
+               f"{label}: the collection is not a plan rollout of the previous model")
+        episodes = collection.get("episodes", [])
+        played = sorted((int(episode["episode_id"].split("-pair")[1].split("-")[0]), episode["candidate_actor"],
+                         episode["seed"], episode["opponent"], "opponent_model_sha256" in episode)
+                        for episode in episodes)
+        expected = sorted((index, actor, plan["training"][index], plan["training_opponents"][index], False)
+                          for index in range(iteration * pairs, (iteration + 1) * pairs)
+                          for actor in ("blue", "red"))
+        expect(played == expected, f"{label}: the games are not the plan's pairs")
+        checkpoint, model = load_any_checkpoint(folder / "checkpoint.pt")
+        provenance_ = checkpoint.get("provenance", {})
+        learning_rates = {group["lr"] for group in checkpoint.get("optimizer_state", {}).get("param_groups", [])}
+        expect(checkpoint.get("schema_version") == DIAGNOSTIC_CHECKPOINT_SCHEMA
+               and checkpoint.get("iteration") == iteration and checkpoint.get("arm") == lineage["arm"]
+               and checkpoint.get("delay_mode") == recipe["cadence"]
+               and checkpoint.get("loss_mode") == recipe["loss_mode"]
+               and checkpoint.get("reward_version") == recipe["reward_version"]
+               and checkpoint.get("card_kl_coefficient") == recipe["card_kl_coefficient"]
+               and checkpoint.get("opportunity_card_weight") == recipe["opportunity_card_weight"]
+               and not checkpoint.get("warm_start")
+               and checkpoint.get("seed") == recipe["torch_seed"]
+               and checkpoint.get("action_space_version") == recipe["action_space_version"]
+               and learning_rates == {recipe["learning_rate"]},
+               f"{label}: the checkpoint's settings are not the recipe's")
+        expect(checkpoint.get("input_checkpoint_sha256") == previous_checkpoint
+               and checkpoint.get("collection_sha256") == link["collection_sha256"]
+               and checkpoint.get("root_parent_checkpoint_id") == initial["checkpoint_id"],
+               f"{label}: the checkpoint does not continue the chain")
+        expect(provenance_.get("head") == git_commit and provenance_.get("worktree_diff_sha256") == EMPTY_DIFF_SHA256
+               and provenance_.get("untracked_experiment_files") == [],
+               f"{label}: the learner did not run on the clean campaign commit")
+        expect(read_json_file(folder / "model.json")["weights"] == export_weights(checkpoint, model),
+               f"{label}: model.json is not the export of its checkpoint")
+        previous_checkpoint = link["checkpoint_sha256"]
+        previous_model = link["model_sha256"]
+    return problems
+
+
+def build_candidate_manifest(
+    runs: list[dict[str, Any]], *, campaign_id: str, bc_dataset_sha256: str, out: str | Path,
+    recipe: dict[str, Any] = CANDIDATE_RECIPE,
+) -> dict[str, Any]:
+    """The campaign manifest: every run's lineage, written once after training.
+    Tests pass a smaller recipe; the command always uses CANDIDATE_RECIPE."""
+    state = git_state()
+    if not state["clean"]:
+        raise LineageError("the campaign manifest needs a clean checkout of the campaign commit")
+    entries = []
+    for entry in runs:
+        status_path = Path(entry["work_dir"]) / "arm-status.json"
+        record = {"run": entry["run"], "bc_seed": entry["bc_seed"], "entry": entry}
+        if not Path(entry["bc_checkpoint"]).exists() or not status_path.exists():
+            record.update({"lineage": None, "problems": ["the run did not train"]})
+        else:
+            record["lineage"] = run_lineage(entry)
+            record["problems"] = lineage_problems(
+                entry, record["lineage"], git_commit=state["head"], bc_dataset_sha256=bc_dataset_sha256,
+                recipe=recipe)
+        record["lineage_valid"] = record["problems"] == []
+        entries.append(record)
+    manifest = {
+        "schema_version": CANDIDATE_MANIFEST_SCHEMA,
+        "campaign_id": campaign_id,
+        "git_commit": state["head"],
+        "recipe": recipe,
+        "bc_dataset_sha256": bc_dataset_sha256,
+        "runs": entries,
+    }
+    output = Path(out)
+    if output.exists():
+        raise FileExistsError(f"campaign manifest already exists: {output}")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(manifest, indent=1) + "\n")
+    return manifest
+
+
+def run_candidate_manifest(args: argparse.Namespace) -> None:
+    manifest = build_candidate_manifest(
+        read_json_file(args.runs), campaign_id=args.campaign_id, bc_dataset_sha256=args.bc_dataset_sha256,
+        out=args.out)
+    print(json.dumps({"manifest": str(Path(args.out).resolve()), "sha256": training.sha256_file(args.out),
+                      "lineage_valid": [entry["run"] for entry in manifest["runs"] if entry["lineage_valid"]]}))
+
+
+def verify_candidate(
+    manifest_path: Path, selection_path: Path, run: str, *, recipe: dict[str, Any] = CANDIDATE_RECIPE,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """The manifest entry of the selected run, re-verified from disk."""
+    state = git_state()
+    manifest = read_json_file(manifest_path)
+    if manifest.get("schema_version") != CANDIDATE_MANIFEST_SCHEMA:
+        raise LineageError(f"{manifest_path} is not a campaign manifest")
+    if state["head"] != manifest["git_commit"] or not state["clean"]:
+        raise LineageError("export a candidate only from a clean checkout of the campaign commit")
+    if manifest.get("recipe") != recipe:
+        raise LineageError("the manifest's recipe is not the measured recipe")
+    selection = read_json_file(selection_path)
+    if selection.get("schema_version") != CANDIDATE_SELECTION_SCHEMA:
+        raise LineageError(f"{selection_path} is not a campaign selection")
+    if selection.get("manifest_sha256") != training.sha256_file(manifest_path):
+        raise LineageError("the selection was made on another manifest")
+    if selection.get("selected") != run:
+        raise LineageError(f"run {run} was not selected (selected: {selection.get('selected')})")
+    entries = [entry for entry in manifest["runs"] if entry["run"] == run]
+    if len(entries) != 1:
+        raise LineageError(f"the manifest holds {len(entries)} entries for run {run}")
+    entry = entries[0]
+    if not entry.get("lineage_valid") or entry.get("problems"):
+        raise LineageError(f"run {run} failed its lineage check: {entry.get('problems')}")
+    lineage = run_lineage(entry["entry"])
+    if lineage != entry["lineage"]:
+        raise LineageError(f"run {run}'s files no longer match the manifest")
+    problems = lineage_problems(entry["entry"], lineage, git_commit=manifest["git_commit"],
+                                bc_dataset_sha256=manifest["bc_dataset_sha256"], recipe=recipe)
+    if problems:
+        raise LineageError(f"run {run} failed its lineage check: {problems}")
+    return manifest, entry
+
+
+def export_candidate(
+    manifest: str | Path, selection: str | Path, run: str, out: str | Path, binding_out: str | Path, *,
+    recipe: dict[str, Any] = CANDIDATE_RECIPE,
+) -> dict[str, Any]:
+    """Label the selected run's final checkpoint a candidate; returns the binding."""
+    manifest_path, selection_path = Path(manifest), Path(selection)
+    for path in (Path(out), Path(binding_out)):
+        if path.exists():
+            raise FileExistsError(f"already exists: {path}")
+    manifest, entry = verify_candidate(manifest_path, selection_path, run, recipe=recipe)
+    final = entry["lineage"]["chain"][-1]
+    folder = Path(entry["lineage"]["work_dir"]) / f"iter{final['iteration']}"
+    checkpoint, model = load_any_checkpoint(folder / "checkpoint.pt")
+    model.eval()
+    manifest_sha256 = training.sha256_file(manifest_path)
+    shim = {
+        "phase": "candidate_campaign_learned_full",
+        "seed": checkpoint["seed"],
+        "git_commit": manifest["git_commit"],
+        "checkpoint_id": checkpoint["checkpoint_id"],
+        "parent_checkpoint": root_parent_id(checkpoint),
+        "manifest_hash": None,
+        "dataset_checksum": checkpoint.get("collection_sha256"),
+        "environment": checkpoint.get("environment"),
+        "metrics": {},
+    }
+    payload = training.export_model_payload(shim, model, f"edger_v2_candidate_{manifest['campaign_id']}_{run}")
+    if payload["weights"] != read_json_file(folder / "model.json")["weights"]:
+        raise LineageError("the candidate's weights differ from the selected model")
+    payload["training"]["promotion_status"] = CANDIDATE_PROMOTION_STATUS
+    payload["training"]["campaign"] = {
+        "campaign_id": manifest["campaign_id"],
+        "manifest_sha256": manifest_sha256,
+        "selection_sha256": training.sha256_file(selection_path),
+        "run": run,
+        "checkpoint_sha256": final["checkpoint_sha256"],
+        "bc_checkpoint_sha256": entry["lineage"]["bc"]["sha256"],
+    }
+    payload["training"]["diagnostic_provenance"] = checkpoint.get("provenance")
+    output, binding_output = Path(out), Path(binding_out)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(payload, sort_keys=True, indent=2) + "\n")
+    binding = {
+        "schema_version": CANDIDATE_BINDING_SCHEMA,
+        **payload["training"]["campaign"],
+        "model_id": payload["model_id"],
+        "export": str(output.resolve()),
+        "export_sha256": training.sha256_file(output),
+        "export_weights_sha256": training.sha256_bytes(training.canonical_json(payload["weights"]).encode()),
+    }
+    binding_output.parent.mkdir(parents=True, exist_ok=True)
+    binding_output.write_text(json.dumps(binding, indent=1) + "\n")
+    return binding
+
+
+def run_export_candidate(args: argparse.Namespace) -> None:
+    print(json.dumps(export_candidate(args.manifest, args.selection, args.run, args.out, args.binding_out)))
+
+
 def probe_tensors(probes: list[dict[str, Any]]) -> dict[str, Tensor]:
     count = len(probes)
     board = torch.zeros(count, training.BOARD_HEIGHT * training.BOARD_WIDTH * training.BOARD_INPUT_CHANNELS)
@@ -1307,6 +1681,21 @@ def build_parser() -> argparse.ArgumentParser:
     export.add_argument("--out", required=True)
     export.add_argument("--model-id")
     export.set_defaults(func=run_export)
+
+    manifest = commands.add_parser("candidate-manifest")
+    manifest.add_argument("--campaign-id", required=True)
+    manifest.add_argument("--runs", required=True, help="JSON list of {run, bc_seed, bc_checkpoint, plan, work_dir}")
+    manifest.add_argument("--bc-dataset-sha256", required=True)
+    manifest.add_argument("--out", required=True)
+    manifest.set_defaults(func=run_candidate_manifest)
+
+    candidate = commands.add_parser("export-candidate")
+    candidate.add_argument("--manifest", required=True)
+    candidate.add_argument("--selection", required=True)
+    candidate.add_argument("--run", required=True)
+    candidate.add_argument("--out", required=True)
+    candidate.add_argument("--binding-out", required=True)
+    candidate.set_defaults(func=run_export_candidate)
 
     probe = commands.add_parser("probe")
     probe.add_argument("--checkpoint", required=True)
