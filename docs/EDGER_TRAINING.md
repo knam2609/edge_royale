@@ -264,6 +264,9 @@ subject to a 14-day cooldown. A 30-day backstop triggers when any new data exist
 SSM-only on-demand `c7g.4xlarge`; heavy training/evaluation does not run on a
 repository self-hosted runner. The `edge-royale-edger-campaign` CloudFormation
 stack creates the retained bucket and runner controls in `ap-southeast-2`.
+The workflows read the role ARN, corpus store and bucket name from repository
+secrets (`EDGER_AWS_ROLE_ARN`, `EDGER_CORPUS_STORE`, `EDGER_S3_BUCKET`), not
+variables, so Actions masks them in public logs; see `docs/HISTORY_REWRITE.md`.
 Dispatch requires `operation`, full reviewed `campaign_sha`, exact
 `campaign_uri`, and `target_stage`. `run` accepts `full-cache`, `offline`, or
 `full-evaluation`; `promote` stays separate.

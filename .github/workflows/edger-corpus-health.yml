@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 720
     env:
-      EDGER_CORPUS_STORE: ${{ vars.EDGER_CORPUS_STORE }}
+      EDGER_CORPUS_STORE: ${{ secrets.EDGER_CORPUS_STORE }}
 
     steps:
       - uses: actions/checkout@v4
@@ -32,7 +32,8 @@ jobs:
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-region: ${{ vars.AWS_REGION }}
-          role-to-assume: ${{ vars.EDGER_AWS_ROLE_ARN }}
+          role-to-assume: ${{ secrets.EDGER_AWS_ROLE_ARN }}
+          mask-aws-account-id: true
           role-duration-seconds: 43200
 
       - run: npm ci
