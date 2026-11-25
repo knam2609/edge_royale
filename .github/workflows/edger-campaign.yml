@@ -38,7 +38,7 @@ concurrency:
 
 env:
   AWS_REGION: ap-southeast-2
-  EDGER_CORPUS_STORE: ${{ vars.EDGER_CORPUS_STORE }}
+  EDGER_CORPUS_STORE: ${{ secrets.EDGER_CORPUS_STORE }}
   EDGER_REFERENCE_HARDWARE: aws-c7g.4xlarge-ap-southeast-2
   CAMPAIGN_GIT_SHA: ${{ inputs.campaign_sha }}
   CAMPAIGN_URI: ${{ inputs.campaign_uri }}
@@ -65,7 +65,8 @@ jobs:
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-region: ${{ env.AWS_REGION }}
-          role-to-assume: ${{ vars.EDGER_AWS_ROLE_ARN }}
+          role-to-assume: ${{ secrets.EDGER_AWS_ROLE_ARN }}
+          mask-aws-account-id: true
           role-duration-seconds: 43200
 
       - run: npm ci
@@ -161,7 +162,8 @@ jobs:
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-region: ${{ env.AWS_REGION }}
-          role-to-assume: ${{ vars.EDGER_AWS_ROLE_ARN }}
+          role-to-assume: ${{ secrets.EDGER_AWS_ROLE_ARN }}
+          mask-aws-account-id: true
           role-duration-seconds: 43200
 
       - run: npm ci

@@ -27,7 +27,7 @@ jobs:
       matrix:
         pair_offset: [0, 500, 1000, 1500, 2000, 2500, 3000, 3500, 4000, 4500]
     env:
-      EDGER_CORPUS_STORE: ${{ vars.EDGER_CORPUS_STORE }}
+      EDGER_CORPUS_STORE: ${{ secrets.EDGER_CORPUS_STORE }}
       CAMPAIGN_GIT_SHA: ${{ inputs.campaign_sha || github.sha }}
 
     steps:
@@ -43,7 +43,8 @@ jobs:
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-region: ${{ vars.AWS_REGION }}
-          role-to-assume: ${{ vars.EDGER_AWS_ROLE_ARN }}
+          role-to-assume: ${{ secrets.EDGER_AWS_ROLE_ARN }}
+          mask-aws-account-id: true
           role-duration-seconds: 43200
 
       - run: npm ci
@@ -89,8 +90,8 @@ jobs:
     timeout-minutes: 720
     env:
       AWS_REGION: ${{ vars.AWS_REGION }}
-      EDGER_CORPUS_STORE: ${{ vars.EDGER_CORPUS_STORE }}
-      CAMPAIGN_URI: s3://edge-royale-edger-REDACTED-ACCOUNT-ID-ap-southeast-2/campaigns/20260718-v2-first
+      EDGER_CORPUS_STORE: ${{ secrets.EDGER_CORPUS_STORE }}
+      CAMPAIGN_URI: s3://${{ secrets.EDGER_S3_BUCKET }}/campaigns/20260718-v2-first
       CAMPAIGN_GIT_SHA: ${{ inputs.campaign_sha || github.sha }}
     steps:
       - uses: actions/checkout@v4
@@ -105,7 +106,8 @@ jobs:
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-region: ${{ vars.AWS_REGION }}
-          role-to-assume: ${{ vars.EDGER_AWS_ROLE_ARN }}
+          role-to-assume: ${{ secrets.EDGER_AWS_ROLE_ARN }}
+          mask-aws-account-id: true
           role-duration-seconds: 43200
 
       - run: npm ci
