@@ -9,8 +9,9 @@ to produce one, for the owner's decision.
 of the full evaluation** ([result](#result-november-23-2026)). **On November
 25, 2026 the owner approved promoting it**
 ([decision](#owner-promotion-decision-november-25-2026)). It was promoted on
-the local review branch `edger-v2-promote-c3`, which is not merged or pushed.
-Live v1 stays live on every other branch. The owner approved
+the local review branch `edger-v2-promote-c3`, which the owner accepted into
+`edger-v2-accumulated` on November 26 ([merge](#merge-november-26-2026)).
+Nothing is pushed, so `main` and the remote keep live v1. The owner approved
 the design that day with one change (see
 [Owner decision](#owner-decision-november-23-2026)). The proposal below is kept as
 written at HEAD `6a522e8`; where it differs from the decision, the decision
@@ -122,9 +123,9 @@ unmerged review PR that keeps live v1 until accepted.
 
 The owner approved promoting c3. It was promoted on the local branch
 `edger-v2-promote-c3`, cut from `edger-v2-accumulated` at `d53fdf8`. The
-branch is unmerged and unpushed, so live v1 stays live everywhere else until
-the owner accepts the review. Publishing it needs the owner's separate
-push/PR approval.
+branch stayed unmerged and unpushed, with live v1 live everywhere else, until
+the owner accepted it on November 26 ([merge](#merge-november-26-2026)).
+Publishing it needs the owner's separate push/PR approval.
 
 **Binding checked by hand first**, since `edger:promote:v2` does not. A
 read-only script ran in `CC/repo` (clean at `567ec98` before and after) and
@@ -217,6 +218,16 @@ live-path play is in the model's list (11/11 in a check, and the new test).
   - no Fireball, almost no Giant or Arrows, tactical aggregate 0.236;
   - runtime accepted only on this desktop Mac;
   - no play against humans.
+
+### Merge (November 26, 2026)
+
+The owner accepted the review branch: `git merge --ff-only
+edger-v2-promote-c3` moved `edger-v2-accumulated` from `d53fdf8` to the
+promotion commit `f89c1c2`. The fast-forward adds no changes, so the tree is
+the one validated above. c3 is live on `edger-v2-accumulated`. Nothing is
+pushed: `main` and the remote still run live v1, and publishing needs the
+owner's separate push/PR approval after the full diff review. The findings
+above are still open.
 
 ## Summary
 

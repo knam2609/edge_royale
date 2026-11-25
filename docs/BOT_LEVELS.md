@@ -16,7 +16,7 @@ There is no bot selector, player-facing level, unlock, training UI, or model con
 
 ## Live Edger: v2 candidate c3
 
-On the review branch `edger-v2-promote-c3` (owner approval, November 25, 2026; unmerged), the live artifact is:
+Since the owner approved it (November 25, 2026; merged into `edger-v2-accumulated` November 26, unpushed, so `main` keeps v1), the live artifact is:
 
 - `artifacts/edger-training/promoted/edger_policy_current.json` (`edger_v2_candidate_20261123-L_c3`, SHA-256 `26a56150…`)
 - `src/ai/generated/edgerPolicyCurrent.js`
@@ -45,7 +45,7 @@ tiles after a tower falls. The placement scorer learns from actor-relative
 row and column alongside its existing board features. Legacy artifacts and
 the frozen heuristic use the original shortlist. Full-grid is the adopted
 training action space (owner, November 13, 2026), and the promoted c3 makes
-it live on the review branch.
+it live.
 
 See `docs/EDGER_TRAINING.md` for corpus, PyTorch learning, checkpoint, scaling, league, and scheduling details.
 
