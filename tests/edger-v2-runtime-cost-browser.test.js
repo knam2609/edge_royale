@@ -96,6 +96,9 @@ import { SUPERVISOR_SCHEMA, expiredDeadline, superviseWorker } from "../scripts/
 
 const { LEARNED, FIXED_ONE_TICK } = EDGER_V2_DIAGNOSTIC_CONTROLLERS;
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+// The live-v1 module the October study pinned (LIVE_V1_PIN), kept byte for byte
+// since the November 2026 v2 promotion replaced the live module.
+const RETIRED_V1_MODULE = path.join(ROOT, "artifacts/edger-training/retired/edger_policy_bootstrap_20260701/edgerPolicyCurrent.js");
 const DEV_SEED = 1836353410;
 const FAKE_WORKER = path.join(ROOT, "tests", "fixtures", "runtime-cost-fake-worker.mjs");
 const SUPERVISOR = path.join(ROOT, "scripts", "edger-v2-runtime-cost-supervisor.mjs");
@@ -232,7 +235,9 @@ test("Node expectations carry the frozen reference's decisions, schedules, kinds
     perCategory: 2,
     stride: 25,
   });
-  const expectations = buildNodeExpectations({ bank, models, matchSeeds: [DEV_SEED], controllers: [LEARNED] });
+  const expectations = buildNodeExpectations({
+    bank, models, matchSeeds: [DEV_SEED], controllers: [LEARNED], v1Baselines: false,
+  });
   assert.equal(expectations.bank_decisions.length, bank.states.length * 2 * 2);
   assert.equal(expectations.full_matches.length, 2);
   for (const entry of expectations.full_matches) {
@@ -251,15 +256,12 @@ test("Node expectations carry the frozen reference's decisions, schedules, kinds
     assert.ok(entry.overtime_start_tick === null || entry.overtime_start_tick >= 3600);
     assert.ok(entry.opponent_decisions > 0);
   }
-  // Live-v1 baselines: both sides, checked against the independent reference on emission.
-  assert.deepEqual(expectations.v1_baselines.map((entry) => entry.id), [`${DEV_SEED}-v1-blue`, `${DEV_SEED}-v1-red`]);
-  for (const entry of expectations.v1_baselines) {
-    assert.equal(entry.kind, "v1_baseline");
-    assert.deepEqual(Object.keys(entry.schedule[0]), ["tick", "card_id", "x", "y", "delay_ticks"]);
-    assert.equal(entry.schedule_sha256, sha256Hex(JSON.stringify(entry.schedule)));
-    assert.equal(entry.counts.decisions, entry.result.tick);
-    assert.equal(entry.live_v1.delay_ticks, 1);
-  }
+  // Live-v1 baselines: since the November 2026 v2 promotion the live module is
+  // a v2 model, so they are undefined and emission refuses them.
+  assert.throws(
+    () => buildNodeExpectations({ bank, models, matchSeeds: [DEV_SEED], controllers: [LEARNED] }),
+    /the live Edger module is a v2 model; the live-v1 baseline is undefined/,
+  );
 });
 
 test("sample tables are bounded, refuse rather than overwrite and drain incrementally", () => {
@@ -1075,7 +1077,7 @@ function buildFreezeFixture() {
   const tree = browserTreeDigest(installDir);
   put("index.html", fs.readFileSync(path.join(ROOT, "index.html")));
   put("src/client/webGame.js", fs.readFileSync(path.join(ROOT, "src", "client", "webGame.js")));
-  put(LIVE_V1_PIN.module, fs.readFileSync(path.join(ROOT, LIVE_V1_PIN.module)));
+  put(LIVE_V1_PIN.module, fs.readFileSync(RETIRED_V1_MODULE));
   const generated = {
     [DIAGNOSTIC_HTML]: put(DIAGNOSTIC_HTML, "<p>diagnostic</p>\n"),
     [DIAGNOSTIC_MODULE]: put(DIAGNOSTIC_MODULE, "export {};\n"),

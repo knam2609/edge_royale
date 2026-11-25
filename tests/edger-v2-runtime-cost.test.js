@@ -20,7 +20,6 @@ import {
   runEdgerV2CadenceMatch,
 } from "../scripts/edger-v2-cadence-core.mjs";
 import {
-  EDGER_V1_BASELINE_PHASES,
   EDGER_V2_DIAGNOSTIC_CONTROLLERS,
   EDGER_V2_DIAGNOSTIC_PHASES,
   assertLiveV1Baseline,
@@ -34,7 +33,6 @@ import {
   classifyDiagnosticState,
   runDiagnosticMatch,
   runV1BaselineMatch,
-  runV1BaselineReference,
 } from "../scripts/edger-v2-runtime-cost-core.mjs";
 import { EDGER_POLICY_MODEL } from "../src/ai/generated/edgerPolicyCurrent.js";
 
@@ -395,44 +393,12 @@ test("state bank is deterministic, replay-verified, outcome-free and fails on mi
   );
 });
 
-test("live-v1 baseline: the unchanged live path equals the independent reference and hooks only observe", () => {
-  assert.deepEqual(assertLiveV1Baseline(), {
-    model_id: EDGER_POLICY_MODEL.model_id,
-    schema_version: "edger_policy_model_v1",
-    delay_ticks: 1,
-  });
-  assert.throws(() => assertLiveV1Baseline("random"), /not one tick/);
-  // Red is the side the live client's bot plays.
-  const reference = runV1BaselineReference({ seed: DEV_SEED, candidateActor: "red" });
-  const phases = [];
-  const kindsSeen = [];
-  const driven = runV1BaselineMatch({
-    seed: DEV_SEED,
-    candidateActor: "red",
-    phaseHook: (phase, detail) => {
-      phases.push(phase);
-      if (phase === "schedule") {
-        kindsSeen.push(detail.kind);
-      }
-    },
-  });
-  const plain = runV1BaselineMatch({ seed: DEV_SEED, candidateActor: "red" });
-  for (const run of [driven, plain]) {
-    assert.equal(run.action_stream_hash, reference.action_stream_hash);
-    assert.equal(run.final_state_hash, reference.final_state_hash);
-    assert.deepEqual(run.result, reference.result);
-    assert.equal(run.overtime_start_tick, reference.overtime_start_tick);
-    assert.equal(run.opponent_decisions, reference.opponent_decisions);
-    assert.deepEqual(run.schedule, reference.schedule.map(({ kind, ...row }) => row));
-  }
-  // One-tick live v1: both sides decide on every tick, PASS rows have no card.
-  assert.equal(driven.counts.decisions, reference.result.tick);
-  assert.equal(driven.opponent_decisions, reference.result.tick);
-  assert.ok(driven.schedule.every((row) => row.delay_ticks === 1));
-  assert.ok(driven.schedule.every((row) => (row.card_id === null) === (row.x === null)));
-  assert.equal(driven.counts.illegal_attempts, 0);
-  assert.ok(driven.decision_kinds.play > 0 && driven.decision_kinds.forced_pass > 0);
-  assert.equal(phases.length, driven.counts.decisions * EDGER_V1_BASELINE_PHASES.length);
-  assert.deepEqual(phases.slice(0, 4), [...EDGER_V1_BASELINE_PHASES]);
-  assert.deepEqual(kindsSeen, reference.schedule.map((row) => row.kind));
+test("live-v1 baseline: refused since the November 2026 v2 promotion made the live module a v2 model", () => {
+  // The October study's baseline drove the unchanged live path with live v1.
+  // With a v2 model live that baseline is undefined, and the driver refuses
+  // before any decision.
+  assert.equal(EDGER_POLICY_MODEL.schema_version, "edger_policy_model_v2");
+  const refusal = /the live Edger module is a v2 model; the live-v1 baseline is undefined/;
+  assert.throws(() => assertLiveV1Baseline(), refusal);
+  assert.throws(() => runV1BaselineMatch({ seed: DEV_SEED, candidateActor: "red" }), refusal);
 });

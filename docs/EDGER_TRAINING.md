@@ -584,7 +584,7 @@ GitHub polls five hours, then succeeds detached if runner remains active; a
 terminated runner without target marker fails. Each attempt uses unique
 `github-<run>-<attempt>` log, then instance and encrypted volume terminate.
 Peak resident memory stays below 28 GiB and disk use below 160 GiB. Failed
-stages leave live v1 unchanged. `promote` requires matching full-evaluation
+stages leave live Edger unchanged. `promote` requires matching full-evaluation
 marker, zero active runners, and exact candidate/report checksums; it opens but
 never merges manual-review PR.
 
@@ -623,7 +623,7 @@ npm run edger:scaling:recover -- \
 
 ## 8. Promotion gate
 
-The corpus, BC, offline-improvement, scaling, league/V-trace, parity, large-sample evaluator, checksum-bound promotion, and campaign PR foundations are implemented. V2 remains shadow-only until a real full report passes and the owner approves promotion. The first passing report is the [candidate campaign's](EDGER_CANDIDATE_CAMPAIGN.md#result-november-23-2026) (November 23, 2026); it awaits that decision. The gates:
+The corpus, BC, offline-improvement, scaling, league/V-trace, parity, large-sample evaluator, checksum-bound promotion, and campaign PR foundations are implemented. The first passing full report is the [candidate campaign's](EDGER_CANDIDATE_CAMPAIGN.md#result-november-23-2026) (November 23, 2026). The owner approved promoting that candidate, c3, on November 25, 2026; it is live on the unmerged review branch `edger-v2-promote-c3` ([record](EDGER_CANDIDATE_CAMPAIGN.md#owner-promotion-decision-november-25-2026)). Every later v2 model needs its own passing report and approval. The gates:
 
 - paired champion bootstrap bounds
 - heuristic and anchor non-regression bounds

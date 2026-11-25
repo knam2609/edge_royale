@@ -1,22 +1,4065 @@
 {
-  "model_id": "edger_policy_bootstrap_20260701",
-  "report_date": "2026-07-01",
-  "status": "bootstrap_runtime_seed",
-  "promotion_passed": false,
-  "notes": [
-    "Runtime model schema, generated JS import path, and deterministic argmax policy path are present.",
-    "Full PPO/self-play training and promotion gate enforcement remain backlog work.",
-    "The bootstrap model passed the point-win-rate benchmark gate but did not meet the heuristic Wilson lower-bound promotion criterion."
-  ],
-  "validation": {
-    "npm test": "passed: 94 tests, duration 297286.172542ms",
-    "npm run edger:evaluate -- --model artifacts/edger-training/promoted/edger_policy_current.json": "passed command; heuristic point win_rate 0.650, Wilson lower bound 0.433",
-    "npm run bot:bench -- --opponents edger_heuristic,random,aggressive,defender --rounds 30 --seed 20260630 --max-ticks 6040 --min-win-rate 0.6": "passed point win-rate gate",
-    "npm run smoke:browser": "failed before browser launch: Timed out while importing Playwright"
+  "anchor_model_ids": [],
+  "campaign_git_commit": "567ec98eef6912430c3361542ba473b6231579d3",
+  "candidate_artifact_checksum": "26a5615041d8af9381687fe901183f0cdbf8872d4f57d9cccda7f91860f9eb9f",
+  "candidate_model": "~/edge_royale-runs/20261123-candidate-campaign.noindex/candidate/candidate.json",
+  "candidate_model_id": "edger_v2_candidate_20261123-L_c3",
+  "champion_blocks": {
+    "A": {
+      "draws": 0,
+      "games": 400,
+      "losses": 42,
+      "paired_bootstrap_95_lower_bound": 0.865,
+      "paired_seeds": 200,
+      "score": 0.895,
+      "wins": 358
+    },
+    "B": {
+      "draws": 0,
+      "games": 400,
+      "losses": 38,
+      "paired_bootstrap_95_lower_bound": 0.8775,
+      "paired_seeds": 200,
+      "score": 0.905,
+      "wins": 362
+    }
   },
-  "required_follow_up": [
-    "Train and evaluate a PPO/self-play candidate that clears the heuristic Wilson lower-bound gate.",
-    "Move promotion criteria enforcement into npm run edger:promote.",
-    "Run npm run smoke:browser after the existing Playwright import issue is fixed."
-  ]
+  "champion_model": "~/edge_royale-runs/20261123-candidate-campaign.noindex/repo/artifacts/edger-training/promoted/edger_policy_current.json",
+  "champion_model_id": "edger_policy_bootstrap_20260701",
+  "evaluated_at": "2026-11-23T06:32:08.912Z",
+  "frozen_league_mean": 0.935,
+  "gates": {
+    "acceptance_profile": {
+      "passed": true,
+      "profile": "full"
+    },
+    "anchors": {
+      "matchup_regressions": [
+        {
+          "candidate_score": 0.935,
+          "champion_reference_score": 0.52,
+          "group": "heuristic",
+          "regression": -0.41500000000000004
+        }
+      ],
+      "matchups": [
+        {
+          "draws": 0,
+          "games": 200,
+          "group": "heuristic",
+          "losses": 13,
+          "paired_bootstrap_95_lower_bound": 0.9,
+          "paired_seeds": 100,
+          "score": 0.935,
+          "wins": 187
+        }
+      ],
+      "passed": true
+    },
+    "browser_smoke": {
+      "git_commit": "567ec98eef6912430c3361542ba473b6231579d3",
+      "passed": true,
+      "report": "~/edge_royale-runs/20261123-candidate-campaign.noindex/qa/browser-report.json"
+    },
+    "champion": {
+      "blocks": {
+        "A": {
+          "draws": 0,
+          "games": 400,
+          "losses": 42,
+          "paired_bootstrap_95_lower_bound": 0.865,
+          "paired_seeds": 200,
+          "score": 0.895,
+          "wins": 358
+        },
+        "B": {
+          "draws": 0,
+          "games": 400,
+          "losses": 38,
+          "paired_bootstrap_95_lower_bound": 0.8775,
+          "paired_seeds": 200,
+          "score": 0.905,
+          "wins": 362
+        }
+      },
+      "combined": {
+        "draws": 0,
+        "games": 800,
+        "losses": 80,
+        "paired_bootstrap_95_lower_bound": 0.88,
+        "paired_seeds": 400,
+        "score": 0.9,
+        "wins": 720
+      },
+      "passed": true
+    },
+    "frozen_league": {
+      "candidate_mean": 0.935,
+      "champion_reference_mean": 0.52,
+      "improvement": 0.41500000000000004,
+      "passed": true,
+      "worst_anchor_score": null
+    },
+    "full_test_suite": {
+      "git_commit": "567ec98eef6912430c3361542ba473b6231579d3",
+      "passed": true,
+      "report": "~/edge_royale-runs/20261123-candidate-campaign.noindex/qa/test-report.json"
+    },
+    "generated_js_timing": {
+      "budget_ms": 5,
+      "max_ms": 3.0138,
+      "p95_ms": 1.4045,
+      "passed": true,
+      "reference_hardware": "Mac mini M6 (Mac18,5)",
+      "samples": 100,
+      "warmup_samples": 10
+    },
+    "pytorch_js_parity": {
+      "argmax_agreement": true,
+      "card_indices_covered": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "fixture_count": 54,
+      "fixtures": [
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 0,
+          "forced_placement_index": 0,
+          "fragile_margin_heads": [],
+          "id": "opening-20260718",
+          "maximum_legal_logit_magnitude": 12.014142990112305,
+          "maximum_logit_difference": 0.000001430511474609375,
+          "maximum_ulp_error": 15,
+          "state_id": "opening-20260718",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 1,
+          "forced_placement_index": 0,
+          "fragile_margin_heads": [],
+          "id": "opening-20260718-card1",
+          "maximum_legal_logit_magnitude": 10.747458457946777,
+          "maximum_logit_difference": 9.5367431640625e-7,
+          "maximum_ulp_error": 14,
+          "state_id": "opening-20260718",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 5,
+          "forced_placement_index": 0,
+          "fragile_margin_heads": [],
+          "id": "opening-20260718-card5",
+          "maximum_legal_logit_magnitude": 11.76163101196289,
+          "maximum_logit_difference": 9.5367431640625e-7,
+          "maximum_ulp_error": 13,
+          "state_id": "opening-20260718",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 7,
+          "forced_placement_index": 453,
+          "fragile_margin_heads": [],
+          "id": "opening-20260718-card7",
+          "maximum_legal_logit_magnitude": 10.588507652282715,
+          "maximum_logit_difference": 9.5367431640625e-7,
+          "maximum_ulp_error": 7,
+          "state_id": "opening-20260718",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 8,
+          "forced_placement_index": 453,
+          "fragile_margin_heads": [],
+          "id": "opening-20260718-card8",
+          "maximum_legal_logit_magnitude": 10.778172492980957,
+          "maximum_logit_difference": 0.0000019073486328125,
+          "maximum_ulp_error": 45,
+          "state_id": "opening-20260718",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 0,
+          "forced_placement_index": 0,
+          "fragile_margin_heads": [],
+          "id": "seed20260718-tick394",
+          "maximum_legal_logit_magnitude": 9.820600509643555,
+          "maximum_logit_difference": 9.5367431640625e-7,
+          "maximum_ulp_error": 12,
+          "state_id": "seed20260718-tick394",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 3,
+          "forced_placement_index": 0,
+          "fragile_margin_heads": [],
+          "id": "seed20260718-tick394-card3",
+          "maximum_legal_logit_magnitude": 8.624844551086426,
+          "maximum_logit_difference": 9.5367431640625e-7,
+          "maximum_ulp_error": 174,
+          "state_id": "seed20260718-tick394",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 7,
+          "forced_placement_index": 273,
+          "fragile_margin_heads": [],
+          "id": "seed20260718-tick394-card7",
+          "maximum_legal_logit_magnitude": 8.803192138671875,
+          "maximum_logit_difference": 0.0000011920928955078125,
+          "maximum_ulp_error": 39,
+          "state_id": "seed20260718-tick394",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 0,
+          "forced_placement_index": 0,
+          "fragile_margin_heads": [],
+          "id": "seed20260718-tick791",
+          "maximum_legal_logit_magnitude": 13.445310592651367,
+          "maximum_logit_difference": 0.0000019073486328125,
+          "maximum_ulp_error": 8,
+          "state_id": "seed20260718-tick791",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 7,
+          "forced_placement_index": 453,
+          "fragile_margin_heads": [],
+          "id": "seed20260718-tick791-card7",
+          "maximum_legal_logit_magnitude": 12.70993423461914,
+          "maximum_logit_difference": 9.5367431640625e-7,
+          "maximum_ulp_error": 27,
+          "state_id": "seed20260718-tick791",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 0,
+          "forced_placement_index": 0,
+          "fragile_margin_heads": [],
+          "id": "seed20260718-tick1128",
+          "maximum_legal_logit_magnitude": 11.417530059814453,
+          "maximum_logit_difference": 9.5367431640625e-7,
+          "maximum_ulp_error": 145,
+          "state_id": "seed20260718-tick1128",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 2,
+          "forced_placement_index": 273,
+          "fragile_margin_heads": [],
+          "id": "seed20260718-tick1128-card2",
+          "maximum_legal_logit_magnitude": 14.764906883239746,
+          "maximum_logit_difference": 0.0000019073486328125,
+          "maximum_ulp_error": 341,
+          "state_id": "seed20260718-tick1128",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 7,
+          "forced_placement_index": 273,
+          "fragile_margin_heads": [],
+          "id": "seed20260718-tick1128-card7",
+          "maximum_legal_logit_magnitude": 13.070682525634766,
+          "maximum_logit_difference": 0.0000019073486328125,
+          "maximum_ulp_error": 528,
+          "state_id": "seed20260718-tick1128",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 0,
+          "forced_placement_index": 0,
+          "fragile_margin_heads": [],
+          "id": "seed20260718-tick1465",
+          "maximum_legal_logit_magnitude": 11.788589477539062,
+          "maximum_logit_difference": 0.0000019073486328125,
+          "maximum_ulp_error": 18,
+          "state_id": "seed20260718-tick1465",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 7,
+          "forced_placement_index": 237,
+          "fragile_margin_heads": [],
+          "id": "seed20260718-tick1465-card7",
+          "maximum_legal_logit_magnitude": 12.330504417419434,
+          "maximum_logit_difference": 0.0000019073486328125,
+          "maximum_ulp_error": 151,
+          "state_id": "seed20260718-tick1465",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 0,
+          "forced_placement_index": 0,
+          "fragile_margin_heads": [],
+          "id": "seed20260718-tick1716",
+          "maximum_legal_logit_magnitude": 15.31833267211914,
+          "maximum_logit_difference": 9.5367431640625e-7,
+          "maximum_ulp_error": 66,
+          "state_id": "seed20260718-tick1716",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 7,
+          "forced_placement_index": 464,
+          "fragile_margin_heads": [],
+          "id": "seed20260718-tick1716-card7",
+          "maximum_legal_logit_magnitude": 13.683241844177246,
+          "maximum_logit_difference": 9.5367431640625e-7,
+          "maximum_ulp_error": 70,
+          "state_id": "seed20260718-tick1716",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 0,
+          "forced_placement_index": 0,
+          "fragile_margin_heads": [],
+          "id": "seed20260718-tick2023",
+          "maximum_legal_logit_magnitude": 11.987082481384277,
+          "maximum_logit_difference": 0.0000019073486328125,
+          "maximum_ulp_error": 18,
+          "state_id": "seed20260718-tick2023",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 2,
+          "forced_placement_index": 0,
+          "fragile_margin_heads": [],
+          "id": "seed20260718-tick2023-card2",
+          "maximum_legal_logit_magnitude": 10.040794372558594,
+          "maximum_logit_difference": 9.5367431640625e-7,
+          "maximum_ulp_error": 90,
+          "state_id": "seed20260718-tick2023",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 7,
+          "forced_placement_index": 531,
+          "fragile_margin_heads": [],
+          "id": "seed20260718-tick2023-card7",
+          "maximum_legal_logit_magnitude": 10.0587158203125,
+          "maximum_logit_difference": 0.0000010728836059570312,
+          "maximum_ulp_error": 214,
+          "state_id": "seed20260718-tick2023",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 0,
+          "forced_placement_index": 0,
+          "fragile_margin_heads": [],
+          "id": "seed20260719-tick1",
+          "maximum_legal_logit_magnitude": 9.999756813049316,
+          "maximum_logit_difference": 9.5367431640625e-7,
+          "maximum_ulp_error": 31,
+          "state_id": "seed20260719-tick1",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 1,
+          "forced_placement_index": 0,
+          "fragile_margin_heads": [],
+          "id": "seed20260719-tick1-card1",
+          "maximum_legal_logit_magnitude": 8.778127670288086,
+          "maximum_logit_difference": 9.5367431640625e-7,
+          "maximum_ulp_error": 4,
+          "state_id": "seed20260719-tick1",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 2,
+          "forced_placement_index": 0,
+          "fragile_margin_heads": [],
+          "id": "seed20260719-tick1-card2",
+          "maximum_legal_logit_magnitude": 10.370939254760742,
+          "maximum_logit_difference": 9.5367431640625e-7,
+          "maximum_ulp_error": 14,
+          "state_id": "seed20260719-tick1",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 5,
+          "forced_placement_index": 0,
+          "fragile_margin_heads": [],
+          "id": "seed20260719-tick1-card5",
+          "maximum_legal_logit_magnitude": 10.434183120727539,
+          "maximum_logit_difference": 9.5367431640625e-7,
+          "maximum_ulp_error": 40,
+          "state_id": "seed20260719-tick1",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 6,
+          "forced_placement_index": 0,
+          "fragile_margin_heads": [],
+          "id": "seed20260719-tick1-card6",
+          "maximum_legal_logit_magnitude": 8.550337791442871,
+          "maximum_logit_difference": 9.5367431640625e-7,
+          "maximum_ulp_error": 38,
+          "state_id": "seed20260719-tick1",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 0,
+          "forced_placement_index": 0,
+          "fragile_margin_heads": [],
+          "id": "seed20260719-tick394",
+          "maximum_legal_logit_magnitude": 10.855575561523438,
+          "maximum_logit_difference": 9.5367431640625e-7,
+          "maximum_ulp_error": 419,
+          "state_id": "seed20260719-tick394",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 7,
+          "forced_placement_index": 345,
+          "fragile_margin_heads": [],
+          "id": "seed20260719-tick394-card7",
+          "maximum_legal_logit_magnitude": 10.222976684570312,
+          "maximum_logit_difference": 0.000001430511474609375,
+          "maximum_ulp_error": 22,
+          "state_id": "seed20260719-tick394",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 0,
+          "forced_placement_index": 0,
+          "fragile_margin_heads": [],
+          "id": "seed20260719-tick791",
+          "maximum_legal_logit_magnitude": 13.824101448059082,
+          "maximum_logit_difference": 9.5367431640625e-7,
+          "maximum_ulp_error": 28,
+          "state_id": "seed20260719-tick791",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 2,
+          "forced_placement_index": 309,
+          "fragile_margin_heads": [],
+          "id": "seed20260719-tick791-card2",
+          "maximum_legal_logit_magnitude": 12.767197608947754,
+          "maximum_logit_difference": 0.0000019073486328125,
+          "maximum_ulp_error": 51,
+          "state_id": "seed20260719-tick791",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 7,
+          "forced_placement_index": 464,
+          "fragile_margin_heads": [],
+          "id": "seed20260719-tick791-card7",
+          "maximum_legal_logit_magnitude": 12.174901962280273,
+          "maximum_logit_difference": 0.000001430511474609375,
+          "maximum_ulp_error": 79,
+          "state_id": "seed20260719-tick791",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 0,
+          "forced_placement_index": 0,
+          "fragile_margin_heads": [],
+          "id": "seed20260719-tick1068",
+          "maximum_legal_logit_magnitude": 10.538009643554688,
+          "maximum_logit_difference": 0.0000019073486328125,
+          "maximum_ulp_error": 22,
+          "state_id": "seed20260719-tick1068",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 7,
+          "forced_placement_index": 464,
+          "fragile_margin_heads": [],
+          "id": "seed20260719-tick1068-card7",
+          "maximum_legal_logit_magnitude": 9.601896286010742,
+          "maximum_logit_difference": 9.5367431640625e-7,
+          "maximum_ulp_error": 48,
+          "state_id": "seed20260719-tick1068",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 0,
+          "forced_placement_index": 0,
+          "fragile_margin_heads": [],
+          "id": "seed20260719-tick1319",
+          "maximum_legal_logit_magnitude": 12.32824420928955,
+          "maximum_logit_difference": 9.5367431640625e-7,
+          "maximum_ulp_error": 54,
+          "state_id": "seed20260719-tick1319",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 7,
+          "forced_placement_index": 309,
+          "fragile_margin_heads": [],
+          "id": "seed20260719-tick1319-card7",
+          "maximum_legal_logit_magnitude": 11.425046920776367,
+          "maximum_logit_difference": 0.0000019073486328125,
+          "maximum_ulp_error": 100,
+          "state_id": "seed20260719-tick1319",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 0,
+          "forced_placement_index": 0,
+          "fragile_margin_heads": [],
+          "id": "seed20260719-tick1686",
+          "maximum_legal_logit_magnitude": 14.747452735900879,
+          "maximum_logit_difference": 0.0000019073486328125,
+          "maximum_ulp_error": 21,
+          "state_id": "seed20260719-tick1686",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 2,
+          "forced_placement_index": 144,
+          "fragile_margin_heads": [],
+          "id": "seed20260719-tick1686-card2",
+          "maximum_legal_logit_magnitude": 13.468790054321289,
+          "maximum_logit_difference": 0.0000019073486328125,
+          "maximum_ulp_error": 28,
+          "state_id": "seed20260719-tick1686",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 7,
+          "forced_placement_index": 464,
+          "fragile_margin_heads": [],
+          "id": "seed20260719-tick1686-card7",
+          "maximum_legal_logit_magnitude": 13.034232139587402,
+          "maximum_logit_difference": 9.5367431640625e-7,
+          "maximum_ulp_error": 63,
+          "state_id": "seed20260719-tick1686",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 0,
+          "forced_placement_index": 0,
+          "fragile_margin_heads": [],
+          "id": "seed20260720-tick1",
+          "maximum_legal_logit_magnitude": 10.369416236877441,
+          "maximum_logit_difference": 0.000001430511474609375,
+          "maximum_ulp_error": 51,
+          "state_id": "seed20260720-tick1",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 2,
+          "forced_placement_index": 0,
+          "fragile_margin_heads": [],
+          "id": "seed20260720-tick1-card2",
+          "maximum_legal_logit_magnitude": 10.5384521484375,
+          "maximum_logit_difference": 9.5367431640625e-7,
+          "maximum_ulp_error": 28,
+          "state_id": "seed20260720-tick1",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 4,
+          "forced_placement_index": 0,
+          "fragile_margin_heads": [],
+          "id": "seed20260720-tick1-card4",
+          "maximum_legal_logit_magnitude": 9.880175590515137,
+          "maximum_logit_difference": 9.5367431640625e-7,
+          "maximum_ulp_error": 11,
+          "state_id": "seed20260720-tick1",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 5,
+          "forced_placement_index": 0,
+          "fragile_margin_heads": [],
+          "id": "seed20260720-tick1-card5",
+          "maximum_legal_logit_magnitude": 10.637332916259766,
+          "maximum_logit_difference": 9.5367431640625e-7,
+          "maximum_ulp_error": 8,
+          "state_id": "seed20260720-tick1",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 6,
+          "forced_placement_index": 0,
+          "fragile_margin_heads": [],
+          "id": "seed20260720-tick1-card6",
+          "maximum_legal_logit_magnitude": 8.745321273803711,
+          "maximum_logit_difference": 9.5367431640625e-7,
+          "maximum_ulp_error": 44,
+          "state_id": "seed20260720-tick1",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 0,
+          "forced_placement_index": 0,
+          "fragile_margin_heads": [],
+          "id": "seed20260720-tick394",
+          "maximum_legal_logit_magnitude": 10.696573257446289,
+          "maximum_logit_difference": 9.5367431640625e-7,
+          "maximum_ulp_error": 138,
+          "state_id": "seed20260720-tick394",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 7,
+          "forced_placement_index": 453,
+          "fragile_margin_heads": [],
+          "id": "seed20260720-tick394-card7",
+          "maximum_legal_logit_magnitude": 9.563488006591797,
+          "maximum_logit_difference": 0.0000010728836059570312,
+          "maximum_ulp_error": 16,
+          "state_id": "seed20260720-tick394",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 0,
+          "forced_placement_index": 0,
+          "fragile_margin_heads": [],
+          "id": "seed20260720-tick791",
+          "maximum_legal_logit_magnitude": 13.619807243347168,
+          "maximum_logit_difference": 9.5367431640625e-7,
+          "maximum_ulp_error": 28,
+          "state_id": "seed20260720-tick791",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 7,
+          "forced_placement_index": 453,
+          "fragile_margin_heads": [],
+          "id": "seed20260720-tick791-card7",
+          "maximum_legal_logit_magnitude": 11.956379890441895,
+          "maximum_logit_difference": 0.0000019073486328125,
+          "maximum_ulp_error": 32,
+          "state_id": "seed20260720-tick791",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 0,
+          "forced_placement_index": 0,
+          "fragile_margin_heads": [],
+          "id": "seed20260720-tick1128",
+          "maximum_legal_logit_magnitude": 10.882804870605469,
+          "maximum_logit_difference": 0.0000019073486328125,
+          "maximum_ulp_error": 13,
+          "state_id": "seed20260720-tick1128",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 2,
+          "forced_placement_index": 0,
+          "fragile_margin_heads": [],
+          "id": "seed20260720-tick1128-card2",
+          "maximum_legal_logit_magnitude": 9.52542495727539,
+          "maximum_logit_difference": 9.5367431640625e-7,
+          "maximum_ulp_error": 31,
+          "state_id": "seed20260720-tick1128",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 7,
+          "forced_placement_index": 453,
+          "fragile_margin_heads": [],
+          "id": "seed20260720-tick1128-card7",
+          "maximum_legal_logit_magnitude": 10.69694995880127,
+          "maximum_logit_difference": 0.000001430511474609375,
+          "maximum_ulp_error": 60,
+          "state_id": "seed20260720-tick1128",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 0,
+          "forced_placement_index": 0,
+          "fragile_margin_heads": [],
+          "id": "seed20260720-tick1525",
+          "maximum_legal_logit_magnitude": 10.572689056396484,
+          "maximum_logit_difference": 9.5367431640625e-7,
+          "maximum_ulp_error": 22,
+          "state_id": "seed20260720-tick1525",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 3,
+          "forced_placement_index": 254,
+          "fragile_margin_heads": [],
+          "id": "seed20260720-tick1525-card3",
+          "maximum_legal_logit_magnitude": 9.102011680603027,
+          "maximum_logit_difference": 9.5367431640625e-7,
+          "maximum_ulp_error": 108,
+          "state_id": "seed20260720-tick1525",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 7,
+          "forced_placement_index": 464,
+          "fragile_margin_heads": [],
+          "id": "seed20260720-tick1525-card7",
+          "maximum_legal_logit_magnitude": 8.626421928405762,
+          "maximum_logit_difference": 0.000001430511474609375,
+          "maximum_ulp_error": 22,
+          "state_id": "seed20260720-tick1525",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 0,
+          "forced_placement_index": 0,
+          "fragile_margin_heads": [],
+          "id": "seed20260720-tick1862",
+          "maximum_legal_logit_magnitude": 13.75062084197998,
+          "maximum_logit_difference": 0.0000019073486328125,
+          "maximum_ulp_error": 29,
+          "state_id": "seed20260720-tick1862",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        },
+        {
+          "argmax_agreement": true,
+          "forced_card_index": 6,
+          "forced_placement_index": 237,
+          "fragile_margin_heads": [],
+          "id": "seed20260720-tick1862-card6",
+          "maximum_legal_logit_magnitude": 13.308037757873535,
+          "maximum_logit_difference": 0.0000019073486328125,
+          "maximum_ulp_error": 91,
+          "state_id": "seed20260720-tick1862",
+          "tie_set_agreement": true,
+          "tolerance_exceedances": 0
+        }
+      ],
+      "float32_ulp": 9.5367431640625e-7,
+      "fragile_margin_count": 0,
+      "fragile_margins": [],
+      "heads": {
+        "card": {
+          "maximum_legal_logit_magnitude": 8.53637409210205,
+          "maximum_logit_difference": 9.5367431640625e-7,
+          "maximum_ulp_error": 7
+        },
+        "delay": {
+          "maximum_legal_logit_magnitude": 15.31833267211914,
+          "maximum_logit_difference": 0.0000019073486328125,
+          "maximum_ulp_error": 419
+        },
+        "placement": {
+          "maximum_legal_logit_magnitude": 10.008853912353516,
+          "maximum_logit_difference": 0.000001430511474609375,
+          "maximum_ulp_error": 528
+        }
+      },
+      "js_argmax": {
+        "card": 5,
+        "delay": 14,
+        "placement": 0
+      },
+      "maximum_legal_logit_magnitude": 15.31833267211914,
+      "maximum_logit_difference": 0.0000019073486328125,
+      "maximum_ulp_error": 528,
+      "passed": true,
+      "pytorch_argmax": {
+        "card": 5,
+        "delay": 14,
+        "placement": 0
+      },
+      "review_required": false,
+      "state_count": 19,
+      "tie_set_agreement": true,
+      "tolerance": 0.00001,
+      "tolerance_exceedances": 0,
+      "tolerance_rule": "legal: |js - pytorch| <= max(1e-5, 4 * ulp32(max(|js|, |pytorch|))); masked: <= 1e-5",
+      "ulp_tolerance_multiple": 4,
+      "worst_absolute_error": {
+        "absolute_difference": 0.0000019073486328125,
+        "fixture": "opening-20260718-card8",
+        "float32_ulp": 9.5367431640625e-7,
+        "head": "delay",
+        "index": 142,
+        "js_value": -9.195627212524414,
+        "pytorch_value": -9.195625305175781,
+        "ulp_error": 2
+      },
+      "worst_tolerance_error": {
+        "absolute_difference": 0.0000019073486328125,
+        "fixture": "opening-20260718-card8",
+        "head": "delay",
+        "index": 142,
+        "js_value": -9.195627212524414,
+        "legal": true,
+        "pytorch_value": -9.195625305175781,
+        "tolerance": 0.00001,
+        "tolerance_ratio": 0.19073486328124997
+      }
+    },
+    "replay": {
+      "checked_matches": 100,
+      "passed": true
+    },
+    "safety": {
+      "games": 10000,
+      "illegal_actions": 0,
+      "passed": true,
+      "repeated_streams": 5000,
+      "replay_checks": 0
+    },
+    "schema_and_size": {
+      "actor_parameters": 36946,
+      "artifact_bytes": 777003,
+      "passed": true
+    },
+    "skill_report_inputs": {
+      "bank_artifact_checksum": "193ac4950a9c79c3ffd68caac2f954669927e1e036326ce58aace94be3e4250f",
+      "bank_sha256": "4f75fbc668f597de8e3dad965049453558ab60d016658fde102c751dd2a159c9",
+      "passed": true,
+      "tactical_schema_version": "edger_tactical_scenarios_v2"
+    },
+    "weak_baselines": {
+      "matchups": [
+        {
+          "draws": 0,
+          "games": 100,
+          "losses": 0,
+          "paired_bootstrap_95_lower_bound": 1,
+          "paired_seeds": 50,
+          "policy_id": "random",
+          "score": 1,
+          "wins": 100
+        },
+        {
+          "draws": 0,
+          "games": 100,
+          "losses": 9,
+          "paired_bootstrap_95_lower_bound": 0.86,
+          "paired_seeds": 50,
+          "policy_id": "aggressive",
+          "score": 0.91,
+          "wins": 91
+        },
+        {
+          "draws": 0,
+          "games": 100,
+          "losses": 0,
+          "paired_bootstrap_95_lower_bound": 1,
+          "paired_seeds": 50,
+          "policy_id": "defender",
+          "score": 1,
+          "wins": 100
+        }
+      ],
+      "passed": true
+    }
+  },
+  "generated_matches": 11300,
+  "match_suite_skipped": false,
+  "matchups": {
+    "champion": {
+      "draws": 0,
+      "games": 800,
+      "losses": 80,
+      "paired_bootstrap_95_lower_bound": 0.88,
+      "paired_seeds": 400,
+      "score": 0.9,
+      "wins": 720
+    },
+    "heuristic": {
+      "draws": 0,
+      "games": 200,
+      "losses": 13,
+      "paired_bootstrap_95_lower_bound": 0.9,
+      "paired_seeds": 100,
+      "score": 0.935,
+      "wins": 187
+    },
+    "weak:aggressive": {
+      "draws": 0,
+      "games": 100,
+      "losses": 9,
+      "paired_bootstrap_95_lower_bound": 0.86,
+      "paired_seeds": 50,
+      "score": 0.91,
+      "wins": 91
+    },
+    "weak:defender": {
+      "draws": 0,
+      "games": 100,
+      "losses": 0,
+      "paired_bootstrap_95_lower_bound": 1,
+      "paired_seeds": 50,
+      "score": 1,
+      "wins": 100
+    },
+    "weak:random": {
+      "draws": 0,
+      "games": 100,
+      "losses": 0,
+      "paired_bootstrap_95_lower_bound": 1,
+      "paired_seeds": 50,
+      "score": 1,
+      "wins": 100
+    }
+  },
+  "profile": "full",
+  "promoted_artifact": "artifacts/edger-training/promoted/edger_policy_current.json",
+  "promoted_artifact_checksum": "26a5615041d8af9381687fe901183f0cdbf8872d4f57d9cccda7f91860f9eb9f",
+  "promoted_model_id": "edger_v2_candidate_20261123-L_c3",
+  "promotion": {
+    "failures": [],
+    "passed": true
+  },
+  "promotion_report_checksum": "2ad41d74bb1ccd503dc4bbf23ea3eca0f5498c0c8f2791ff88b6319795e4cd1d",
+  "reference_hardware": "Mac mini M6 (Mac18,5)",
+  "reported": {
+    "heldout_fireball": {
+      "artifact_checksum": "193ac4950a9c79c3ffd68caac2f954669927e1e036326ce58aace94be3e4250f",
+      "bank_path": "~/edge_royale-runs/20261102-opportunity-bank-v2.noindex/opportunity-bank.json",
+      "bank_sha256": "4f75fbc668f597de8e3dad965049453558ab60d016658fde102c751dd2a159c9",
+      "blocking": false,
+      "categories": {
+        "cluster": {
+          "candidate_capture_rate": 0,
+          "candidate_captures": 0,
+          "candidate_card_choices": 0,
+          "count": 53,
+          "heuristic_capture_rate": 0.7547169811320755,
+          "heuristic_captures": 40,
+          "minimum": 0.7,
+          "minimum_met": false
+        },
+        "lethal": {
+          "candidate_capture_rate": 0,
+          "candidate_captures": 0,
+          "candidate_card_choices": 0,
+          "count": 27,
+          "heuristic_capture_rate": 0.7407407407407407,
+          "heuristic_captures": 20,
+          "minimum": 0.8,
+          "minimum_met": false
+        }
+      },
+      "entries": [
+        {
+          "actor": "red",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 0.5,
+            "y": 0.5
+          },
+          "candidate_capture": false,
+          "category": "lethal",
+          "episode_id": "0094511a27a4ee385b1dc180f7a21c3efef49af47f63b3e728dab0053abf0031",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 25.5
+          },
+          "heuristic_capture": true,
+          "tick": 2466
+        },
+        {
+          "actor": "blue",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 17.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "0094511a27a4ee385b1dc180f7a21c3efef49af47f63b3e728dab0053abf0031",
+          "heuristic_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 17.5
+          },
+          "heuristic_capture": false,
+          "tick": 2913
+        },
+        {
+          "actor": "red",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 11.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "0094511a27a4ee385b1dc180f7a21c3efef49af47f63b3e728dab0053abf0031",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 13.5
+          },
+          "heuristic_capture": true,
+          "tick": 3111
+        },
+        {
+          "actor": "red",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 0.5,
+            "y": 0.5
+          },
+          "candidate_capture": false,
+          "category": "lethal",
+          "episode_id": "0584f9160596c98131aefc101839792d7fcd67f5d367e4cde5fb87a9386ebc46",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 25.5
+          },
+          "heuristic_capture": true,
+          "tick": 861
+        },
+        {
+          "actor": "blue",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 12.5,
+            "y": 12.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "07e0bd836af4d4dd691dad53e024d9ec2d3ff0e2d7f18d59296f65dad825cd14",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 13.5,
+            "y": 15.5
+          },
+          "heuristic_capture": true,
+          "tick": 2520
+        },
+        {
+          "actor": "red",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 16.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "07e2fc84d18410731ebbc5aa3412ed0150cb3cfc87b464a87407bb3928926b0d",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 14.5
+          },
+          "heuristic_capture": true,
+          "tick": 1695
+        },
+        {
+          "actor": "blue",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 17.5,
+            "y": 31.5
+          },
+          "candidate_capture": false,
+          "category": "lethal",
+          "episode_id": "0dba9a406eaf2d6f55323f8f9d52d7b9ac1815ffdfb5de6e64f25c1aefe4151e",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 3.5,
+            "y": 6.5
+          },
+          "heuristic_capture": true,
+          "tick": 1905
+        },
+        {
+          "actor": "blue",
+          "candidate_action": {
+            "cardId": "musketeer",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 23.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "191aeee91acc8c1894ee58980aa853a5af8e935d6c020fb06f5611c160a6f28a",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 23.5
+          },
+          "heuristic_capture": true,
+          "tick": 1244
+        },
+        {
+          "actor": "blue",
+          "candidate_action": {
+            "cardId": "musketeer",
+            "type": "PLAY_CARD",
+            "x": 12.5,
+            "y": 25.5
+          },
+          "candidate_capture": false,
+          "category": "lethal",
+          "episode_id": "191aeee91acc8c1894ee58980aa853a5af8e935d6c020fb06f5611c160a6f28a",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 12.5,
+            "y": 25.5
+          },
+          "heuristic_capture": false,
+          "tick": 2174
+        },
+        {
+          "actor": "red",
+          "candidate_action": {
+            "cardId": "musketeer",
+            "type": "PLAY_CARD",
+            "x": 0.5,
+            "y": 0.5
+          },
+          "candidate_capture": false,
+          "category": "lethal",
+          "episode_id": "198fed467410855c1093785887b922beebbdb24a353211434db4471bc46ed94e",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 3.5,
+            "y": 25.5
+          },
+          "heuristic_capture": true,
+          "tick": 617
+        },
+        {
+          "actor": "blue",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 6.5,
+            "y": 23.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "198fed467410855c1093785887b922beebbdb24a353211434db4471bc46ed94e",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 12.5,
+            "y": 15.5
+          },
+          "heuristic_capture": false,
+          "tick": 2825
+        },
+        {
+          "actor": "red",
+          "candidate_action": {
+            "cardId": "knight",
+            "type": "PLAY_CARD",
+            "x": 0.5,
+            "y": 0.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "1a2cafc1a75fef56835ea777f24fe2703a9fb78d0274eeb4f8e73f5be9757613",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 3.5,
+            "y": 16.5
+          },
+          "heuristic_capture": true,
+          "tick": 977
+        },
+        {
+          "actor": "blue",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 17.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "1afb510a24d5b2e6091b4dac878dcc468c01f04d1f1480c8978d95a2e3b00358",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 17.5
+          },
+          "heuristic_capture": true,
+          "tick": 3018
+        },
+        {
+          "actor": "blue",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 3.5,
+            "y": 23.5
+          },
+          "candidate_capture": false,
+          "category": "lethal",
+          "episode_id": "1b04eec0ae4863c250042dba30aa0630b97681b5342a0576eec0f9bc30611311",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 3.5,
+            "y": 6.5
+          },
+          "heuristic_capture": true,
+          "tick": 785
+        },
+        {
+          "actor": "red",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 0.5,
+            "y": 0.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "1c9b1556d8fddf59c2f8ddc189d9fa4f1569215f773ffbcc945ce52ab1d4aff3",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 12.5,
+            "y": 17.5
+          },
+          "heuristic_capture": true,
+          "tick": 3501
+        },
+        {
+          "actor": "red",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 3.5,
+            "y": 12.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "1d8feb1569bafe8dfa3f81059446532e31077d7d77252dd7a5b50fc06e1ec303",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 2.5,
+            "y": 12.5
+          },
+          "heuristic_capture": true,
+          "tick": 3625
+        },
+        {
+          "actor": "red",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 13.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "1f5a4629128be629dece8712252a6f18044c2f202fba57b3c80556bbb1186e02",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 12.5
+          },
+          "heuristic_capture": true,
+          "tick": 1352
+        },
+        {
+          "actor": "blue",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 4.5,
+            "y": 23.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "22a43619e8735d242d12903d946d4852f055ec152043b3c8f81d62d4973f9d2e",
+          "heuristic_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 3.5,
+            "y": 17.5
+          },
+          "heuristic_capture": false,
+          "tick": 234
+        },
+        {
+          "actor": "red",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 0.5,
+            "y": 0.5
+          },
+          "candidate_capture": false,
+          "category": "lethal",
+          "episode_id": "22a43619e8735d242d12903d946d4852f055ec152043b3c8f81d62d4973f9d2e",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 25.5
+          },
+          "heuristic_capture": true,
+          "tick": 1793
+        },
+        {
+          "actor": "red",
+          "candidate_action": {
+            "cardId": "knight",
+            "type": "PLAY_CARD",
+            "x": 3.5,
+            "y": 14.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "301a0760f797cfc85a75f9c77903db89f786cb89cf1e08954f711939f6d2dc97",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 3.5,
+            "y": 15.5
+          },
+          "heuristic_capture": true,
+          "tick": 1382
+        },
+        {
+          "actor": "blue",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 17.5,
+            "y": 31.5
+          },
+          "candidate_capture": false,
+          "category": "lethal",
+          "episode_id": "301a0760f797cfc85a75f9c77903db89f786cb89cf1e08954f711939f6d2dc97",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 6.5,
+            "y": 5.5
+          },
+          "heuristic_capture": false,
+          "tick": 1737
+        },
+        {
+          "actor": "blue",
+          "candidate_action": {
+            "cardId": "musketeer",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 20.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "3064b1d6b0becf31facabe710f18d7f8b1a8edce1a2691241e894a571661d845",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 21.5
+          },
+          "heuristic_capture": true,
+          "tick": 1026
+        },
+        {
+          "actor": "blue",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 3.5,
+            "y": 18.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "30e00d1e7b59372782ebfa5698f33ff7f9b116fdef1044f0ad24827e234eef9a",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 3.5,
+            "y": 21.5
+          },
+          "heuristic_capture": false,
+          "tick": 4145
+        },
+        {
+          "actor": "blue",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 13.5,
+            "y": 12.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "36d0ded54150bfd5523ae3fe521d2b8f1830fc13f635c77e0b75deb31b7b457d",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 12.5,
+            "y": 10.5
+          },
+          "heuristic_capture": true,
+          "tick": 2532
+        },
+        {
+          "actor": "blue",
+          "candidate_action": {
+            "cardId": "knight",
+            "type": "PLAY_CARD",
+            "x": 3.5,
+            "y": 19.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "396afc9bffa51dcb79054b51fdc712a8af98c4868f34fb4eae8c9bc5786f7a0b",
+          "heuristic_action": {
+            "cardId": "archers",
+            "type": "PLAY_CARD",
+            "x": 3.5,
+            "y": 17.5
+          },
+          "heuristic_capture": false,
+          "tick": 344
+        },
+        {
+          "actor": "red",
+          "candidate_action": {
+            "cardId": "musketeer",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 17.5
+          },
+          "candidate_capture": false,
+          "category": "lethal",
+          "episode_id": "396afc9bffa51dcb79054b51fdc712a8af98c4868f34fb4eae8c9bc5786f7a0b",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 9.5,
+            "y": 29.5
+          },
+          "heuristic_capture": true,
+          "tick": 1569
+        },
+        {
+          "actor": "blue",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 17.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "42067fd0dc2fa43917d258362348bcb3d15afda54b79517f65098f7e875d66bc",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 13.5,
+            "y": 15.5
+          },
+          "heuristic_capture": true,
+          "tick": 2754
+        },
+        {
+          "actor": "blue",
+          "candidate_action": {
+            "cardId": "musketeer",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 15.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "4d0267dba67c117d1d0a1668b3e5e25687e5dc7611aa1a339641406a46cc9feb",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 13.5,
+            "y": 24.5
+          },
+          "heuristic_capture": true,
+          "tick": 2620
+        },
+        {
+          "actor": "red",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 13.5,
+            "y": 11.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "4d0267dba67c117d1d0a1668b3e5e25687e5dc7611aa1a339641406a46cc9feb",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 13.5,
+            "y": 13.5
+          },
+          "heuristic_capture": true,
+          "tick": 3305
+        },
+        {
+          "actor": "blue",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 3.5,
+            "y": 22.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "4f8466a39e74e19ba84d6475236861bbed81b76ba4ab0fbb78c059ce6a3c2e82",
+          "heuristic_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 3.5,
+            "y": 17.5
+          },
+          "heuristic_capture": false,
+          "tick": 201
+        },
+        {
+          "actor": "red",
+          "candidate_action": {
+            "cardId": "knight",
+            "type": "PLAY_CARD",
+            "x": 0.5,
+            "y": 0.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "52d14ec10d0ff60c79a7acddd424045853aee2e8bdfd554c7d34d18806c49c40",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 13.5,
+            "y": 17.5
+          },
+          "heuristic_capture": true,
+          "tick": 1591
+        },
+        {
+          "actor": "blue",
+          "candidate_action": {
+            "cardId": "goblins",
+            "type": "PLAY_CARD",
+            "x": 3.5,
+            "y": 19.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "5ba6a0ca663962cdd90fd659b89c98b7c1c0634dfbc44cc8bc75dc39f905d4a2",
+          "heuristic_action": {
+            "cardId": "giant",
+            "type": "PLAY_CARD",
+            "x": 3.5,
+            "y": 17.5
+          },
+          "heuristic_capture": false,
+          "tick": 345
+        },
+        {
+          "actor": "red",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 0.5,
+            "y": 0.5
+          },
+          "candidate_capture": false,
+          "category": "lethal",
+          "episode_id": "5ba6a0ca663962cdd90fd659b89c98b7c1c0634dfbc44cc8bc75dc39f905d4a2",
+          "heuristic_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 3.5,
+            "y": 14.5
+          },
+          "heuristic_capture": false,
+          "tick": 393
+        },
+        {
+          "actor": "blue",
+          "candidate_action": {
+            "cardId": "archers",
+            "type": "PLAY_CARD",
+            "x": 17.5,
+            "y": 31.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "657c547089a7bb3964f6abfdf5850122ab45475a061eb8618cc173edf32ac7f1",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 2.5,
+            "y": 14.5
+          },
+          "heuristic_capture": true,
+          "tick": 25
+        },
+        {
+          "actor": "blue",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 22.5
+          },
+          "candidate_capture": false,
+          "category": "lethal",
+          "episode_id": "6b70310b5d291ac11d2bde79a9d48d53fe784c0940ac863bcdb61ddc0633b9cb",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 6.5
+          },
+          "heuristic_capture": true,
+          "tick": 1737
+        },
+        {
+          "actor": "red",
+          "candidate_action": {
+            "cardId": "archers",
+            "type": "PLAY_CARD",
+            "x": 7.5,
+            "y": 6.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "6b70310b5d291ac11d2bde79a9d48d53fe784c0940ac863bcdb61ddc0633b9cb",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 7.5,
+            "y": 5.5
+          },
+          "heuristic_capture": true,
+          "tick": 2017
+        },
+        {
+          "actor": "red",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 13.5,
+            "y": 11.5
+          },
+          "candidate_capture": false,
+          "category": "lethal",
+          "episode_id": "6b70310b5d291ac11d2bde79a9d48d53fe784c0940ac863bcdb61ddc0633b9cb",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 12.5,
+            "y": 10.5
+          },
+          "heuristic_capture": false,
+          "tick": 2527
+        },
+        {
+          "actor": "red",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 0.5,
+            "y": 0.5
+          },
+          "candidate_capture": false,
+          "category": "lethal",
+          "episode_id": "6d83b30804f6c98a866dbf7e192adc9d5b074246b6be1933968406b8d6c8c66e",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 3.5,
+            "y": 25.5
+          },
+          "heuristic_capture": true,
+          "tick": 785
+        },
+        {
+          "actor": "blue",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 19.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "6d83b30804f6c98a866dbf7e192adc9d5b074246b6be1933968406b8d6c8c66e",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 21.5
+          },
+          "heuristic_capture": true,
+          "tick": 1340
+        },
+        {
+          "actor": "blue",
+          "candidate_action": {
+            "cardId": "archers",
+            "type": "PLAY_CARD",
+            "x": 2.5,
+            "y": 19.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "6ebc7d44cb739647eb197ee755e028fe7a3bfa0ef067d2ccbfaad72ca4779af5",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 2.5,
+            "y": 20.5
+          },
+          "heuristic_capture": true,
+          "tick": 1471
+        },
+        {
+          "actor": "red",
+          "candidate_action": {
+            "cardId": "musketeer",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 18.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "73378edb4e14711aa555ca5c356187f35ce02216d9f0e8c4955fb02f84e54134",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 13.5,
+            "y": 18.5
+          },
+          "heuristic_capture": true,
+          "tick": 2430
+        },
+        {
+          "actor": "red",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 13.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "740bab3e25908c3984ed088e77aadef09de973b97a52c5231c093ac63702a56a",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 15.5
+          },
+          "heuristic_capture": true,
+          "tick": 3389
+        },
+        {
+          "actor": "red",
+          "candidate_action": {
+            "cardId": "knight",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 17.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "77e96a41fe10127ea4314f2f7e7be3142b570ba07f442aaeee38290804baae8e",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 16.5
+          },
+          "heuristic_capture": true,
+          "tick": 698
+        },
+        {
+          "actor": "red",
+          "candidate_action": {
+            "cardId": "knight",
+            "type": "PLAY_CARD",
+            "x": 13.5,
+            "y": 17.5
+          },
+          "candidate_capture": false,
+          "category": "lethal",
+          "episode_id": "77e96a41fe10127ea4314f2f7e7be3142b570ba07f442aaeee38290804baae8e",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 11.5,
+            "y": 18.5
+          },
+          "heuristic_capture": false,
+          "tick": 3309
+        },
+        {
+          "actor": "red",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 3.5,
+            "y": 8.5
+          },
+          "candidate_capture": false,
+          "category": "lethal",
+          "episode_id": "7c401e1ce8182fb98c771e7d3523db127927ced08342fcce1845bb4b0a03c0b3",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 3.5,
+            "y": 25.5
+          },
+          "heuristic_capture": true,
+          "tick": 449
+        },
+        {
+          "actor": "blue",
+          "candidate_action": {
+            "cardId": "knight",
+            "type": "PLAY_CARD",
+            "x": 17.5,
+            "y": 31.5
+          },
+          "candidate_capture": false,
+          "category": "lethal",
+          "episode_id": "7c401e1ce8182fb98c771e7d3523db127927ced08342fcce1845bb4b0a03c0b3",
+          "heuristic_action": {
+            "cardId": "arrows",
+            "type": "PLAY_CARD",
+            "x": 3.5,
+            "y": 10.5
+          },
+          "heuristic_capture": false,
+          "tick": 639
+        },
+        {
+          "actor": "blue",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 13.5,
+            "y": 12.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "7d72e1bc00b3188b43cd5b1c102395a3ccb7b7b41a145e54997edb2d241b0b06",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 12.5,
+            "y": 12.5
+          },
+          "heuristic_capture": false,
+          "tick": 3467
+        },
+        {
+          "actor": "blue",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 17.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "887920a684bd087be3bed85c4d153c85fcf8fe58746bd992284998866c709eec",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 17.5
+          },
+          "heuristic_capture": true,
+          "tick": 2598
+        },
+        {
+          "actor": "blue",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 3.5,
+            "y": 22.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "911cfc9af50d8adb193a4b1287c7f4df7d28e0a75fe4a0c3b8d19a1c21833845",
+          "heuristic_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 3.5,
+            "y": 17.5
+          },
+          "heuristic_capture": false,
+          "tick": 201
+        },
+        {
+          "actor": "blue",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 17.5,
+            "y": 31.5
+          },
+          "candidate_capture": false,
+          "category": "lethal",
+          "episode_id": "911cfc9af50d8adb193a4b1287c7f4df7d28e0a75fe4a0c3b8d19a1c21833845",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 3.5,
+            "y": 6.5
+          },
+          "heuristic_capture": true,
+          "tick": 1253
+        },
+        {
+          "actor": "red",
+          "candidate_action": {
+            "cardId": "musketeer",
+            "type": "PLAY_CARD",
+            "x": 3.5,
+            "y": 12.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "928e9d9d6b8fd5d32217ee9d6aaf9c00c0adab6b00264d308273a7f5c624c0f8",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 3.5,
+            "y": 10.5
+          },
+          "heuristic_capture": true,
+          "tick": 201
+        },
+        {
+          "actor": "blue",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 17.5,
+            "y": 31.5
+          },
+          "candidate_capture": false,
+          "category": "lethal",
+          "episode_id": "93291acfabb50f16cbfc5d443444494bdaf01c28a750eac242dd909816f7c8e2",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 3.5,
+            "y": 6.5
+          },
+          "heuristic_capture": true,
+          "tick": 3925
+        },
+        {
+          "actor": "red",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 13.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "9c01e2056fc36aa38ab608eae09a12312fdd2da2f214f7023adb74ee1b08f734",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 12.5
+          },
+          "heuristic_capture": true,
+          "tick": 1070
+        },
+        {
+          "actor": "red",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 3.5,
+            "y": 13.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "a25dd57e245edc0d020cfa9fa97cd7ad3d80e050fe2891a215039ca0e2561803",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 3.5,
+            "y": 13.5
+          },
+          "heuristic_capture": true,
+          "tick": 3705
+        },
+        {
+          "actor": "red",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 12.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "a5faa767fceb47f9e2fa202c5c9e9f4307e35c5db5f21393190e676f9196a0c9",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 12.5
+          },
+          "heuristic_capture": true,
+          "tick": 680
+        },
+        {
+          "actor": "blue",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 17.5,
+            "y": 31.5
+          },
+          "candidate_capture": false,
+          "category": "lethal",
+          "episode_id": "a5faa767fceb47f9e2fa202c5c9e9f4307e35c5db5f21393190e676f9196a0c9",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 6.5
+          },
+          "heuristic_capture": true,
+          "tick": 2465
+        },
+        {
+          "actor": "blue",
+          "candidate_action": {
+            "cardId": "knight",
+            "type": "PLAY_CARD",
+            "x": 3.5,
+            "y": 23.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "a70379f0f1442a0e83919bc0e85e458d36b84ed7acd234d6c54d55352ae78ec9",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 8.5
+          },
+          "heuristic_capture": false,
+          "tick": 228
+        },
+        {
+          "actor": "red",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 13.5,
+            "y": 13.5
+          },
+          "candidate_capture": false,
+          "category": "lethal",
+          "episode_id": "a70379f0f1442a0e83919bc0e85e458d36b84ed7acd234d6c54d55352ae78ec9",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 12.5,
+            "y": 11.5
+          },
+          "heuristic_capture": false,
+          "tick": 2605
+        },
+        {
+          "actor": "red",
+          "candidate_action": {
+            "cardId": "archers",
+            "type": "PLAY_CARD",
+            "x": 0.5,
+            "y": 0.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "b18bc1fc6d621cf6b2ee59f404ab89a73f41d7b1ff8c0a68716972e0464f5340",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 13.5,
+            "y": 17.5
+          },
+          "heuristic_capture": true,
+          "tick": 2618
+        },
+        {
+          "actor": "blue",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 3.5,
+            "y": 22.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "b265f559d767cd53a6efb299c9e3da3dfdda8abf8a3c2dfbea3df054d1a33de8",
+          "heuristic_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 3.5,
+            "y": 17.5
+          },
+          "heuristic_capture": false,
+          "tick": 201
+        },
+        {
+          "actor": "red",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 10.5,
+            "y": 7.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "bad139c8c479e42afcacac333a8f0c750f451e8e8e7ebf9a83f25f46e4b4341c",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 15.5
+          },
+          "heuristic_capture": true,
+          "tick": 1793
+        },
+        {
+          "actor": "red",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 17.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "bb74e68eb539ea9529960a570391aac0f69c2bed17bf81d78358b6d1ec45b376",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 16.5
+          },
+          "heuristic_capture": true,
+          "tick": 2712
+        },
+        {
+          "actor": "blue",
+          "candidate_action": {
+            "cardId": "musketeer",
+            "type": "PLAY_CARD",
+            "x": 3.5,
+            "y": 17.5
+          },
+          "candidate_capture": false,
+          "category": "lethal",
+          "episode_id": "c091ae3ef5b90bac3e3a1277eec934e0649fb9213068bf663375a64152f75b81",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 3.5,
+            "y": 6.5
+          },
+          "heuristic_capture": true,
+          "tick": 1065
+        },
+        {
+          "actor": "red",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 13.5,
+            "y": 14.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "c1cfb0657cb4705c2d3db946ac271c6a720dd26e7f57bea7c23fc4462130fdb6",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 13.5,
+            "y": 16.5
+          },
+          "heuristic_capture": true,
+          "tick": 1862
+        },
+        {
+          "actor": "red",
+          "candidate_action": {
+            "cardId": "knight",
+            "type": "PLAY_CARD",
+            "x": 3.5,
+            "y": 14.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "ca80c7d7773b5db8ccd3d36f5e8ee68afedf5145aeb695032901e2cab0663e6d",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 3.5,
+            "y": 13.5
+          },
+          "heuristic_capture": true,
+          "tick": 1033
+        },
+        {
+          "actor": "blue",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 17.5,
+            "y": 31.5
+          },
+          "candidate_capture": false,
+          "category": "lethal",
+          "episode_id": "ca80c7d7773b5db8ccd3d36f5e8ee68afedf5145aeb695032901e2cab0663e6d",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 3.5,
+            "y": 6.5
+          },
+          "heuristic_capture": true,
+          "tick": 1289
+        },
+        {
+          "actor": "red",
+          "candidate_action": {
+            "cardId": "knight",
+            "type": "PLAY_CARD",
+            "x": 4.5,
+            "y": 14.5
+          },
+          "candidate_capture": false,
+          "category": "lethal",
+          "episode_id": "ca80c7d7773b5db8ccd3d36f5e8ee68afedf5145aeb695032901e2cab0663e6d",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 3.5,
+            "y": 25.5
+          },
+          "heuristic_capture": true,
+          "tick": 1721
+        },
+        {
+          "actor": "blue",
+          "candidate_action": {
+            "cardId": "goblins",
+            "type": "PLAY_CARD",
+            "x": 3.5,
+            "y": 21.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "cb0f70271bbded5b194035d7f1ddfff5fef30fb681640cca6077f550705b2666",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 2.5,
+            "y": 20.5
+          },
+          "heuristic_capture": true,
+          "tick": 532
+        },
+        {
+          "actor": "red",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 3.5,
+            "y": 13.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "d8993b7bcf1e91dcb7986de929c773969ce74936160d72aaa2b238ca03b16ca5",
+          "heuristic_action": {
+            "cardId": "musketeer",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 15.5
+          },
+          "heuristic_capture": false,
+          "tick": 505
+        },
+        {
+          "actor": "red",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 13.5,
+            "y": 14.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "dae7fde1c55eb6e62991c2cff39bd4dca3dd8f3efe98e0d38adfb26ead7a8eba",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 15.5
+          },
+          "heuristic_capture": true,
+          "tick": 2661
+        },
+        {
+          "actor": "blue",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 13.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "dae7fde1c55eb6e62991c2cff39bd4dca3dd8f3efe98e0d38adfb26ead7a8eba",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 13.5,
+            "y": 13.5
+          },
+          "heuristic_capture": true,
+          "tick": 3337
+        },
+        {
+          "actor": "red",
+          "candidate_action": {
+            "cardId": "musketeer",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 14.5
+          },
+          "candidate_capture": false,
+          "category": "lethal",
+          "episode_id": "ea71f66e4002d2cddcc505ef311d9af5af488460dc924a93857fece6f057aa16",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 25.5
+          },
+          "heuristic_capture": true,
+          "tick": 1737
+        },
+        {
+          "actor": "blue",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 12.5,
+            "y": 17.5
+          },
+          "candidate_capture": false,
+          "category": "lethal",
+          "episode_id": "ea71f66e4002d2cddcc505ef311d9af5af488460dc924a93857fece6f057aa16",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 9.5,
+            "y": 3.5
+          },
+          "heuristic_capture": true,
+          "tick": 2857
+        },
+        {
+          "actor": "red",
+          "candidate_action": {
+            "cardId": "knight",
+            "type": "PLAY_CARD",
+            "x": 4.5,
+            "y": 9.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "ec4679141e5b2175a2169f985af8baee3589fecc465a7ecfbc433854bef378cf",
+          "heuristic_action": {
+            "cardId": "giant",
+            "type": "PLAY_CARD",
+            "x": 3.5,
+            "y": 14.5
+          },
+          "heuristic_capture": false,
+          "tick": 510
+        },
+        {
+          "actor": "red",
+          "candidate_action": {
+            "cardId": "knight",
+            "type": "PLAY_CARD",
+            "x": 0.5,
+            "y": 0.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "ef9d59ecab265089773f6035a220ad01406eefbfc4ab432047214b8b49f484d1",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 2.5,
+            "y": 22.5
+          },
+          "heuristic_capture": true,
+          "tick": 877
+        },
+        {
+          "actor": "red",
+          "candidate_action": {
+            "cardId": "musketeer",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 8.5
+          },
+          "candidate_capture": false,
+          "category": "lethal",
+          "episode_id": "ef9d59ecab265089773f6035a220ad01406eefbfc4ab432047214b8b49f484d1",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 25.5
+          },
+          "heuristic_capture": true,
+          "tick": 1573
+        },
+        {
+          "actor": "blue",
+          "candidate_action": {
+            "cardId": "archers",
+            "type": "PLAY_CARD",
+            "x": 13.5,
+            "y": 20.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "f004672e5423b7fa32f40541bae18d8fce8c1f6bab063c3e3d6eec26b847b485",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 13.5,
+            "y": 20.5
+          },
+          "heuristic_capture": true,
+          "tick": 3471
+        },
+        {
+          "actor": "blue",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 17.5,
+            "y": 31.5
+          },
+          "candidate_capture": false,
+          "category": "lethal",
+          "episode_id": "f897984b47cdfbf4d9cd60e6ee149507620f9182424ee3eca3a0c02bd3b3f548",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 14.5,
+            "y": 6.5
+          },
+          "heuristic_capture": true,
+          "tick": 735
+        },
+        {
+          "actor": "red",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 12.5,
+            "y": 12.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "f897984b47cdfbf4d9cd60e6ee149507620f9182424ee3eca3a0c02bd3b3f548",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 12.5,
+            "y": 10.5
+          },
+          "heuristic_capture": true,
+          "tick": 2829
+        },
+        {
+          "actor": "blue",
+          "candidate_action": {
+            "cardId": "mini_pekka",
+            "type": "PLAY_CARD",
+            "x": 3.5,
+            "y": 18.5
+          },
+          "candidate_capture": false,
+          "category": "cluster",
+          "episode_id": "fc92934f1441b43e21dc20ec34ba2e7ca11506d52edf4ff9015be1063b67cdba",
+          "heuristic_action": {
+            "cardId": "fireball",
+            "type": "PLAY_CARD",
+            "x": 3.5,
+            "y": 20.5
+          },
+          "heuristic_capture": true,
+          "tick": 114
+        }
+      ],
+      "episodes": 70,
+      "minimums_met": false,
+      "reason": "held-out Fireball capture below minimum or missing class",
+      "source_manifest_hash": "a471f30858be1b0f453567304881b7449668c1a155a6b10964f83d14e11ec17f"
+    },
+    "match_skills": {
+      "blocking": false,
+      "groups": {
+        "champion": {
+          "deployments": {
+            "archers": 4432,
+            "arrows": 16,
+            "fireball": 0,
+            "giant": 1,
+            "goblins": 4487,
+            "knight": 4511,
+            "mini_pekka": 4465,
+            "musketeer": 4183
+          },
+          "deployments_per_game": {
+            "archers": 5.54,
+            "arrows": 0.02,
+            "fireball": 0,
+            "giant": 0.00125,
+            "goblins": 5.60875,
+            "knight": 5.63875,
+            "mini_pekka": 5.58125,
+            "musketeer": 5.22875
+          },
+          "fireball_opportunities": {
+            "cluster": {
+              "capture_rate_per_decision": 0,
+              "capture_rate_per_game": 0,
+              "captures": 0,
+              "decisions": 1027,
+              "fireball_choices": 0,
+              "games_with_capture": 0,
+              "games_with_opportunity": 419
+            },
+            "lethal": {
+              "capture_rate_per_decision": 0,
+              "capture_rate_per_game": 0,
+              "captures": 0,
+              "decisions": 427,
+              "fireball_choices": 0,
+              "games_with_capture": 0,
+              "games_with_opportunity": 166
+            }
+          },
+          "games": 800
+        },
+        "heuristic": {
+          "deployments": {
+            "archers": 1072,
+            "arrows": 2,
+            "fireball": 0,
+            "giant": 1,
+            "goblins": 1094,
+            "knight": 1095,
+            "mini_pekka": 1071,
+            "musketeer": 1010
+          },
+          "deployments_per_game": {
+            "archers": 5.36,
+            "arrows": 0.01,
+            "fireball": 0,
+            "giant": 0.005,
+            "goblins": 5.47,
+            "knight": 5.475,
+            "mini_pekka": 5.355,
+            "musketeer": 5.05
+          },
+          "fireball_opportunities": {
+            "cluster": {
+              "capture_rate_per_decision": 0,
+              "capture_rate_per_game": 0,
+              "captures": 0,
+              "decisions": 221,
+              "fireball_choices": 0,
+              "games_with_capture": 0,
+              "games_with_opportunity": 110
+            },
+            "lethal": {
+              "capture_rate_per_decision": 0,
+              "capture_rate_per_game": 0,
+              "captures": 0,
+              "decisions": 127,
+              "fireball_choices": 0,
+              "games_with_capture": 0,
+              "games_with_opportunity": 50
+            }
+          },
+          "games": 200
+        },
+        "safety": {
+          "deployments": {
+            "archers": 35380,
+            "arrows": 26,
+            "fireball": 0,
+            "giant": 50,
+            "goblins": 36490,
+            "knight": 36328,
+            "mini_pekka": 36478,
+            "musketeer": 32724
+          },
+          "deployments_per_game": {
+            "archers": 3.538,
+            "arrows": 0.0026,
+            "fireball": 0,
+            "giant": 0.005,
+            "goblins": 3.649,
+            "knight": 3.6328,
+            "mini_pekka": 3.6478,
+            "musketeer": 3.2724
+          },
+          "fireball_opportunities": {
+            "cluster": {
+              "capture_rate_per_decision": 0,
+              "capture_rate_per_game": 0,
+              "captures": 0,
+              "decisions": 5982,
+              "fireball_choices": 0,
+              "games_with_capture": 0,
+              "games_with_opportunity": 3034
+            },
+            "lethal": {
+              "capture_rate_per_decision": 0,
+              "capture_rate_per_game": 0,
+              "captures": 0,
+              "decisions": 3402,
+              "fireball_choices": 0,
+              "games_with_capture": 0,
+              "games_with_opportunity": 1754
+            }
+          },
+          "games": 10000
+        },
+        "weak:aggressive": {
+          "deployments": {
+            "archers": 417,
+            "arrows": 3,
+            "fireball": 0,
+            "giant": 1,
+            "goblins": 428,
+            "knight": 436,
+            "mini_pekka": 432,
+            "musketeer": 399
+          },
+          "deployments_per_game": {
+            "archers": 4.17,
+            "arrows": 0.03,
+            "fireball": 0,
+            "giant": 0.01,
+            "goblins": 4.28,
+            "knight": 4.36,
+            "mini_pekka": 4.32,
+            "musketeer": 3.99
+          },
+          "fireball_opportunities": {
+            "cluster": {
+              "capture_rate_per_decision": 0,
+              "capture_rate_per_game": 0,
+              "captures": 0,
+              "decisions": 93,
+              "fireball_choices": 0,
+              "games_with_capture": 0,
+              "games_with_opportunity": 43
+            },
+            "lethal": {
+              "capture_rate_per_decision": 0,
+              "capture_rate_per_game": 0,
+              "captures": 0,
+              "decisions": 38,
+              "fireball_choices": 0,
+              "games_with_capture": 0,
+              "games_with_opportunity": 21
+            }
+          },
+          "games": 100
+        },
+        "weak:defender": {
+          "deployments": {
+            "archers": 240,
+            "arrows": 0,
+            "fireball": 0,
+            "giant": 1,
+            "goblins": 265,
+            "knight": 252,
+            "mini_pekka": 261,
+            "musketeer": 227
+          },
+          "deployments_per_game": {
+            "archers": 2.4,
+            "arrows": 0,
+            "fireball": 0,
+            "giant": 0.01,
+            "goblins": 2.65,
+            "knight": 2.52,
+            "mini_pekka": 2.61,
+            "musketeer": 2.27
+          },
+          "fireball_opportunities": {
+            "cluster": {
+              "capture_rate_per_decision": 0,
+              "capture_rate_per_game": 0,
+              "captures": 0,
+              "decisions": 7,
+              "fireball_choices": 0,
+              "games_with_capture": 0,
+              "games_with_opportunity": 6
+            },
+            "lethal": {
+              "capture_rate_per_decision": 0,
+              "capture_rate_per_game": 0,
+              "captures": 0,
+              "decisions": 14,
+              "fireball_choices": 0,
+              "games_with_capture": 0,
+              "games_with_opportunity": 10
+            }
+          },
+          "games": 100
+        },
+        "weak:random": {
+          "deployments": {
+            "archers": 216,
+            "arrows": 0,
+            "fireball": 0,
+            "giant": 2,
+            "goblins": 229,
+            "knight": 232,
+            "mini_pekka": 232,
+            "musketeer": 198
+          },
+          "deployments_per_game": {
+            "archers": 2.16,
+            "arrows": 0,
+            "fireball": 0,
+            "giant": 0.02,
+            "goblins": 2.29,
+            "knight": 2.32,
+            "mini_pekka": 2.32,
+            "musketeer": 1.98
+          },
+          "fireball_opportunities": {
+            "cluster": {
+              "capture_rate_per_decision": 0,
+              "capture_rate_per_game": 0,
+              "captures": 0,
+              "decisions": 22,
+              "fireball_choices": 0,
+              "games_with_capture": 0,
+              "games_with_opportunity": 19
+            },
+            "lethal": {
+              "capture_rate_per_decision": 0,
+              "capture_rate_per_game": 0,
+              "captures": 0,
+              "decisions": 8,
+              "fireball_choices": 0,
+              "games_with_capture": 0,
+              "games_with_opportunity": 6
+            }
+          },
+          "games": 100
+        }
+      },
+      "opportunity_rule": "scripts/edger-fireball-opportunity.mjs at each candidate decision, lethal first",
+      "pooled_excluding_safety": {
+        "deployments": {
+          "archers": 6377,
+          "arrows": 21,
+          "fireball": 0,
+          "giant": 6,
+          "goblins": 6503,
+          "knight": 6526,
+          "mini_pekka": 6461,
+          "musketeer": 6017
+        },
+        "deployments_per_game": {
+          "archers": 4.905384615384615,
+          "arrows": 0.016153846153846154,
+          "fireball": 0,
+          "giant": 0.004615384615384616,
+          "goblins": 5.002307692307692,
+          "knight": 5.02,
+          "mini_pekka": 4.97,
+          "musketeer": 4.628461538461538
+        },
+        "fireball_opportunities": {
+          "cluster": {
+            "capture_rate_per_decision": 0,
+            "capture_rate_per_game": 0,
+            "captures": 0,
+            "decisions": 1370,
+            "fireball_choices": 0,
+            "games_with_capture": 0,
+            "games_with_opportunity": 597
+          },
+          "lethal": {
+            "capture_rate_per_decision": 0,
+            "capture_rate_per_game": 0,
+            "captures": 0,
+            "decisions": 614,
+            "fireball_choices": 0,
+            "games_with_capture": 0,
+            "games_with_opportunity": 253
+          }
+        },
+        "games": 1300
+      },
+      "schema_version": "edger_v2_match_skills_v1"
+    },
+    "tactical_scenarios": {
+      "blocking": false,
+      "candidate_aggregate": 0.236,
+      "categories": {
+        "defense": {
+          "candidate_score": 1,
+          "count": 10,
+          "heuristic_score": 1.15,
+          "minimum": 0.7,
+          "minimum_met": true
+        },
+        "elixir_punishment": {
+          "candidate_score": 0,
+          "count": 10,
+          "heuristic_score": 1,
+          "minimum": 0.55,
+          "minimum_met": false
+        },
+        "pocket_pressure": {
+          "candidate_score": 0.18,
+          "count": 10,
+          "heuristic_score": 0,
+          "minimum": 0.55,
+          "minimum_met": false
+        },
+        "spell_value": {
+          "candidate_score": 0,
+          "count": 10,
+          "heuristic_score": 0.96,
+          "minimum": 0.7,
+          "minimum_met": false
+        },
+        "tower_finishing": {
+          "candidate_score": 0,
+          "count": 10,
+          "heuristic_score": 1.15,
+          "minimum": 0.8,
+          "minimum_met": false
+        }
+      },
+      "feasibility_passed": true,
+      "heuristic_aggregate": 0.852,
+      "improved_over_heuristic": false,
+      "minimums_met": false,
+      "schema_version": "edger_tactical_scenarios_v2"
+    }
+  },
+  "results_checksum": "d1d3e3f3ed38f79a2031fb0e2de8d936af1f1fb9df6f243f04038fc125c0a2b0",
+  "scenarios": {
+    "candidate_aggregate": 0.236,
+    "categories": {
+      "defense": {
+        "candidate_score": 1,
+        "count": 10,
+        "heuristic_score": 1.15,
+        "minimum": 0.7,
+        "passed": true
+      },
+      "elixir_punishment": {
+        "candidate_score": 0,
+        "count": 10,
+        "heuristic_score": 1,
+        "minimum": 0.55,
+        "passed": false
+      },
+      "pocket_pressure": {
+        "candidate_score": 0.18,
+        "count": 10,
+        "heuristic_score": 0,
+        "minimum": 0.55,
+        "passed": false
+      },
+      "spell_value": {
+        "candidate_score": 0,
+        "count": 10,
+        "heuristic_score": 0.96,
+        "minimum": 0.7,
+        "passed": false
+      },
+      "tower_finishing": {
+        "candidate_score": 0,
+        "count": 10,
+        "heuristic_score": 1.15,
+        "minimum": 0.8,
+        "passed": false
+      }
+    },
+    "heuristic_aggregate": 0.852,
+    "improved_over_heuristic": false,
+    "passed": false,
+    "scenarios": [
+      {
+        "actor": "red",
+        "candidate_action": {
+          "cardId": "mini_pekka",
+          "type": "PLAY_CARD",
+          "x": 3.5,
+          "y": 14.5
+        },
+        "candidate_score": 1.25,
+        "category": "defense",
+        "heuristic_action": {
+          "cardId": "musketeer",
+          "type": "PLAY_CARD",
+          "x": 3.5,
+          "y": 14.5
+        },
+        "heuristic_score": 1.15,
+        "id": "defense_giant_lane",
+        "passed_minimum": true
+      },
+      {
+        "actor": "blue",
+        "candidate_action": {
+          "cardId": "mini_pekka",
+          "type": "PLAY_CARD",
+          "x": 14.5,
+          "y": 17.5
+        },
+        "candidate_score": 1.25,
+        "category": "defense",
+        "heuristic_action": {
+          "cardId": "musketeer",
+          "type": "PLAY_CARD",
+          "x": 14.5,
+          "y": 17.5
+        },
+        "heuristic_score": 1.15,
+        "id": "defense_giant_lane_blue",
+        "passed_minimum": true
+      },
+      {
+        "actor": "red",
+        "candidate_action": {
+          "cardId": "mini_pekka",
+          "type": "PLAY_CARD",
+          "x": 3.5,
+          "y": 14.5
+        },
+        "candidate_score": 1.25,
+        "category": "defense",
+        "heuristic_action": {
+          "cardId": "musketeer",
+          "type": "PLAY_CARD",
+          "x": 3.5,
+          "y": 14.5
+        },
+        "heuristic_score": 1.15,
+        "id": "defense_giant_lane_v1",
+        "passed_minimum": true
+      },
+      {
+        "actor": "blue",
+        "candidate_action": {
+          "cardId": "mini_pekka",
+          "type": "PLAY_CARD",
+          "x": 14.5,
+          "y": 17.5
+        },
+        "candidate_score": 1.25,
+        "category": "defense",
+        "heuristic_action": {
+          "cardId": "musketeer",
+          "type": "PLAY_CARD",
+          "x": 14.5,
+          "y": 17.5
+        },
+        "heuristic_score": 1.15,
+        "id": "defense_giant_lane_v1_blue",
+        "passed_minimum": true
+      },
+      {
+        "actor": "red",
+        "candidate_action": {
+          "cardId": "mini_pekka",
+          "type": "PLAY_CARD",
+          "x": 14.5,
+          "y": 14.5
+        },
+        "candidate_score": 1.25,
+        "category": "defense",
+        "heuristic_action": {
+          "cardId": "musketeer",
+          "type": "PLAY_CARD",
+          "x": 14.5,
+          "y": 14.5
+        },
+        "heuristic_score": 1.15,
+        "id": "defense_giant_lane_v2",
+        "passed_minimum": true
+      },
+      {
+        "actor": "blue",
+        "candidate_action": {
+          "cardId": "mini_pekka",
+          "type": "PLAY_CARD",
+          "x": 3.5,
+          "y": 17.5
+        },
+        "candidate_score": 1.25,
+        "category": "defense",
+        "heuristic_action": {
+          "cardId": "musketeer",
+          "type": "PLAY_CARD",
+          "x": 3.5,
+          "y": 17.5
+        },
+        "heuristic_score": 1.15,
+        "id": "defense_giant_lane_v2_blue",
+        "passed_minimum": true
+      },
+      {
+        "actor": "red",
+        "candidate_action": {
+          "cardId": "mini_pekka",
+          "type": "PLAY_CARD",
+          "x": 0.5,
+          "y": 0.5
+        },
+        "candidate_score": 0,
+        "category": "defense",
+        "heuristic_action": {
+          "cardId": "musketeer",
+          "type": "PLAY_CARD",
+          "x": 3.5,
+          "y": 14.5
+        },
+        "heuristic_score": 1.15,
+        "id": "defense_giant_lane_v3",
+        "passed_minimum": false
+      },
+      {
+        "actor": "blue",
+        "candidate_action": {
+          "cardId": "mini_pekka",
+          "type": "PLAY_CARD",
+          "x": 17.5,
+          "y": 31.5
+        },
+        "candidate_score": 0,
+        "category": "defense",
+        "heuristic_action": {
+          "cardId": "musketeer",
+          "type": "PLAY_CARD",
+          "x": 14.5,
+          "y": 17.5
+        },
+        "heuristic_score": 1.15,
+        "id": "defense_giant_lane_v3_blue",
+        "passed_minimum": false
+      },
+      {
+        "actor": "red",
+        "candidate_action": {
+          "cardId": "mini_pekka",
+          "type": "PLAY_CARD",
+          "x": 14.5,
+          "y": 14.5
+        },
+        "candidate_score": 1.25,
+        "category": "defense",
+        "heuristic_action": {
+          "cardId": "musketeer",
+          "type": "PLAY_CARD",
+          "x": 14.5,
+          "y": 14.5
+        },
+        "heuristic_score": 1.15,
+        "id": "defense_giant_lane_v4",
+        "passed_minimum": true
+      },
+      {
+        "actor": "blue",
+        "candidate_action": {
+          "cardId": "mini_pekka",
+          "type": "PLAY_CARD",
+          "x": 3.5,
+          "y": 17.5
+        },
+        "candidate_score": 1.25,
+        "category": "defense",
+        "heuristic_action": {
+          "cardId": "musketeer",
+          "type": "PLAY_CARD",
+          "x": 3.5,
+          "y": 17.5
+        },
+        "heuristic_score": 1.15,
+        "id": "defense_giant_lane_v4_blue",
+        "passed_minimum": true
+      },
+      {
+        "actor": "red",
+        "candidate_action": {
+          "cardId": "knight",
+          "type": "PLAY_CARD",
+          "x": 9.5,
+          "y": 12.5
+        },
+        "candidate_score": 0,
+        "category": "spell_value",
+        "heuristic_action": {
+          "cardId": "fireball",
+          "type": "PLAY_CARD",
+          "x": 8.5,
+          "y": 11.5
+        },
+        "heuristic_score": 0.96,
+        "id": "spell_cluster_value",
+        "passed_minimum": false
+      },
+      {
+        "actor": "blue",
+        "candidate_action": {
+          "cardId": "knight",
+          "type": "PLAY_CARD",
+          "x": 8.5,
+          "y": 19.5
+        },
+        "candidate_score": 0,
+        "category": "spell_value",
+        "heuristic_action": {
+          "cardId": "fireball",
+          "type": "PLAY_CARD",
+          "x": 8.5,
+          "y": 19.5
+        },
+        "heuristic_score": 0.96,
+        "id": "spell_cluster_value_blue",
+        "passed_minimum": false
+      },
+      {
+        "actor": "red",
+        "candidate_action": {
+          "cardId": "knight",
+          "type": "PLAY_CARD",
+          "x": 8.5,
+          "y": 12.5
+        },
+        "candidate_score": 0,
+        "category": "spell_value",
+        "heuristic_action": {
+          "cardId": "fireball",
+          "type": "PLAY_CARD",
+          "x": 8.5,
+          "y": 12.5
+        },
+        "heuristic_score": 0.96,
+        "id": "spell_cluster_value_v1",
+        "passed_minimum": false
+      },
+      {
+        "actor": "blue",
+        "candidate_action": {
+          "cardId": "knight",
+          "type": "PLAY_CARD",
+          "x": 9.5,
+          "y": 19.5
+        },
+        "candidate_score": 0,
+        "category": "spell_value",
+        "heuristic_action": {
+          "cardId": "fireball",
+          "type": "PLAY_CARD",
+          "x": 8.5,
+          "y": 19.5
+        },
+        "heuristic_score": 0.96,
+        "id": "spell_cluster_value_v1_blue",
+        "passed_minimum": false
+      },
+      {
+        "actor": "red",
+        "candidate_action": {
+          "cardId": "knight",
+          "type": "PLAY_CARD",
+          "x": 8.5,
+          "y": 11.5
+        },
+        "candidate_score": 0,
+        "category": "spell_value",
+        "heuristic_action": {
+          "cardId": "fireball",
+          "type": "PLAY_CARD",
+          "x": 8.5,
+          "y": 11.5
+        },
+        "heuristic_score": 0.96,
+        "id": "spell_cluster_value_v2",
+        "passed_minimum": false
+      },
+      {
+        "actor": "blue",
+        "candidate_action": {
+          "cardId": "knight",
+          "type": "PLAY_CARD",
+          "x": 9.5,
+          "y": 20.5
+        },
+        "candidate_score": 0,
+        "category": "spell_value",
+        "heuristic_action": {
+          "cardId": "fireball",
+          "type": "PLAY_CARD",
+          "x": 8.5,
+          "y": 20.5
+        },
+        "heuristic_score": 0.96,
+        "id": "spell_cluster_value_v2_blue",
+        "passed_minimum": false
+      },
+      {
+        "actor": "red",
+        "candidate_action": {
+          "cardId": "knight",
+          "type": "PLAY_CARD",
+          "x": 8.5,
+          "y": 12.5
+        },
+        "candidate_score": 0,
+        "category": "spell_value",
+        "heuristic_action": {
+          "cardId": "fireball",
+          "type": "PLAY_CARD",
+          "x": 8.5,
+          "y": 12.5
+        },
+        "heuristic_score": 0.96,
+        "id": "spell_cluster_value_v3",
+        "passed_minimum": false
+      },
+      {
+        "actor": "blue",
+        "candidate_action": {
+          "cardId": "knight",
+          "type": "PLAY_CARD",
+          "x": 9.5,
+          "y": 19.5
+        },
+        "candidate_score": 0,
+        "category": "spell_value",
+        "heuristic_action": {
+          "cardId": "fireball",
+          "type": "PLAY_CARD",
+          "x": 8.5,
+          "y": 19.5
+        },
+        "heuristic_score": 0.96,
+        "id": "spell_cluster_value_v3_blue",
+        "passed_minimum": false
+      },
+      {
+        "actor": "red",
+        "candidate_action": {
+          "cardId": "knight",
+          "type": "PLAY_CARD",
+          "x": 8.5,
+          "y": 11.5
+        },
+        "candidate_score": 0,
+        "category": "spell_value",
+        "heuristic_action": {
+          "cardId": "fireball",
+          "type": "PLAY_CARD",
+          "x": 8.5,
+          "y": 11.5
+        },
+        "heuristic_score": 0.96,
+        "id": "spell_cluster_value_v4",
+        "passed_minimum": false
+      },
+      {
+        "actor": "blue",
+        "candidate_action": {
+          "cardId": "knight",
+          "type": "PLAY_CARD",
+          "x": 9.5,
+          "y": 20.5
+        },
+        "candidate_score": 0,
+        "category": "spell_value",
+        "heuristic_action": {
+          "cardId": "fireball",
+          "type": "PLAY_CARD",
+          "x": 8.5,
+          "y": 20.5
+        },
+        "heuristic_score": 0.96,
+        "id": "spell_cluster_value_v4_blue",
+        "passed_minimum": false
+      },
+      {
+        "actor": "red",
+        "candidate_action": {
+          "cardId": "knight",
+          "type": "PLAY_CARD",
+          "x": 0.5,
+          "y": 0.5
+        },
+        "candidate_score": 0,
+        "category": "tower_finishing",
+        "heuristic_action": {
+          "cardId": "fireball",
+          "type": "PLAY_CARD",
+          "x": 3.5,
+          "y": 25.5
+        },
+        "heuristic_score": 1.15,
+        "id": "finish_low_tower",
+        "passed_minimum": false
+      },
+      {
+        "actor": "blue",
+        "candidate_action": {
+          "cardId": "knight",
+          "type": "PLAY_CARD",
+          "x": 17.5,
+          "y": 31.5
+        },
+        "candidate_score": 0,
+        "category": "tower_finishing",
+        "heuristic_action": {
+          "cardId": "fireball",
+          "type": "PLAY_CARD",
+          "x": 14.5,
+          "y": 6.5
+        },
+        "heuristic_score": 1.15,
+        "id": "finish_low_tower_blue",
+        "passed_minimum": false
+      },
+      {
+        "actor": "red",
+        "candidate_action": {
+          "cardId": "knight",
+          "type": "PLAY_CARD",
+          "x": 0.5,
+          "y": 0.5
+        },
+        "candidate_score": 0,
+        "category": "tower_finishing",
+        "heuristic_action": {
+          "cardId": "fireball",
+          "type": "PLAY_CARD",
+          "x": 3.5,
+          "y": 25.5
+        },
+        "heuristic_score": 1.15,
+        "id": "finish_low_tower_v1",
+        "passed_minimum": false
+      },
+      {
+        "actor": "blue",
+        "candidate_action": {
+          "cardId": "knight",
+          "type": "PLAY_CARD",
+          "x": 17.5,
+          "y": 31.5
+        },
+        "candidate_score": 0,
+        "category": "tower_finishing",
+        "heuristic_action": {
+          "cardId": "fireball",
+          "type": "PLAY_CARD",
+          "x": 14.5,
+          "y": 6.5
+        },
+        "heuristic_score": 1.15,
+        "id": "finish_low_tower_v1_blue",
+        "passed_minimum": false
+      },
+      {
+        "actor": "red",
+        "candidate_action": {
+          "cardId": "knight",
+          "type": "PLAY_CARD",
+          "x": 0.5,
+          "y": 0.5
+        },
+        "candidate_score": 0,
+        "category": "tower_finishing",
+        "heuristic_action": {
+          "cardId": "fireball",
+          "type": "PLAY_CARD",
+          "x": 14.5,
+          "y": 25.5
+        },
+        "heuristic_score": 1.15,
+        "id": "finish_low_tower_v2",
+        "passed_minimum": false
+      },
+      {
+        "actor": "blue",
+        "candidate_action": {
+          "cardId": "knight",
+          "type": "PLAY_CARD",
+          "x": 17.5,
+          "y": 31.5
+        },
+        "candidate_score": 0,
+        "category": "tower_finishing",
+        "heuristic_action": {
+          "cardId": "fireball",
+          "type": "PLAY_CARD",
+          "x": 3.5,
+          "y": 6.5
+        },
+        "heuristic_score": 1.15,
+        "id": "finish_low_tower_v2_blue",
+        "passed_minimum": false
+      },
+      {
+        "actor": "red",
+        "candidate_action": {
+          "cardId": "knight",
+          "type": "PLAY_CARD",
+          "x": 0.5,
+          "y": 0.5
+        },
+        "candidate_score": 0,
+        "category": "tower_finishing",
+        "heuristic_action": {
+          "cardId": "fireball",
+          "type": "PLAY_CARD",
+          "x": 3.5,
+          "y": 25.5
+        },
+        "heuristic_score": 1.15,
+        "id": "finish_low_tower_v3",
+        "passed_minimum": false
+      },
+      {
+        "actor": "blue",
+        "candidate_action": {
+          "cardId": "knight",
+          "type": "PLAY_CARD",
+          "x": 17.5,
+          "y": 31.5
+        },
+        "candidate_score": 0,
+        "category": "tower_finishing",
+        "heuristic_action": {
+          "cardId": "fireball",
+          "type": "PLAY_CARD",
+          "x": 14.5,
+          "y": 6.5
+        },
+        "heuristic_score": 1.15,
+        "id": "finish_low_tower_v3_blue",
+        "passed_minimum": false
+      },
+      {
+        "actor": "red",
+        "candidate_action": {
+          "cardId": "knight",
+          "type": "PLAY_CARD",
+          "x": 0.5,
+          "y": 0.5
+        },
+        "candidate_score": 0,
+        "category": "tower_finishing",
+        "heuristic_action": {
+          "cardId": "fireball",
+          "type": "PLAY_CARD",
+          "x": 14.5,
+          "y": 25.5
+        },
+        "heuristic_score": 1.15,
+        "id": "finish_low_tower_v4",
+        "passed_minimum": false
+      },
+      {
+        "actor": "blue",
+        "candidate_action": {
+          "cardId": "knight",
+          "type": "PLAY_CARD",
+          "x": 17.5,
+          "y": 31.5
+        },
+        "candidate_score": 0,
+        "category": "tower_finishing",
+        "heuristic_action": {
+          "cardId": "fireball",
+          "type": "PLAY_CARD",
+          "x": 3.5,
+          "y": 6.5
+        },
+        "heuristic_score": 1.15,
+        "id": "finish_low_tower_v4_blue",
+        "passed_minimum": false
+      },
+      {
+        "actor": "red",
+        "candidate_action": {
+          "cardId": "mini_pekka",
+          "type": "PLAY_CARD",
+          "x": 0.5,
+          "y": 0.5
+        },
+        "candidate_score": 0,
+        "category": "elixir_punishment",
+        "heuristic_action": {
+          "cardId": "giant",
+          "type": "PLAY_CARD",
+          "x": 3.5,
+          "y": 14.5
+        },
+        "heuristic_score": 1,
+        "id": "punish_low_elixir",
+        "passed_minimum": false
+      },
+      {
+        "actor": "blue",
+        "candidate_action": {
+          "cardId": "mini_pekka",
+          "type": "PLAY_CARD",
+          "x": 17.5,
+          "y": 31.5
+        },
+        "candidate_score": 0,
+        "category": "elixir_punishment",
+        "heuristic_action": {
+          "cardId": "giant",
+          "type": "PLAY_CARD",
+          "x": 14.5,
+          "y": 17.5
+        },
+        "heuristic_score": 1,
+        "id": "punish_low_elixir_blue",
+        "passed_minimum": false
+      },
+      {
+        "actor": "red",
+        "candidate_action": {
+          "cardId": "mini_pekka",
+          "type": "PLAY_CARD",
+          "x": 0.5,
+          "y": 0.5
+        },
+        "candidate_score": 0,
+        "category": "elixir_punishment",
+        "heuristic_action": {
+          "cardId": "giant",
+          "type": "PLAY_CARD",
+          "x": 3.5,
+          "y": 14.5
+        },
+        "heuristic_score": 1,
+        "id": "punish_low_elixir_v1",
+        "passed_minimum": false
+      },
+      {
+        "actor": "blue",
+        "candidate_action": {
+          "cardId": "mini_pekka",
+          "type": "PLAY_CARD",
+          "x": 17.5,
+          "y": 31.5
+        },
+        "candidate_score": 0,
+        "category": "elixir_punishment",
+        "heuristic_action": {
+          "cardId": "giant",
+          "type": "PLAY_CARD",
+          "x": 14.5,
+          "y": 17.5
+        },
+        "heuristic_score": 1,
+        "id": "punish_low_elixir_v1_blue",
+        "passed_minimum": false
+      },
+      {
+        "actor": "red",
+        "candidate_action": {
+          "cardId": "mini_pekka",
+          "type": "PLAY_CARD",
+          "x": 0.5,
+          "y": 0.5
+        },
+        "candidate_score": 0,
+        "category": "elixir_punishment",
+        "heuristic_action": {
+          "cardId": "giant",
+          "type": "PLAY_CARD",
+          "x": 14.5,
+          "y": 14.5
+        },
+        "heuristic_score": 1,
+        "id": "punish_low_elixir_v2",
+        "passed_minimum": false
+      },
+      {
+        "actor": "blue",
+        "candidate_action": {
+          "cardId": "mini_pekka",
+          "type": "PLAY_CARD",
+          "x": 17.5,
+          "y": 31.5
+        },
+        "candidate_score": 0,
+        "category": "elixir_punishment",
+        "heuristic_action": {
+          "cardId": "giant",
+          "type": "PLAY_CARD",
+          "x": 3.5,
+          "y": 17.5
+        },
+        "heuristic_score": 1,
+        "id": "punish_low_elixir_v2_blue",
+        "passed_minimum": false
+      },
+      {
+        "actor": "red",
+        "candidate_action": {
+          "cardId": "mini_pekka",
+          "type": "PLAY_CARD",
+          "x": 0.5,
+          "y": 0.5
+        },
+        "candidate_score": 0,
+        "category": "elixir_punishment",
+        "heuristic_action": {
+          "cardId": "giant",
+          "type": "PLAY_CARD",
+          "x": 3.5,
+          "y": 14.5
+        },
+        "heuristic_score": 1,
+        "id": "punish_low_elixir_v3",
+        "passed_minimum": false
+      },
+      {
+        "actor": "blue",
+        "candidate_action": {
+          "cardId": "mini_pekka",
+          "type": "PLAY_CARD",
+          "x": 17.5,
+          "y": 31.5
+        },
+        "candidate_score": 0,
+        "category": "elixir_punishment",
+        "heuristic_action": {
+          "cardId": "giant",
+          "type": "PLAY_CARD",
+          "x": 14.5,
+          "y": 17.5
+        },
+        "heuristic_score": 1,
+        "id": "punish_low_elixir_v3_blue",
+        "passed_minimum": false
+      },
+      {
+        "actor": "red",
+        "candidate_action": {
+          "cardId": "mini_pekka",
+          "type": "PLAY_CARD",
+          "x": 0.5,
+          "y": 0.5
+        },
+        "candidate_score": 0,
+        "category": "elixir_punishment",
+        "heuristic_action": {
+          "cardId": "giant",
+          "type": "PLAY_CARD",
+          "x": 14.5,
+          "y": 14.5
+        },
+        "heuristic_score": 1,
+        "id": "punish_low_elixir_v4",
+        "passed_minimum": false
+      },
+      {
+        "actor": "blue",
+        "candidate_action": {
+          "cardId": "mini_pekka",
+          "type": "PLAY_CARD",
+          "x": 17.5,
+          "y": 31.5
+        },
+        "candidate_score": 0,
+        "category": "elixir_punishment",
+        "heuristic_action": {
+          "cardId": "giant",
+          "type": "PLAY_CARD",
+          "x": 3.5,
+          "y": 17.5
+        },
+        "heuristic_score": 1,
+        "id": "punish_low_elixir_v4_blue",
+        "passed_minimum": false
+      },
+      {
+        "actor": "red",
+        "candidate_action": {
+          "cardId": "knight",
+          "type": "PLAY_CARD",
+          "x": 0.5,
+          "y": 0.5
+        },
+        "candidate_score": 0.3,
+        "category": "pocket_pressure",
+        "heuristic_action": {
+          "cardId": "giant",
+          "type": "PLAY_CARD",
+          "x": 14.5,
+          "y": 14.5
+        },
+        "heuristic_score": 0,
+        "id": "captured_left_pocket",
+        "passed_minimum": false
+      },
+      {
+        "actor": "blue",
+        "candidate_action": {
+          "cardId": "knight",
+          "type": "PLAY_CARD",
+          "x": 17.5,
+          "y": 31.5
+        },
+        "candidate_score": 0.3,
+        "category": "pocket_pressure",
+        "heuristic_action": {
+          "cardId": "giant",
+          "type": "PLAY_CARD",
+          "x": 3.5,
+          "y": 17.5
+        },
+        "heuristic_score": 0,
+        "id": "captured_left_pocket_blue",
+        "passed_minimum": false
+      },
+      {
+        "actor": "red",
+        "candidate_action": {
+          "cardId": "knight",
+          "type": "PLAY_CARD",
+          "x": 0.5,
+          "y": 0.5
+        },
+        "candidate_score": 0.3,
+        "category": "pocket_pressure",
+        "heuristic_action": {
+          "cardId": "giant",
+          "type": "PLAY_CARD",
+          "x": 14.5,
+          "y": 14.5
+        },
+        "heuristic_score": 0,
+        "id": "captured_left_pocket_v1",
+        "passed_minimum": false
+      },
+      {
+        "actor": "blue",
+        "candidate_action": {
+          "cardId": "knight",
+          "type": "PLAY_CARD",
+          "x": 17.5,
+          "y": 31.5
+        },
+        "candidate_score": 0.3,
+        "category": "pocket_pressure",
+        "heuristic_action": {
+          "cardId": "giant",
+          "type": "PLAY_CARD",
+          "x": 3.5,
+          "y": 17.5
+        },
+        "heuristic_score": 0,
+        "id": "captured_left_pocket_v1_blue",
+        "passed_minimum": false
+      },
+      {
+        "actor": "red",
+        "candidate_action": {
+          "cardId": "knight",
+          "type": "PLAY_CARD",
+          "x": 0.5,
+          "y": 0.5
+        },
+        "candidate_score": 0,
+        "category": "pocket_pressure",
+        "heuristic_action": {
+          "cardId": "giant",
+          "type": "PLAY_CARD",
+          "x": 3.5,
+          "y": 14.5
+        },
+        "heuristic_score": 0,
+        "id": "captured_left_pocket_v2",
+        "passed_minimum": false
+      },
+      {
+        "actor": "blue",
+        "candidate_action": {
+          "cardId": "knight",
+          "type": "PLAY_CARD",
+          "x": 17.5,
+          "y": 31.5
+        },
+        "candidate_score": 0,
+        "category": "pocket_pressure",
+        "heuristic_action": {
+          "cardId": "giant",
+          "type": "PLAY_CARD",
+          "x": 14.5,
+          "y": 17.5
+        },
+        "heuristic_score": 0,
+        "id": "captured_left_pocket_v2_blue",
+        "passed_minimum": false
+      },
+      {
+        "actor": "red",
+        "candidate_action": {
+          "cardId": "knight",
+          "type": "PLAY_CARD",
+          "x": 0.5,
+          "y": 0.5
+        },
+        "candidate_score": 0.3,
+        "category": "pocket_pressure",
+        "heuristic_action": {
+          "cardId": "giant",
+          "type": "PLAY_CARD",
+          "x": 14.5,
+          "y": 14.5
+        },
+        "heuristic_score": 0,
+        "id": "captured_left_pocket_v3",
+        "passed_minimum": false
+      },
+      {
+        "actor": "blue",
+        "candidate_action": {
+          "cardId": "knight",
+          "type": "PLAY_CARD",
+          "x": 17.5,
+          "y": 31.5
+        },
+        "candidate_score": 0.3,
+        "category": "pocket_pressure",
+        "heuristic_action": {
+          "cardId": "giant",
+          "type": "PLAY_CARD",
+          "x": 3.5,
+          "y": 17.5
+        },
+        "heuristic_score": 0,
+        "id": "captured_left_pocket_v3_blue",
+        "passed_minimum": false
+      },
+      {
+        "actor": "red",
+        "candidate_action": {
+          "cardId": "knight",
+          "type": "PLAY_CARD",
+          "x": 0.5,
+          "y": 0.5
+        },
+        "candidate_score": 0,
+        "category": "pocket_pressure",
+        "heuristic_action": {
+          "cardId": "giant",
+          "type": "PLAY_CARD",
+          "x": 3.5,
+          "y": 14.5
+        },
+        "heuristic_score": 0,
+        "id": "captured_left_pocket_v4",
+        "passed_minimum": false
+      },
+      {
+        "actor": "blue",
+        "candidate_action": {
+          "cardId": "knight",
+          "type": "PLAY_CARD",
+          "x": 17.5,
+          "y": 31.5
+        },
+        "candidate_score": 0,
+        "category": "pocket_pressure",
+        "heuristic_action": {
+          "cardId": "giant",
+          "type": "PLAY_CARD",
+          "x": 14.5,
+          "y": 17.5
+        },
+        "heuristic_score": 0,
+        "id": "captured_left_pocket_v4_blue",
+        "passed_minimum": false
+      }
+    ],
+    "schema_version": "edger_tactical_scenarios_v2"
+  },
+  "schema_version": "edger_v2_evaluation_report_v2",
+  "seed": 758784396,
+  "specs_checksum": "5f172a477c83bea188f6bfbcab5c0f14d2efac237d0d6b4cb126320d1c7a1d08",
+  "timing": {
+    "budget_ms": 5,
+    "max_ms": 3.0138,
+    "p95_ms": 1.4045,
+    "passed": true,
+    "samples": 100,
+    "warmup_samples": 10
+  },
+  "workers": 11,
+  "worst_anchor_score": null
 }

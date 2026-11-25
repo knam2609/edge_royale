@@ -15,7 +15,7 @@ There are no player-facing bot levels, unlock gates, model selectors, self-play 
 
 ## Runtime model
 
-The live browser opponent still imports the promoted `edger_policy_model_v1` artifact synchronously from `src/ai/generated/edgerPolicyCurrent.js`. The compact `edger_policy_model_v2` actor exists beside it in shadow mode and cannot become live until a full evaluation passes every safety, quality, replay, timing, test, and browser gate, and the owner separately approves promotion. The fixed 1%/10%/100% data-scaling proof gates the production league-training path, not promotion (owner, November 23, 2026; [candidate campaign review](docs/EDGER_CANDIDATE_CAMPAIGN.md)).
+On the review branch `edger-v2-promote-c3` (owner approval, November 25, 2026; unmerged), the live browser opponent imports the promoted `edger_policy_model_v2` artifact `edger_v2_candidate_20261123-L_c3` synchronously from `src/ai/generated/edgerPolicyCurrent.js`. It plays the full grid with its own learned decision delay. It passed every safety, quality, replay, timing, test, and browser gate of the full evaluation before the owner approved it ([result](docs/EDGER_CANDIDATE_CAMPAIGN.md#owner-promotion-decision-november-25-2026)). The retired v1 bootstrap (`edger_policy_model_v1`) is kept byte for byte in `artifacts/edger-training/retired/edger_policy_bootstrap_20260701/`. Any later v2 model must again pass a full evaluation and a separate owner approval. The fixed 1%/10%/100% data-scaling proof gates the production league-training path, not promotion (owner, November 23, 2026; [candidate campaign review](docs/EDGER_CANDIDATE_CAMPAIGN.md)).
 
 V2 uses:
 
@@ -55,7 +55,7 @@ Browser automation hooks:
 
 ## Cumulative Edger training
 
-Raw runs and caches remain ignored. Immutable promoted artifacts remain tracked.
+Raw runs and caches remain ignored. Immutable promoted and retired (`artifacts/edger-training/retired/`) artifacts remain tracked.
 
 ```bash
 # Collect paired full production matches. Production uses an externally configured S3 URI.
@@ -185,7 +185,7 @@ safety shutdown. Dispatch targets are `full-cache`, `offline`, then
 `full-evaluation`. `full-cache` rebuilds and durably stores only the recovered
 100% Parquet; later runners checksum-download that exact cache. Stage records
 and objects bind one Git SHA plus recovery-manifest checksum. Failed stages
-preserve evidence and never change live v1. Separate `promote` operation
+preserve evidence and never change live Edger. Separate `promote` operation
 requires matching full-evaluation marker and zero active runners, then opens an
 unmerged manual-review PR after revalidating candidate/report checksums.
 

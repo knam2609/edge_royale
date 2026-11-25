@@ -6,8 +6,11 @@ that could be promoted, even if it is strong enough. This review proposes how
 to produce one, for the owner's decision.
 
 **Status: run once on November 23, 2026; the selected run passed every gate
-of the full evaluation** ([result](#result-november-23-2026)). It awaits the
-owner's separate promotion decision; nothing was promoted. The owner approved
+of the full evaluation** ([result](#result-november-23-2026)). **On November
+25, 2026 the owner approved promoting it**
+([decision](#owner-promotion-decision-november-25-2026)). It was promoted on
+the local review branch `edger-v2-promote-c3`, which is not merged or pushed.
+Live v1 stays live on every other branch. The owner approved
 the design that day with one change (see
 [Owner decision](#owner-decision-november-23-2026)). The proposal below is kept as
 written at HEAD `6a522e8`; where it differs from the decision, the decision
@@ -114,6 +117,106 @@ scored 0.851 mean on the reused development seeds.
 The design expected the Fireball and Giant result (see Limits); the owner
 accepted it on November 20. Promotion stays a separate owner decision, with an
 unmerged review PR that keeps live v1 until accepted.
+
+## Owner promotion decision (November 25, 2026)
+
+The owner approved promoting c3. It was promoted on the local branch
+`edger-v2-promote-c3`, cut from `edger-v2-accumulated` at `d53fdf8`. The
+branch is unmerged and unpushed, so live v1 stays live everywhere else until
+the owner accepts the review. Publishing it needs the owner's separate
+push/PR approval.
+
+**Binding checked by hand first**, since `edger:promote:v2` does not. A
+read-only script ran in `CC/repo` (clean at `567ec98` before and after) and
+passed 16/16 checks:
+- `verify_candidate` re-derived c3's lineage from disk against the manifest
+  and selection;
+- the candidate's SHA-256 `26a56150…` equals `binding.json` and the report's
+  `candidate_artifact_checksum`;
+- `training.campaign` equals the manifest (`df3c0c8e…`), the selection
+  (`8842e628…`), run c3, the final checkpoint (`1c6ddeb0…`, iteration 23) and
+  the BC parent (`29cc6df5…`);
+- the export's weights equal c3's final `model.json` and the binding's
+  weights hash;
+- the label is `shadow_candidate_unreviewed`, the campaign is `20261123-L`
+  (not the smoke), and the report is a full profile at seed 758784396 with
+  promotion passed.
+
+`CC`'s `FROZEN.txt` and `SHA256SUMS` both verify. The export's
+`diagnostic_provenance.note` reads "dirty worktree by design". That is fixed
+text from the cadence script; the recorded diff and untracked-file hashes are
+those of empty input.
+
+**Promotion:** `npm run edger:promote:v2 -- --model CC/candidate/candidate.json
+--report CC/evaluation/evaluation-report.json` exited 0 and printed the
+reported measures. It wrote:
+- `artifacts/edger-training/promoted/edger_policy_current.json`, now
+  `26a56150…`;
+- `edger_policy_current_report.json` and the new
+  `edger_policy_current_reference.json`;
+- `src/ai/generated/edgerPolicyCurrent.js`.
+
+The browser, `selectBotDecision` and the evaluator's default champion now use
+c3. The live path enumerates c3's full grid and uses its learned delay.
+
+**Live v1 retired, kept byte for byte** in
+`artifacts/edger-training/retired/edger_policy_bootstrap_20260701/`: the
+artifact `895d5541…`, its report, and the generated module `69333cd5…`.
+Nothing in `src/` imports them.
+
+**Tests that assumed v1 was live** (8 of 295 failed after promotion):
+- Four `tests/bot-runtime.test.js` tests exercised the v1 ML path through
+  the live model. They now use the retired v1 artifact, and the live-model
+  test checks c3's live path on production matches.
+- The October runtime-cost study pins the live module as v1 (`LIVE_V1_PIN`),
+  and its v1-baseline driver refuses a v2 live module by design ("the live-v1
+  baseline is undefined"):
+  - its freeze tests now stage the retired module;
+  - the expectations test checks the v2 part and the refusal;
+  - the v1-baseline driver test now checks the refusal.
+
+  The study's v1-baseline measurement can no longer run from this tree; a
+  clone of `d53fdf8` still runs it.
+
+**Validation on the branch:**
+- `PYTHON=/usr/local/bin/python3 npm test -- --test-concurrency=2`: 297/297,
+  which adds a v1-model legality test and a warm-up check of the live model.
+- `npm run smoke:browser`: passed.
+- `npm run bot:bench -- --opponents random,aggressive,defender --rounds 30
+  --seed 20260630 --max-ticks 6040 --min-win-rate 0.6`: passed at 1.000
+  (30-0), 1.000 (30-0) and 1.000 (29-0, 1 draw).
+- The bot spec's benchmark with `edger_heuristic` added passed, at 0.867
+  (26-4) against the heuristic and 1.000 against the rest;
+  `npm run edger:canary -- --seed 20260718 --canary-ticks 80` passed.
+
+**The benchmark does not play c3 the way the browser does.** The gate runs
+Edger through `selectBotAction`: the legacy shortlist, a one-tick delay and
+the single-tower benchmark arena. The same harness, a scratch copy with Edger
+on `selectBotDecision` (its own delay and full grid), gave:
+- 26-0-4, 20-0-10 and 14-0-16 (every resolved game won);
+- 16,743 decisions and 3,684 plays: Musketeer 662, Goblins 751, Archers 734,
+  Mini PEKKA 731, Knight 749, Arrows 57, and no Giant or Fireball.
+
+On that arena the decoder's tile centres (for example 0.5, 1.5) are not in
+the arena's integer-coordinate full-grid list. The engine accepted every play
+in a 28-play check by spending the elixir. On the production arena every
+live-path play is in the model's list (11/11 in a check, and the new test).
+
+**Findings for follow-up (not changed in the promotion):**
+- Several internal callers still play the `edger` bot through
+  `selectBotAction` with the legacy shortlist and the one-tick delay:
+  - `src/ai/benchmark.js`;
+  - the cadence tooling's `edger` opponent (training plans and selection);
+  - `scripts/edger-collection-core.mjs`.
+
+  After promotion they all play c3 that way, not as it plays live. Future
+  comparisons and corpora that name `edger` therefore face a different
+  opponent than live v1 or live c3. To play live v1, pass its retired artifact
+  as a model opponent.
+- The weaknesses reported at evaluation are unchanged:
+  - no Fireball, almost no Giant or Arrows, tactical aggregate 0.236;
+  - runtime accepted only on this desktop Mac;
+  - no play against humans.
 
 ## Summary
 

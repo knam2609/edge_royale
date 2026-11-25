@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
 
 import {
   EDGER_BOT_ID,
@@ -18,6 +19,7 @@ import {
 } from "../src/ai/botRuntime.js";
 import { createEdgerV2BootstrapModel } from "../src/ai/v2/policy.js";
 import { EDGER_POLICY_MODEL } from "../src/ai/generated/edgerPolicyCurrent.js";
+import { EDGER_FULL_GRID_ACTION_SPACE_VERSION } from "../src/ai/v2/observation.js";
 import { validateEdgerPolicyModel } from "../src/ai/mlPolicy.js";
 import { FIREBALL_CONFIG } from "../src/sim/config.js";
 import { createEngine } from "../src/sim/engine.js";
@@ -26,6 +28,13 @@ import { createTower, createTroop } from "../src/sim/entities.js";
 import { createProductionEngine } from "../src/sim/productionMatch.js";
 import { createRng } from "../src/sim/random.js";
 import { getTowerStats } from "../src/sim/stats.js";
+
+// The v1 bootstrap that was live until the November 2026 v2 promotion, kept
+// byte for byte. The v1 ML path still serves any v1 model.
+const EDGER_V1_MODEL = JSON.parse(fs.readFileSync(
+  new URL("../artifacts/edger-training/retired/edger_policy_bootstrap_20260701/edger_policy.json", import.meta.url),
+  "utf8",
+));
 
 function makeCardState(redHand, blueHand = ["giant", "knight", "archers", "arrows"]) {
   return {
@@ -153,7 +162,7 @@ test("enumerateLegalCardActions unlocks only the captured 5x9 pocket and bridge 
   assert.ok(bridgeActions.every((action) => action.y === 15.5 || action.y === 16.5));
 });
 
-function cloneModel(model = EDGER_POLICY_MODEL) {
+function cloneModel(model = EDGER_V1_MODEL) {
   return JSON.parse(JSON.stringify(model));
 }
 
@@ -192,7 +201,47 @@ test("enumerateLegalCardActions orders live match actions by strictly increasing
   assert.ok(["giant", "knight", "arrows", "fireball"].every((cardId) => cardsSeen.has(cardId)));
 });
 
-test("Edger returns a legal action when one is available", () => {
+test("live Edger is the promoted full-grid v2 model and its live decision path stays legal", () => {
+  assert.equal(EDGER_POLICY_MODEL.schema_version, "edger_policy_model_v2");
+  assert.equal(EDGER_POLICY_MODEL.action_space_version, EDGER_FULL_GRID_ACTION_SPACE_VERSION);
+  assert.deepEqual(
+    JSON.parse(fs.readFileSync(new URL("../artifacts/edger-training/promoted/edger_policy_current.json", import.meta.url), "utf8")),
+    EDGER_POLICY_MODEL,
+  );
+  // As in the browser: a production match, the legacy shortlist passed in, and
+  // the live path re-enumerating the model's full grid and choosing from it.
+  const engine = createProductionEngine({ seed: 314 });
+  const heuristicRng = createRng(314);
+  const next = { red: 1, blue: 1 };
+  let plays = 0;
+  for (let tick = 1; tick <= 1800 && !engine.getMatchResult(); tick += 1) {
+    const actions = [];
+    for (const actor of ["red", "blue"]) {
+      if (tick < next[actor]) {
+        continue;
+      }
+      const legalActions = enumerateLegalCardActions({ engine, actor });
+      const botId = actor === "red" ? EDGER_BOT_ID : HEURISTIC_BOT_ID;
+      const decision = selectBotDecision({ botId, engine, actor, legalActions, rng: heuristicRng });
+      assert.ok(Number.isInteger(decision.delayTicks) && decision.delayTicks >= 1);
+      next[actor] = tick + decision.delayTicks;
+      if (decision.action?.type !== "PLAY_CARD") {
+        continue;
+      }
+      if (actor === "red") {
+        const modelLegal = enumerateLegalCardActions({ engine, actor, model: EDGER_POLICY_MODEL });
+        assert.ok(modelLegal.some((candidate) => JSON.stringify(candidate) === JSON.stringify(decision.action)));
+        plays += 1;
+      }
+      const { cardId, x, y } = decision.action;
+      actions.push({ tick, type: "PLAY_CARD", actor, cardId, x, y });
+    }
+    engine.step(actions);
+  }
+  assert.ok(plays > 0);
+});
+
+test("a v1 Edger model returns one of the given legal actions", () => {
   const engine = makeEngine(["giant", "knight", "arrows", "fireball"]);
   const legalActions = enumerateLegalCardActions({ engine, actor: "red" });
 
@@ -201,6 +250,7 @@ test("Edger returns a legal action when one is available", () => {
     engine,
     actor: "red",
     legalActions,
+    edgerModel: EDGER_V1_MODEL,
   });
 
   if (action.type === "PASS") {
@@ -281,8 +331,9 @@ test("v2 Edger runtime honors the model-selected decision delay", () => {
 });
 
 for (const [label, makeModel] of [
-  ["v1", () => JSON.parse(JSON.stringify(EDGER_POLICY_MODEL))],
+  ["v1", () => JSON.parse(JSON.stringify(EDGER_V1_MODEL))],
   ["v2", () => createEdgerV2BootstrapModel()],
+  ["live", () => JSON.parse(JSON.stringify(EDGER_POLICY_MODEL))],
 ]) {
   test(`warmUpBotDecision leaves ${label} Edger decisions, state and random stream unchanged`, () => {
     // Fresh model objects start with cold model caches, as on page load.

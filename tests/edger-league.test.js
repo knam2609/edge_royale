@@ -17,7 +17,7 @@ import {
   makeMatchSpecs,
 } from "../scripts/edger-league-core.mjs";
 
-const LIVE_V1_MODEL = path.resolve("artifacts/edger-training/promoted/edger_policy_current.json");
+const LIVE_CHAMPION_MODEL = path.resolve("artifacts/edger-training/promoted/edger_policy_current.json");
 
 test("league model opponents share the edger stratum and bots keep their id", () => {
   assert.equal(LEAGUE_MODEL_OPPONENT_STRATUM, EDGER_BOT_ID);
@@ -78,12 +78,12 @@ test("league rollouts record the edger stratum for model opponents and keep thei
   const mainModel = createEdgerV2BootstrapModel();
   const mainModelPath = path.join(root, "main.json");
   fs.writeFileSync(mainModelPath, JSON.stringify(mainModel));
-  const liveModel = JSON.parse(fs.readFileSync(LIVE_V1_MODEL, "utf8"));
+  const liveModel = JSON.parse(fs.readFileSync(LIVE_CHAMPION_MODEL, "utf8"));
   const modelOpponent = {
     kind: "model",
     policy_id: liveModel.model_id,
     checkpoint_id: "live-checkpoint",
-    model_path: LIVE_V1_MODEL,
+    model_path: LIVE_CHAMPION_MODEL,
     league_rating: null,
     score: 0.5,
   };
