@@ -1,6 +1,6 @@
 # History Rewrite (November 26, 2026)
 
-On November 26, 2026, every branch was rewritten with `git filter-repo --replace-text` to remove private details that had been committed to this public repository. Only the redacted strings changed: file layout, commit messages, authors and dates are otherwise identical, and each rewritten branch has the same number of commits.
+On November 26, 2026, every branch was rewritten with `git filter-repo --replace-text` to remove private details that had been committed to this public repository. Only the redacted strings changed in file contents, and each rewritten branch has the same number of commits. Authors and dates are unchanged. Two side effects of `git filter-repo`: it dropped the GPG signatures GitHub had added to its web-merge commits (so they no longer show as Verified), and it rewrote abbreviated SHAs inside 8 commit messages to point at the new commits.
 
 ## What was replaced
 
