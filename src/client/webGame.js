@@ -13,6 +13,7 @@ import {
   enumerateLegalCardActions,
   getBotConfig,
   selectBotDecision,
+  warmUpBotDecision,
 } from "../ai/botRuntime.js";
 import {
   createDefaultProfile,
@@ -2955,6 +2956,9 @@ window.render_game_to_text = () => {
       })),
   });
 };
+
+// Pay the bot's one-time first-decision cost at load, not on the first live tick.
+warmUpBotDecision({ botId: appState.opponentBotId, engine: createProductionEngine() });
 
 hydrateAppState();
 resetGame();

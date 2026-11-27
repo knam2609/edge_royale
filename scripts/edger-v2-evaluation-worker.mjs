@@ -20,6 +20,11 @@ import {
   createProductionEngine,
 } from "../src/sim/productionMatch.js";
 import { runReplayToCompletion } from "./edger-corpus-core.mjs";
+import {
+  createMatchSkillTracker,
+  recordSkillDecision,
+  recordSkillDeployment,
+} from "./edger-match-skills.mjs";
 
 const modelCache = new Map();
 
@@ -49,16 +54,17 @@ function maybePolicyAction({
   policy,
   policyController,
   countIllegal = false,
+  skillTracker = null,
 }) {
   const tick = engine.state.tick + 1;
   if (tick < policyController.next_decision_tick) {
     return { action: null, illegal: 0 };
   }
-  const legalActions = enumerateLegalCardActions({ engine, actor });
+  const model = policy.kind === "model" ? loadModel(policy.model_path) : undefined;
+  const legalActions = enumerateLegalCardActions({ engine, actor, model });
   let selected;
   let delayTicks;
-  if (policy.kind === "model") {
-    const model = loadModel(policy.model_path);
+  if (model) {
     if (model.schema_version === EDGER_V2_POLICY_MODEL_SCHEMA_VERSION) {
       const decision = selectEdgerV2PolicyDecision({
         model,
@@ -91,15 +97,20 @@ function maybePolicyAction({
     });
   }
   policyController.next_decision_tick = tick + delayTicks;
-  if (selected?.type !== "PLAY_CARD") {
-    return { action: null, illegal: 0 };
-  }
-  const legal = legalActions.some(
+  const legal = selected?.type === "PLAY_CARD" && legalActions.some(
     (candidate) =>
       candidate.cardId === selected.cardId &&
       candidate.x === selected.x &&
       candidate.y === selected.y,
   );
+  if (skillTracker) {
+    // Read-only: every decision, PASS included, before its action applies.
+    recordSkillDecision(skillTracker, { engine, actor, legalActions, selected, legal });
+  }
+  if (selected?.type !== "PLAY_CARD") {
+    return { action: null, illegal: 0 };
+  }
+  if (skillTracker && legal) recordSkillDeployment(skillTracker, selected.cardId);
   const action = {
     tick,
     type: "PLAY_CARD",
@@ -147,6 +158,7 @@ function runSpec(spec) {
   };
   const actionStream = [];
   let illegalActions = 0;
+  const skillTracker = workerData.trackSkills ? createMatchSkillTracker() : null;
 
   while (engine.state.tick < 6040 && !engine.getMatchResult()) {
     const candidateDecision = maybePolicyAction({
@@ -155,6 +167,7 @@ function runSpec(spec) {
       policy: candidatePolicy,
       policyController: candidate,
       countIllegal: true,
+      skillTracker,
     });
     const opponentDecision = maybePolicyAction({
       engine,
@@ -209,6 +222,7 @@ function runSpec(spec) {
     illegal_actions: illegalActions,
     replay_checked: Boolean(spec.verify_replay),
     replay_passed: replayPassed,
+    ...(skillTracker ? { skill: skillTracker } : {}),
   };
 }
 

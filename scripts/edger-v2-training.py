@@ -11,12 +11,12 @@ import math
 import os
 import platform
 import random
+import struct
 import subprocess
 import sys
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, Iterable, Iterator
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -29,7 +29,9 @@ from torch.utils.data import DataLoader, Dataset
 MODEL_SCHEMA = "edger_policy_model_v2"
 CHECKPOINT_SCHEMA = "edger_v2_checkpoint_v1"
 ACTION_SCHEMA = "edger_autoregressive_action_v2"
-OBSERVATION_SCHEMA = "edger_oracle_observation_v2"
+FULL_GRID_ACTION_SCHEMA = "edger_autoregressive_full_grid_v1"
+ACTION_SCHEMAS = (ACTION_SCHEMA, FULL_GRID_ACTION_SCHEMA)
+OBSERVATION_SCHEMA = "edger_oracle_observation_v4"
 ARCHITECTURE = {
     "type": "autoregressive_masked_conv_actor",
     "board_channels": 16,
@@ -47,7 +49,7 @@ ARCHITECTURE = {
 BOARD_HEIGHT = 32
 BOARD_WIDTH = 18
 BOARD_INPUT_CHANNELS = 24
-GLOBAL_FEATURES = 96
+GLOBAL_FEATURES = 104
 CARD_ACTIONS = 9
 PLACEMENTS = BOARD_HEIGHT * BOARD_WIDTH
 DELAY_BINS = 200
@@ -56,7 +58,30 @@ KL_LIMIT = 0.05
 ADVANTAGE_TEMPERATURE = 0.25
 ADVANTAGE_WEIGHT_MIN = 0.1
 ADVANTAGE_WEIGHT_MAX = 20.0
+# Fireball opportunity states (tactical review proposal 3), read from the v4
+# spell-opportunity globals and the legal card mask. Lethal: Fireball is legal
+# and some enemy tower is at or below its tower damage. Cluster: otherwise, one
+# cast could hit at least three enemy troops (the engine's impact rule).
+FIREBALL_CARD_INDEX = 8
+FIREBALL_LETHAL_GLOBALS = (96, 97, 98)
+FIREBALL_TROOP_HITS_GLOBAL = 102
+SPELL_TROOP_HITS_DENOMINATOR = 8
+CLUSTER_MINIMUM_TROOP_HITS = 3
+OPPORTUNITY_NONE = 0
+OPPORTUNITY_CLASSES = {"lethal": 1, "cluster": 2}
+# BC does not imitate these teachers' card choices in opportunity states:
+# aggressive and defender never cast spells, and random casts at random.
+CARD_TARGET_FILTERED_TEACHERS = frozenset({"aggressive", "defender", "random"})
+CARD_TEACHER_FILTERS = ("none", "opportunity")
 PARQUET_ROW_GROUP_SIZE = 256
+# The absolute floor of the parity contract. The gate itself is in
+# scripts/edger-v2-evaluation-core.mjs and also allows 4 float32 ULP above
+# magnitude 32; this constant only feeds the advisory warning below.
+PARITY_ABSOLUTE_TOLERANCE = 1e-5
+# A two-roundoff estimate for a diagnostic warning, not a parity guarantee or
+# an impossibility threshold. Only measured PyTorch/JS parity can establish
+# whether a candidate passes; accumulation/cancellation can exceed this estimate.
+LOGIT_SCALE_WARNING_MAGNITUDE = PARITY_ABSOLUTE_TOLERANCE / (2 * 2 ** -24)
 DECISION_PARQUET_SCHEMA_VERSION = "edger_decision_parquet_v2"
 SCALING_REPORT_SCHEMA = "edger_data_scaling_report_v2"
 
@@ -168,13 +193,28 @@ def seed_everything(seed: int) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
-def round_float(value: float) -> float:
-    return round(float(value), 8)
+def float32_json(value: float) -> float:
+    """Shortest decimal that reloads as the identical float32 weight.
+
+    ``round(value, 8)`` keeps eight decimal places, not eight significant
+    digits, so weights below about 1e-2 lost trained precision and the exported
+    actor stopped being the trained model. Nine significant digits always
+    round-trip a float32; this returns the shortest form that still does.
+    """
+    exact = struct.unpack("<f", struct.pack("<f", float(value)))[0]
+    for digits in range(1, 10):
+        candidate = float(f"{exact:.{digits}g}")
+        if struct.unpack("<f", struct.pack("<f", candidate))[0] == exact:
+            return candidate
+    return exact
 
 
 class EdgerV2Policy(nn.Module):
-    def __init__(self, opponent_strata: int = 1) -> None:
+    def __init__(self, opponent_strata: int = 1, action_space_version: str = ACTION_SCHEMA) -> None:
         super().__init__()
+        if action_space_version not in ACTION_SCHEMAS:
+            raise ValueError(f"unsupported action space {action_space_version}")
+        self.action_space_version = action_space_version
         channels = ARCHITECTURE["board_channels"]
         self.conv1 = nn.Conv2d(BOARD_INPUT_CHANNELS, channels, 3, padding=1)
         self.conv2 = nn.Conv2d(channels, channels, 1)
@@ -209,6 +249,16 @@ class EdgerV2Policy(nn.Module):
             1,
         )
 
+        self.placement_coordinates = None
+        if action_space_version == FULL_GRID_ACTION_SCHEMA:
+            self.placement_coordinates = nn.Parameter(torch.zeros(ARCHITECTURE["placement_hidden"], 2))
+            coordinates = [
+                (2 * row / (BOARD_HEIGHT - 1) - 1, 2 * column / (BOARD_WIDTH - 1) - 1)
+                for row in range(BOARD_HEIGHT)
+                for column in range(BOARD_WIDTH)
+            ]
+            self.register_buffer("tile_coordinates", torch.tensor(coordinates), persistent=False)
+
     def encode(self, board: Tensor, global_features: Tensor) -> tuple[Tensor, Tensor]:
         spatial = board.permute(0, 3, 1, 2)
         spatial = F.relu(self.conv1(spatial))
@@ -235,9 +285,12 @@ class EdgerV2Policy(nn.Module):
             PLACEMENTS,
             ARCHITECTURE["board_channels"],
         )
-        placement_hidden = F.relu(
-            spatial_cells + placement_context[:, None, :] + card_embedding[:, None, :]
-        )
+        placement_features = spatial_cells + placement_context[:, None, :] + card_embedding[:, None, :]
+        if self.placement_coordinates is not None:
+            placement_features = placement_features + F.linear(
+                self.tile_coordinates, self.placement_coordinates
+            )[None, :, :]
+        placement_hidden = F.relu(placement_features)
         placement_logits = self.placement_scorer(placement_hidden).squeeze(-1)
         batch_indices = torch.arange(board.shape[0], device=board.device)
         selected_spatial = spatial_cells[batch_indices, selected_placement]
@@ -280,6 +333,7 @@ class Batch:
     policy_rating: Tensor
     vtrace_target: Tensor
     vtrace_advantage: Tensor
+    card_loss_weight: Tensor
 
     def to(self, device: torch.device) -> "Batch":
         return Batch(
@@ -341,6 +395,9 @@ class DecisionDataset(Dataset[dict[str, Any]]):
             "vtrace_advantage": torch.tensor(
                 row.get("vtrace_advantage", 0.0), dtype=torch.float32
             ),
+            "card_loss_weight": torch.tensor(
+                row.get("card_loss_weight", 1.0), dtype=torch.float32
+            ),
         }
 
 
@@ -361,6 +418,16 @@ def parquet_metadata(path: str | Path) -> dict[str, str]:
     }
 
 
+def require_cache_observation_schema(metadata: dict[str, str], path: str | Path) -> None:
+    # Episodes keep their recording cohort; only the cache fixes the observation.
+    found = metadata.get("observation_schema_version")
+    if found != OBSERVATION_SCHEMA:
+        raise ValueError(
+            f"decision cache {path} has observation schema {found}, not "
+            f"{OBSERVATION_SCHEMA}; re-derive it from the episodes"
+        )
+
+
 def iter_parquet_rows(
     path: str | Path,
     *,
@@ -368,6 +435,7 @@ def iter_parquet_rows(
     shuffle: bool = False,
     seed: int = 1,
     predicate: Callable[[dict[str, Any]], bool] | None = None,
+    expand: Callable[[dict[str, Any]], list[dict[str, Any]]] | None = None,
 ) -> Iterator[dict[str, Any]]:
     parquet = pq.ParquetFile(path)
     row_groups = list(range(parquet.num_row_groups))
@@ -376,6 +444,9 @@ def iter_parquet_rows(
     for row_group in row_groups:
         # Materialization is deliberately bounded to one deterministic 256-row group.
         rows = parquet.read_row_group(row_group).to_pylist()
+        if expand is not None:
+            # Before the shuffle, so repeated rows spread across the group.
+            rows = [item for row in rows for item in expand(row)]
         if shuffle:
             random.Random(seed ^ ((row_group + 1) * 0x9E3779B1)).shuffle(rows)
         for row in rows:
@@ -406,6 +477,34 @@ def make_parquet_stratum_vocab(path: str | Path) -> dict[str, int]:
     return {value: index for index, value in enumerate(sorted(values or {"unknown"}))}
 
 
+def parquet_stratum_values(path: str | Path) -> set[str | None]:
+    parquet = pq.ParquetFile(path)
+    values: set[str | None] = set()
+    for row_group in range(parquet.num_row_groups):
+        column = parquet.read_row_group(row_group, columns=["opponent_stratum"]).column(0)
+        values.update(column.to_pylist())
+    return values
+
+
+def require_strata_in_vocabulary(path: str | Path, vocab: dict[str, int]) -> None:
+    """Refuse a cache whose critic strata the parent cannot look up.
+
+    The row lookup falls back to index 0 for an unknown stratum. League
+    rollouts once recorded model ids there, so their rows silently used the
+    parent's first stratum; a learner fed from a parent vocabulary rejects
+    such caches instead.
+    """
+    missing = sorted(
+        (value for value in parquet_stratum_values(path) if value not in vocab),
+        key=lambda value: (value is None, str(value)),
+    )
+    if missing:
+        raise ValueError(
+            f"cache {path} has opponent strata missing from the parent vocabulary "
+            f"{sorted(vocab)}: {missing}"
+        )
+
+
 def loader_for(
     rows: list[dict[str, Any]],
     vocab: dict[str, int],
@@ -434,15 +533,27 @@ def batches_for_parquet(
     shuffle: bool,
     seed: int,
     predicate: Callable[[dict[str, Any]], bool] | None = None,
+    expand: Callable[[dict[str, Any]], list[dict[str, Any]]] | None = None,
+) -> Iterator[Batch]:
+    yield from batches_from_rows(
+        iter_parquet_rows(
+            path,
+            split=split,
+            shuffle=shuffle,
+            seed=seed,
+            predicate=predicate,
+            expand=expand,
+        ),
+        vocab,
+        batch_size,
+    )
+
+
+def batches_from_rows(
+    rows: Iterable[dict[str, Any]], vocab: dict[str, int], batch_size: int
 ) -> Iterator[Batch]:
     pending: list[dict[str, Any]] = []
-    for row in iter_parquet_rows(
-        path,
-        split=split,
-        shuffle=shuffle,
-        seed=seed,
-        predicate=predicate,
-    ):
+    for row in rows:
         pending.append(row)
         if len(pending) == batch_size:
             dataset = DecisionDataset(pending, vocab)
@@ -484,6 +595,14 @@ def actor_losses(logits: dict[str, Tensor], batch: Batch) -> tuple[Tensor, dict[
     }
 
 
+def bc_joint_loss(logits: dict[str, Tensor], batch: Batch, weighted_card: bool) -> Tensor:
+    joint, parts = actor_losses(logits, batch)
+    if not weighted_card:
+        # The unchanged graph, so the default recipe stays bit-identical.
+        return joint
+    return parts["card"] * batch.card_loss_weight + parts["placement"] + parts["delay"]
+
+
 def forward_batch(model: EdgerV2Policy, batch: Batch) -> dict[str, Tensor]:
     return model.actor_logits(
         batch.board,
@@ -501,6 +620,16 @@ def evaluate_loss_parquet(
     batch_size: int,
     device: torch.device,
 ) -> dict[str, float | None]:
+    return evaluate_loss_batches(
+        model,
+        batches_for_parquet(path, vocab, batch_size, split=split, shuffle=False, seed=1),
+        device,
+    )
+
+
+def evaluate_loss_batches(
+    model: EdgerV2Policy, batches: Iterable[Batch], device: torch.device
+) -> dict[str, float | None]:
     model.eval()
     totals = {
         "joint": 0.0,
@@ -510,17 +639,19 @@ def evaluate_loss_parquet(
         "value": 0.0,
     }
     count = 0
+    maximum_logit = 0.0
     with torch.no_grad():
-        for batch in batches_for_parquet(
-            path,
-            vocab,
-            batch_size,
-            split=split,
-            shuffle=False,
-            seed=1,
-        ):
+        for batch in batches:
             batch = batch.to(device)
             logits = forward_batch(model, batch)
+            for head, mask in (
+                ("card", batch.card_mask),
+                ("placement", batch.placement_mask),
+                ("delay", batch.delay_mask),
+            ):
+                legal = logits[head][mask.bool()]
+                if legal.numel():
+                    maximum_logit = max(maximum_logit, float(legal.abs().max()))
             joint, parts = actor_losses(logits, batch)
             value = model.value(logits["fused"], batch.stratum)
             value_loss = F.mse_loss(value, batch.discounted_return, reduction="none")
@@ -538,6 +669,9 @@ def evaluate_loss_parquet(
             "placement_loss": None,
             "delay_loss": None,
             "value_loss": None,
+            "maximum_legal_logit_magnitude": None,
+            "logit_scale_warning": None,
+            "logit_scale_warning_threshold": LOGIT_SCALE_WARNING_MAGNITUDE,
         }
     return {
         "joint_action_loss": totals["joint"] / count,
@@ -545,6 +679,9 @@ def evaluate_loss_parquet(
         "placement_loss": totals["placement"] / count,
         "delay_loss": totals["delay"] / count,
         "value_loss": totals["value"] / count,
+        "maximum_legal_logit_magnitude": maximum_logit,
+        "logit_scale_warning": maximum_logit > LOGIT_SCALE_WARNING_MAGNITUDE,
+        "logit_scale_warning_threshold": LOGIT_SCALE_WARNING_MAGNITUDE,
     }
 
 
@@ -596,19 +733,26 @@ def evaluate_kl_parquet(
     batch_size: int,
     device: torch.device,
 ) -> float:
+    return evaluate_kl_batches(
+        reference,
+        candidate,
+        batches_for_parquet(path, vocab, batch_size, split=split, shuffle=False, seed=1),
+        device,
+    )
+
+
+def evaluate_kl_batches(
+    reference: EdgerV2Policy,
+    candidate: EdgerV2Policy,
+    batches: Iterable[Batch],
+    device: torch.device,
+) -> float:
     reference.eval()
     candidate.eval()
     total = 0.0
     count = 0
     with torch.no_grad():
-        for batch in batches_for_parquet(
-            path,
-            vocab,
-            batch_size,
-            split=split,
-            shuffle=False,
-            seed=1,
-        ):
+        for batch in batches:
             batch = batch.to(device)
             reference_logits = forward_batch(reference, batch)
             candidate_logits = forward_batch(candidate, batch)
@@ -628,6 +772,93 @@ def evaluate_kl_parquet(
             total += kl.sum().item()
             count += kl.shape[0]
     return total / max(1, count)
+
+
+def fireball_opportunity(global_features: Tensor, card_mask: Tensor) -> Tensor:
+    """Per-row opportunity class: 0 none, or a value of OPPORTUNITY_CLASSES."""
+    legal = card_mask[:, FIREBALL_CARD_INDEX].bool()
+    lethal = legal & (global_features[:, list(FIREBALL_LETHAL_GLOBALS)] > 0.5).any(dim=1)
+    hits = torch.round(
+        global_features[:, FIREBALL_TROOP_HITS_GLOBAL] * SPELL_TROOP_HITS_DENOMINATOR
+    )
+    cluster = legal & ~lethal & (hits >= CLUSTER_MINIMUM_TROOP_HITS)
+    return (
+        lethal.long() * OPPORTUNITY_CLASSES["lethal"]
+        + cluster.long() * OPPORTUNITY_CLASSES["cluster"]
+    )
+
+
+def row_fireball_opportunity(row: dict[str, Any]) -> int:
+    return int(fireball_opportunity(
+        torch.tensor([row["global"]], dtype=torch.float32),
+        torch.tensor([row["legal_masks"]["card"]], dtype=torch.bool),
+    )[0])
+
+
+def evaluate_opportunity_capture(
+    model: EdgerV2Policy,
+    path: str | Path,
+    split: str,
+    vocab: dict[str, int],
+    batch_size: int,
+    device: torch.device,
+) -> dict[str, dict[str, float | int | None]]:
+    """How often the deterministic card choice takes a Fireball opportunity.
+
+    Capture is the masked card argmax (lowest index on ties, as the runtime)
+    being Fireball; the mean Fireball probability is reported alongside.
+    """
+    return evaluate_opportunity_capture_batches(
+        model,
+        batches_for_parquet(
+            path,
+            vocab,
+            batch_size,
+            split=split,
+            shuffle=False,
+            seed=1,
+            predicate=lambda row: row_fireball_opportunity(row) != OPPORTUNITY_NONE,
+        ),
+        device,
+    )
+
+
+def evaluate_opportunity_capture_batches(
+    model: EdgerV2Policy, batches: Iterable[Batch], device: torch.device
+) -> dict[str, dict[str, float | int | None]]:
+    """Capture over batches of rows; rows without an opportunity count nowhere."""
+    model.eval()
+    totals = {
+        name: {"rows": 0, "fireball_argmax": 0, "p_fireball_sum": 0.0}
+        for name in [*OPPORTUNITY_CLASSES, "opportunity"]
+    }
+    with torch.no_grad():
+        for batch in batches:
+            batch = batch.to(device)
+            opportunity = fireball_opportunity(batch.global_features, batch.card_mask)
+            card = mask_logits(forward_batch(model, batch)["card"], batch.card_mask)
+            captured = card.argmax(dim=1) == FIREBALL_CARD_INDEX
+            probability = F.softmax(card, dim=1)[:, FIREBALL_CARD_INDEX]
+            for name, rows in [
+                *((name, opportunity == code) for name, code in OPPORTUNITY_CLASSES.items()),
+                ("opportunity", opportunity != OPPORTUNITY_NONE),
+            ]:
+                totals[name]["rows"] += int(rows.sum())
+                totals[name]["fireball_argmax"] += int(captured[rows].sum())
+                totals[name]["p_fireball_sum"] += float(probability[rows].sum())
+    return {
+        name: {
+            "rows": total["rows"],
+            "fireball_argmax": total["fireball_argmax"],
+            "capture_rate": (
+                total["fireball_argmax"] / total["rows"] if total["rows"] else None
+            ),
+            "mean_p_fireball": (
+                total["p_fireball_sum"] / total["rows"] if total["rows"] else None
+            ),
+        }
+        for name, total in totals.items()
+    }
 
 
 def environment_metadata() -> dict[str, Any]:
@@ -664,6 +895,7 @@ def checkpoint_payload(
     checkpoint_id = f"edger_v2_{phase}_{sha256_bytes(canonical_json(checkpoint_id_content).encode())[:16]}"
     return {
         "schema_version": CHECKPOINT_SCHEMA,
+        **({"action_space_version": model.action_space_version} if model.action_space_version != ACTION_SCHEMA else {}),
         "checkpoint_id": checkpoint_id,
         "phase": phase,
         "architecture": ARCHITECTURE,
@@ -693,9 +925,39 @@ def load_checkpoint(path: str | Path, device: torch.device) -> tuple[dict[str, A
     if payload.get("schema_version") != CHECKPOINT_SCHEMA:
         raise ValueError(f"unsupported checkpoint schema {payload.get('schema_version')}")
     vocab = payload["opponent_stratum_vocabulary"]
-    model = EdgerV2Policy(max(1, len(vocab))).to(device)
+    model = EdgerV2Policy(max(1, len(vocab)), payload.get("action_space_version", ACTION_SCHEMA)).to(device)
     model.load_state_dict(payload["model_state"])
     return payload, model
+
+
+def initialize_full_grid(args: argparse.Namespace) -> None:
+    device = torch.device("cpu")
+    parent, legacy = load_checkpoint(args.checkpoint, device)
+    if legacy.action_space_version != ACTION_SCHEMA:
+        raise ValueError("full-grid initialization needs a legacy checkpoint")
+    model = EdgerV2Policy(max(1, len(parent["opponent_stratum_vocabulary"])), FULL_GRID_ACTION_SCHEMA)
+    state = legacy.state_dict()
+    state["placement_coordinates"] = torch.zeros_like(model.placement_coordinates)
+    model.load_state_dict(state)
+    checkpoint = checkpoint_payload(
+        model=model,
+        optimizer=torch.optim.Adam(model.parameters()),
+        phase="full_grid_initialization",
+        seed=parent["seed"],
+        manifest_hash=parent["manifest_hash"],
+        dataset_checksum=parent["dataset_checksum"],
+        parent_checkpoint=parent["checkpoint_id"],
+        vocab=parent["opponent_stratum_vocabulary"],
+        metrics={"source_checkpoint_sha256": sha256_file(args.checkpoint)},
+    )
+    payload = export_model_payload(checkpoint, model, None)
+    model_out = Path(args.model_out)
+    if model_out.exists():
+        raise FileExistsError(f"model artifact already exists: {model_out}")
+    save_checkpoint(args.out, checkpoint)
+    model_out.parent.mkdir(parents=True, exist_ok=True)
+    with model_out.open("x") as output:
+        output.write(json.dumps(payload, sort_keys=True, indent=2) + "\n")
 
 
 def winner_finetune_predicate(
@@ -717,17 +979,68 @@ def winner_finetune_predicate(
     return selected, count_parquet_rows(path, split="train", predicate=selected)
 
 
+def bc_row_expansion(
+    card_teacher_filter: str,
+    opportunity_oversample: int,
+) -> Callable[[dict[str, Any]], list[dict[str, Any]]] | None:
+    """The BC data recipe for Fireball opportunity rows; None leaves BC unchanged.
+
+    ``opportunity`` drops the card target, never the placement or delay target,
+    of filtered teachers in opportunity rows. Oversampling repeats every
+    opportunity row in each epoch.
+    """
+    if card_teacher_filter not in CARD_TEACHER_FILTERS:
+        raise ValueError(f"--card-teacher-filter must be one of {CARD_TEACHER_FILTERS}")
+    if opportunity_oversample < 1:
+        raise ValueError("--opportunity-oversample must be at least 1")
+    if card_teacher_filter == "none" and opportunity_oversample == 1:
+        return None
+
+    def expand(row: dict[str, Any]) -> list[dict[str, Any]]:
+        if row_fireball_opportunity(row) == OPPORTUNITY_NONE:
+            return [row]
+        if (
+            card_teacher_filter == "opportunity"
+            and row.get("policy_id") in CARD_TARGET_FILTERED_TEACHERS
+        ):
+            row = {**row, "card_loss_weight": 0.0}
+        return [row] * opportunity_oversample
+
+    return expand
+
+
+def bc_data_recipe_counts(
+    path: str | Path,
+    expand: Callable[[dict[str, Any]], list[dict[str, Any]]] | None,
+) -> dict[str, int]:
+    counts = {"train_rows_after_expansion": 0, "train_card_targets_dropped": 0}
+    counts.update({f"train_{name}_rows": 0 for name in OPPORTUNITY_CLASSES})
+    codes = {code: name for name, code in OPPORTUNITY_CLASSES.items()}
+    for row in iter_parquet_rows(path, split="train"):
+        code = row_fireball_opportunity(row)
+        if code != OPPORTUNITY_NONE:
+            counts[f"train_{codes[code]}_rows"] += 1
+        emitted = expand(row) if expand is not None else [row]
+        counts["train_rows_after_expansion"] += len(emitted)
+        counts["train_card_targets_dropped"] += sum(
+            1 for item in emitted if item.get("card_loss_weight", 1.0) == 0.0
+        )
+    return counts
+
+
 def run_bc(args: argparse.Namespace) -> None:
     require_clean_git()
     seed_everything(args.seed)
     metadata = parquet_metadata(args.dataset)
+    require_cache_observation_schema(metadata, args.dataset)
+    expand = bc_row_expansion(args.card_teacher_filter, args.opportunity_oversample)
     train_samples = count_parquet_rows(args.dataset, split="train")
     validation_samples = count_parquet_rows(args.dataset, split="validation")
     if not train_samples:
         raise ValueError("BC dataset has no training rows")
     vocab = make_parquet_stratum_vocab(args.dataset)
     device = torch.device(args.device)
-    model = EdgerV2Policy(max(1, len(vocab))).to(device)
+    model = EdgerV2Policy(max(1, len(vocab)), metadata.get("action_space_version", ACTION_SCHEMA)).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
 
     for epoch in range(args.epochs):
@@ -739,11 +1052,12 @@ def run_bc(args: argparse.Namespace) -> None:
             split="train",
             shuffle=True,
             seed=args.seed + epoch,
+            expand=expand,
         ):
             batch = batch.to(device)
             optimizer.zero_grad(set_to_none=True)
             logits = forward_batch(model, batch)
-            joint, _ = actor_losses(logits, batch)
+            joint = bc_joint_loss(logits, batch, expand is not None)
             value = model.value(logits["fused"], batch.stratum)
             value_loss = F.mse_loss(value, batch.discounted_return, reduction="none")
             loss = (
@@ -766,11 +1080,12 @@ def run_bc(args: argparse.Namespace) -> None:
             shuffle=True,
             seed=args.seed ^ 0x51A7,
             predicate=finetune_predicate,
+            expand=expand,
         ):
             batch = batch.to(device)
             finetune_optimizer.zero_grad(set_to_none=True)
             logits = forward_batch(model, batch)
-            joint, _ = actor_losses(logits, batch)
+            joint = bc_joint_loss(logits, batch, expand is not None)
             loss = (joint * batch.sample_weight).mean()
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -781,7 +1096,20 @@ def run_bc(args: argparse.Namespace) -> None:
         "train_samples": train_samples,
         "validation_samples": validation_samples,
         "winner_top_quartile_finetune_samples": finetune_samples,
+        "data_recipe": {
+            "card_teacher_filter": args.card_teacher_filter,
+            "card_target_filtered_teachers": (
+                sorted(CARD_TARGET_FILTERED_TEACHERS)
+                if args.card_teacher_filter != "none"
+                else []
+            ),
+            "opportunity_oversample": args.opportunity_oversample,
+            **bc_data_recipe_counts(args.dataset, expand),
+        },
         "validation": evaluate_loss_parquet(
+            model, args.dataset, "validation", vocab, args.batch_size, device
+        ),
+        "validation_opportunity_capture": evaluate_opportunity_capture(
             model, args.dataset, "validation", vocab, args.batch_size, device
         ),
         "streaming": {
@@ -827,6 +1155,9 @@ def run_offline(args: argparse.Namespace) -> None:
         parameter.requires_grad_(False)
 
     metadata = parquet_metadata(args.dataset)
+    require_cache_observation_schema(metadata, args.dataset)
+    if metadata.get("action_space_version", ACTION_SCHEMA) != model.action_space_version:
+        raise ValueError("cache and checkpoint action spaces differ")
     train_samples = count_parquet_rows(args.dataset, split="train")
     validation_samples = count_parquet_rows(args.dataset, split="validation")
     vocab = parent["opponent_stratum_vocabulary"]
@@ -997,7 +1328,9 @@ def attach_vtrace_targets(
     return eligible
 
 
-def iter_vtrace_episodes(path: str | Path) -> Iterator[list[dict[str, Any]]]:
+def iter_vtrace_episodes(
+    path: str | Path, action_space_version: str = ACTION_SCHEMA
+) -> Iterator[list[dict[str, Any]]]:
     current_episode_id: str | None = None
     current_rows: list[dict[str, Any]] = []
     completed: set[str] = set()
@@ -1015,73 +1348,94 @@ def iter_vtrace_episodes(path: str | Path) -> Iterator[list[dict[str, Any]]]:
                 )
             current_episode_id = episode_id
             current_rows = []
-        if row.get("vtrace_eligible") and row.get("behavior_log_probability") is not None:
+        row_action_space = (row.get("compatibility_cohort") or ACTION_SCHEMA).rsplit("|", 1)[-1]
+        if (
+            row_action_space == action_space_version
+            and row.get("vtrace_eligible")
+            and row.get("behavior_log_probability") is not None
+        ):
             current_rows.append(row)
     if current_rows:
         yield current_rows
 
 
-def write_vtrace_target_parquet(
-    *,
+def train_vtrace_episode(
     model: EdgerV2Policy,
-    source: str | Path,
-    out: str | Path,
+    rows: list[dict[str, Any]],
     vocab: dict[str, int],
     batch_size: int,
     device: torch.device,
-) -> int:
-    output = Path(out)
-    partial = output.with_suffix(output.suffix + ".partial")
-    partial.unlink(missing_ok=True)
-    writer: pq.ParquetWriter | None = None
-    arrow_schema: pa.Schema | None = None
-    written = 0
-    source_metadata = {
-        key.encode(): value.encode()
-        for key, value in parquet_metadata(source).items()
+    optimizer: torch.optim.Optimizer,
+    *,
+    value_loss_weight: float,
+    entropy_bonus: float,
+) -> dict[str, float]:
+    # V-trace's rho, values and advantages must describe the policy receiving
+    # this gradient. A whole-epoch target cache becomes stale after step one;
+    # fixed negative advantages can then drive log probabilities to -infinity.
+    targets = attach_vtrace_targets(model, rows, vocab, batch_size, device)
+    model.train()
+    optimizer.zero_grad(set_to_none=True)
+    for batch in loader_for(targets, vocab, batch_size, False, 1):
+        batch = batch.to(device)
+        logits = forward_batch(model, batch)
+        log_probability = selected_joint_log_probability(logits, batch)
+        entropy = actor_entropy(logits, batch)
+        value = model.value(logits["fused"], batch.stratum)
+        policy_loss = -(
+            log_probability * batch.vtrace_advantage.detach() * batch.sample_weight
+        ).sum()
+        value_loss = F.mse_loss(value, batch.vtrace_target, reduction="sum")
+        loss = (
+            policy_loss + value_loss_weight * value_loss - entropy_bonus * entropy.sum()
+        ) / len(targets)
+        if not torch.isfinite(loss):
+            raise ValueError("non-finite V-trace episode loss; no candidate accepted")
+        loss.backward()
+    # Microbatches bound activation memory, but never step between them: every
+    # target and gradient in this trajectory uses the same learner parameters.
+    # The pre-clip norm is reported so a bounded experiment can distinguish a
+    # diverging learner from one whose updates are merely being clipped.
+    gradient_norm = nn.utils.clip_grad_norm_(
+        model.parameters(), 1.0, error_if_nonfinite=True
+    )
+    optimizer.step()
+    return {"samples": len(targets), "gradient_norm": float(gradient_norm)}
+
+
+GRADIENT_CLIP_NORM = 1.0
+
+
+def gradient_norm_summary(
+    epoch: int,
+    norms: list[float],
+) -> dict[str, float | int | bool]:
+    """Summarize one epoch's pre-clip gradient norms.
+
+    ``clip_grad_norm_`` already aborts on a non-finite norm, so ``all_finite``
+    records the observed fact rather than adding a second gate.
+    """
+    if not norms:
+        return {
+            "epoch": epoch,
+            "updates": 0,
+            "all_finite": True,
+            "maximum": None,
+            "mean": None,
+            "minimum": None,
+            "clip_threshold": GRADIENT_CLIP_NORM,
+            "clipped_updates": 0,
+        }
+    return {
+        "epoch": epoch,
+        "updates": len(norms),
+        "all_finite": all(math.isfinite(value) for value in norms),
+        "maximum": max(norms),
+        "mean": sum(norms) / len(norms),
+        "minimum": min(norms),
+        "clip_threshold": GRADIENT_CLIP_NORM,
+        "clipped_updates": sum(1 for value in norms if value > GRADIENT_CLIP_NORM),
     }
-    source_metadata[b"vtrace_targets"] = b"episode_grouped_v1"
-
-    def write_rows(rows: list[dict[str, Any]]) -> None:
-        nonlocal writer, arrow_schema, written
-        for start in range(0, len(rows), PARQUET_ROW_GROUP_SIZE):
-            group = rows[start:start + PARQUET_ROW_GROUP_SIZE]
-            if arrow_schema is None:
-                table = pa.Table.from_pylist(group)
-                arrow_schema = table.schema.with_metadata(source_metadata)
-                writer = pq.ParquetWriter(
-                    partial,
-                    arrow_schema,
-                    compression="zstd",
-                    compression_level=9,
-                    use_dictionary=True,
-                )
-            table = pa.Table.from_pylist(group, schema=arrow_schema)
-            assert writer is not None
-            writer.write_table(table, row_group_size=PARQUET_ROW_GROUP_SIZE)
-            written += len(group)
-
-    try:
-        for episode_rows in iter_vtrace_episodes(source):
-            targets = attach_vtrace_targets(
-                model,
-                episode_rows,
-                vocab,
-                batch_size,
-                device,
-            )
-            write_rows(targets)
-        if writer is None:
-            raise ValueError("league cache has no V-trace-eligible simulator samples")
-        writer.close()
-        writer = None
-        partial.replace(output)
-    except BaseException:
-        if writer is not None:
-            writer.close()
-        partial.unlink(missing_ok=True)
-        raise
-    return written
 
 
 def run_vtrace(args: argparse.Namespace) -> None:
@@ -1090,7 +1444,11 @@ def run_vtrace(args: argparse.Namespace) -> None:
     device = torch.device(args.device)
     parent, model = load_checkpoint(args.checkpoint, device)
     metadata = parquet_metadata(args.dataset)
+    require_cache_observation_schema(metadata, args.dataset)
+    if metadata.get("action_space_version", ACTION_SCHEMA) != model.action_space_version:
+        raise ValueError("cache and checkpoint action spaces differ")
     vocab = parent["opponent_stratum_vocabulary"]
+    require_strata_in_vocabulary(args.dataset, vocab)
     validation_samples = count_parquet_rows(args.dataset, split="validation")
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
     optimizer_restored = False
@@ -1101,46 +1459,21 @@ def run_vtrace(args: argparse.Namespace) -> None:
         optimizer_restored = True
     trained_samples = 0
 
-    with tempfile.TemporaryDirectory(prefix="edger-vtrace-targets-") as target_dir:
-        for epoch in range(args.epochs):
-            target_path = Path(target_dir) / f"epoch-{epoch}.parquet"
-            trained_samples = write_vtrace_target_parquet(
-                model=model,
-                source=args.dataset,
-                out=target_path,
-                vocab=vocab,
-                batch_size=args.batch_size,
-                device=device,
+    optimizer_updates = 0
+    epoch_gradients: list[dict[str, float | int | bool]] = []
+    for epoch in range(args.epochs):
+        trained_samples = 0
+        epoch_norms: list[float] = []
+        for episode_rows in iter_vtrace_episodes(args.dataset, model.action_space_version):
+            update = train_vtrace_episode(
+                model, episode_rows, vocab, args.batch_size, device, optimizer,
+                value_loss_weight=args.value_loss_weight,
+                entropy_bonus=args.entropy_bonus,
             )
-            model.train()
-            for batch in batches_for_parquet(
-                target_path,
-                vocab,
-                args.batch_size,
-                split="train",
-                shuffle=True,
-                seed=args.seed + epoch,
-            ):
-                batch = batch.to(device)
-                optimizer.zero_grad(set_to_none=True)
-                logits = forward_batch(model, batch)
-                log_probability = selected_joint_log_probability(logits, batch)
-                entropy = actor_entropy(logits, batch)
-                value = model.value(logits["fused"], batch.stratum)
-                policy_loss = -(
-                    log_probability
-                    * batch.vtrace_advantage.detach()
-                    * batch.sample_weight
-                ).mean()
-                value_loss = F.mse_loss(value, batch.vtrace_target)
-                loss = (
-                    policy_loss
-                    + args.value_loss_weight * value_loss
-                    - args.entropy_bonus * entropy.mean()
-                )
-                loss.backward()
-                nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-                optimizer.step()
+            trained_samples += int(update["samples"])
+            epoch_norms.append(update["gradient_norm"])
+            optimizer_updates += 1
+        epoch_gradients.append(gradient_norm_summary(epoch, epoch_norms))
 
     metrics = {
         "train_samples": trained_samples,
@@ -1152,13 +1485,18 @@ def run_vtrace(args: argparse.Namespace) -> None:
             "parent_optimizer_restored": optimizer_restored,
             "epochs": args.epochs,
             "entropy_bonus": args.entropy_bonus,
-            "episode_grouped_target_parquet": True,
-            "target_row_group_size": PARQUET_ROW_GROUP_SIZE,
+            "target_refresh": "before_each_episode_update",
+            "optimizer_updates": optimizer_updates,
+            "gradient_microbatch_size": args.batch_size,
+            "episode_order": "source_manifest_order",
+            "gradient_norms_per_epoch": epoch_gradients,
         },
         "validation": evaluate_loss_parquet(
             model, args.dataset, "validation", vocab, args.batch_size, device
         ),
     }
+    if model.action_space_version == FULL_GRID_ACTION_SCHEMA and optimizer_updates == 0:
+        raise ValueError("full-grid V-trace needs fresh full-grid training episodes")
     payload = checkpoint_payload(
         model=model,
         optimizer=optimizer,
@@ -1178,8 +1516,8 @@ def linear_json(layer: nn.Linear) -> dict[str, Any]:
     return {
         "input_dim": layer.in_features,
         "output_dim": layer.out_features,
-        "weights": [round_float(value) for value in layer.weight.detach().cpu().t().flatten()],
-        "bias": [round_float(value) for value in layer.bias.detach().cpu().flatten()],
+        "weights": [float32_json(value) for value in layer.weight.detach().cpu().t().flatten()],
+        "bias": [float32_json(value) for value in layer.bias.detach().cpu().flatten()],
     }
 
 
@@ -1188,8 +1526,8 @@ def conv_json(layer: nn.Conv2d) -> dict[str, Any]:
         "input_channels": layer.in_channels,
         "output_channels": layer.out_channels,
         "kernel_size": layer.kernel_size[0],
-        "weights": [round_float(value) for value in layer.weight.detach().cpu().flatten()],
-        "bias": [round_float(value) for value in layer.bias.detach().cpu().flatten()],
+        "weights": [float32_json(value) for value in layer.weight.detach().cpu().flatten()],
+        "bias": [float32_json(value) for value in layer.bias.detach().cpu().flatten()],
     }
 
 
@@ -1205,7 +1543,7 @@ def export_model_payload(
     payload = {
         "model_id": model_id or checkpoint["checkpoint_id"].replace("checkpoint", "policy"),
         "schema_version": MODEL_SCHEMA,
-        "action_space_version": ACTION_SCHEMA,
+        "action_space_version": model.action_space_version,
         "observation_schema_version": OBSERVATION_SCHEMA,
         "architecture": ARCHITECTURE,
         "weights": {
@@ -1217,7 +1555,7 @@ def export_model_payload(
             "card_head": linear_json(model.card_head),
             "placement_context": linear_json(model.placement_context),
             "card_embedding": [
-                round_float(value)
+                float32_json(value)
                 for value in model.card_embedding.weight.detach().cpu().flatten()
             ],
             "placement_scorer": linear_json(model.placement_scorer),
@@ -1237,13 +1575,37 @@ def export_model_payload(
             "promotion_status": "shadow_candidate_unreviewed",
         },
     }
+    if model.placement_coordinates is not None:
+        payload["weights"]["placement_coordinates"] = [
+            float32_json(value) for value in model.placement_coordinates.detach().cpu().flatten()
+        ]
     parameters = actor_parameter_count(model)
     if parameters > 50_000:
         raise ValueError(f"actor parameter count {parameters} exceeds 50,000")
+    assert_lossless_actor_export(model, payload)
     encoded = (json.dumps(payload, sort_keys=True, indent=2) + "\n").encode()
     if len(encoded) > 1_000_000:
         raise ValueError(f"actor export is {len(encoded)} bytes; limit is 1,000,000")
     return payload
+
+
+def assert_lossless_actor_export(
+    model: EdgerV2Policy,
+    payload: dict[str, Any],
+) -> None:
+    """Reject an export whose weights no longer reload as the trained float32."""
+    reloaded = load_actor_payload(payload)
+    trained = dict(model.named_parameters())
+    for name, parameter in reloaded.named_parameters():
+        if name.startswith("value_head") or name.startswith("value_stratum"):
+            continue
+        source = trained[name].detach().cpu()
+        if not torch.equal(source, parameter.detach().cpu()):
+            altered = int((source != parameter.detach().cpu()).sum())
+            raise ValueError(
+                f"actor export is lossy: {altered} of {source.numel()} "
+                f"{name} values do not reload as the trained float32"
+            )
 
 
 def run_export(args: argparse.Namespace) -> None:
@@ -1271,10 +1633,13 @@ def run_export(args: argparse.Namespace) -> None:
 
 
 def load_actor_json(path: str | Path) -> EdgerV2Policy:
-    payload = json.loads(Path(path).read_text())
+    return load_actor_payload(json.loads(Path(path).read_text()))
+
+
+def load_actor_payload(payload: dict[str, Any]) -> EdgerV2Policy:
     if payload.get("schema_version") != MODEL_SCHEMA:
         raise ValueError("parity model must use edger_policy_model_v2")
-    model = EdgerV2Policy(1)
+    model = EdgerV2Policy(1, payload["action_space_version"])
 
     def load_linear(layer: nn.Linear, source: dict[str, Any]) -> None:
         weights = torch.tensor(source["weights"], dtype=torch.float32).reshape(
@@ -1307,14 +1672,18 @@ def load_actor_json(path: str | Path) -> EdgerV2Policy:
         )
     )
     load_linear(model.placement_scorer, weights["placement_scorer"])
+    if model.placement_coordinates is not None:
+        model.placement_coordinates.data.copy_(torch.tensor(
+            weights["placement_coordinates"], dtype=torch.float32
+        ).reshape_as(model.placement_coordinates))
+    elif "placement_coordinates" in weights:
+        raise ValueError("placement coordinates require the full-grid action space")
     load_linear(model.delay_encoder, weights["delay_encoder"])
     load_linear(model.delay_head, weights["delay_head"])
     return model.eval()
 
 
-def run_parity(args: argparse.Namespace) -> None:
-    model = load_actor_json(args.model)
-    fixture = json.loads(Path(args.fixture).read_text())
+def parity_logits(model: EdgerV2Policy, fixture: dict[str, Any]) -> dict[str, Any]:
     board = torch.tensor(fixture["observation"]["board"], dtype=torch.float32).reshape(
         1, BOARD_HEIGHT, BOARD_WIDTH, BOARD_INPUT_CHANNELS
     )
@@ -1328,13 +1697,31 @@ def run_parity(args: argparse.Namespace) -> None:
     with torch.no_grad():
         logits = model.actor_logits(board, global_features, card, placement)
     masks = fixture["legal_masks"]
-    result = {}
+    result: dict[str, Any] = {}
     for key in ["card", "placement", "delay"]:
         values = logits[key].squeeze(0)
         mask = torch.tensor(masks[key], dtype=torch.bool)
         values = values.masked_fill(~mask, -1e30)
         result[key] = [float(value) for value in values]
         result[f"{key}_argmax"] = int(torch.argmax(values).item())
+    return result
+
+
+def run_parity(args: argparse.Namespace) -> None:
+    model = load_actor_json(args.model)
+    payload = json.loads(Path(args.fixture).read_text())
+    # A single mid-match state cannot show whether the runtimes stay in
+    # agreement once activations grow, so the evaluator sends a bank of states
+    # and one process handles all of them.
+    if isinstance(payload, dict) and "fixtures" in payload:
+        result: dict[str, Any] = {
+            "fixtures": [
+                {"id": fixture.get("id"), **parity_logits(model, fixture)}
+                for fixture in payload["fixtures"]
+            ],
+        }
+    else:
+        result = parity_logits(model, payload)
     Path(args.out).write_text(json.dumps(result, separators=(",", ":")) + "\n")
 
 
@@ -1359,6 +1746,12 @@ def run_prepare(args: argparse.Namespace) -> None:
             arrow_schema = DECISION_CACHE_SCHEMA.with_metadata(
                 {
                     b"schema_version": DECISION_PARQUET_SCHEMA_VERSION.encode(),
+                    b"observation_schema_version": OBSERVATION_SCHEMA.encode(),
+                    **(
+                        {b"action_space_version": args.action_space_version.encode()}
+                        if getattr(args, "action_space_version", ACTION_SCHEMA) != ACTION_SCHEMA
+                        else {}
+                    ),
                     b"manifest_hash": args.manifest_hash.encode(),
                     b"scale": str(args.scale).encode(),
                     b"compression": b"zstd",
@@ -1420,6 +1813,7 @@ def run_prepare(args: argparse.Namespace) -> None:
         "manifest_hash": args.manifest_hash,
         "scale": args.scale,
         "parquet_schema_version": DECISION_PARQUET_SCHEMA_VERSION,
+        "observation_schema_version": OBSERVATION_SCHEMA,
         "parquet_schema_sha256": parquet_schema_sha256(persisted_schema),
         "logical_content_sha256": logical_content.hexdigest(),
         "compression": "zstd",
@@ -1440,6 +1834,7 @@ def run_validate_cache(args: argparse.Namespace) -> None:
     metadata = parquet_metadata(dataset)
     expected_metadata = {
         "schema_version": DECISION_PARQUET_SCHEMA_VERSION,
+        "observation_schema_version": OBSERVATION_SCHEMA,
         "manifest_hash": args.manifest_hash,
         "scale": "1.0",
         "compression": "zstd",
@@ -1741,6 +2136,7 @@ def build_parser() -> argparse.ArgumentParser:
     prepare.add_argument("--out", required=True)
     prepare.add_argument("--manifest-hash", required=True)
     prepare.add_argument("--scale", type=float, required=True)
+    prepare.add_argument("--action-space-version", default=ACTION_SCHEMA, choices=ACTION_SCHEMAS)
     prepare.add_argument("--report")
     prepare.set_defaults(func=run_prepare)
 
@@ -1759,6 +2155,14 @@ def build_parser() -> argparse.ArgumentParser:
     bc = subparsers.add_parser("bc")
     add_training_arguments(bc)
     bc.add_argument("--value-loss-weight", type=float, default=0.5)
+    bc.add_argument(
+        "--card-teacher-filter", default="none", choices=CARD_TEACHER_FILTERS,
+        help="'opportunity' drops filtered teachers' card targets in Fireball opportunity rows",
+    )
+    bc.add_argument(
+        "--opportunity-oversample", type=int, default=1,
+        help="times each Fireball opportunity row appears per epoch",
+    )
     bc.set_defaults(func=run_bc)
 
     offline = subparsers.add_parser("offline")
@@ -1779,6 +2183,12 @@ def build_parser() -> argparse.ArgumentParser:
     export.add_argument("--model-id")
     export.add_argument("--force", action="store_true")
     export.set_defaults(func=run_export)
+
+    full_grid = subparsers.add_parser("initialize-full-grid")
+    full_grid.add_argument("--checkpoint", required=True)
+    full_grid.add_argument("--out", required=True)
+    full_grid.add_argument("--model-out", required=True)
+    full_grid.set_defaults(func=initialize_full_grid)
 
     parity = subparsers.add_parser("parity")
     parity.add_argument("--model", required=True)

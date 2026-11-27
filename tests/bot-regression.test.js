@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import { runBenchmark, runBenchmarkMatrix, runBotMatch, runEdgerBenchmarkSuite } from "../src/ai/benchmark.js";
 import { EDGER_BOT_ID, HEURISTIC_BOT_ID, INTERNAL_BASELINE_BOTS } from "../src/ai/botRuntime.js";
+import { EDGER_RETIRED_V1_MODEL } from "../scripts/edger-harness-opponents.mjs";
 
 const SMOKE_MAX_TICKS = 120;
 
@@ -93,8 +94,43 @@ test("Edger clears the initial internal baseline benchmark floor", () => {
   });
 
   assert.deepEqual(suite.opponents, INTERNAL_BASELINE_BOTS);
+  assert.equal(suite.arena, "production");
   for (const pair of suite.pairs) {
     assert.ok(pair.resolved > 0, `${pair.opponent} produced no resolved games`);
     assert.ok(pair.win_rate >= 0.6, `${pair.opponent} win rate ${pair.win_rate}`);
+    assert.equal(pair.off_list, 0, `${pair.opponent}: Edger played outside its own legal list`);
   }
+});
+
+// The single-tower arena still plays the games it played before the gate moved
+// (values from the pre-change code, November 28, 2026): the legacy v1 evaluator
+// passes its v1 model there, and selectBotDecision keeps every non-v2 bot's
+// delay roll before its selection.
+test("the benchmark arena keeps the legacy v1 evaluator's and the baselines' games", () => {
+  const v1 = runBotMatch({
+    blueBot: EDGER_BOT_ID,
+    redBot: "aggressive",
+    seed: 707,
+    maxTicks: 6040,
+    edgerModel: EDGER_RETIRED_V1_MODEL,
+    arena: "benchmark",
+  });
+  assert.equal(v1.tick, 3600);
+  assert.equal(v1.result.winner, "blue");
+  assert.deepEqual(v1.score, { blue_crowns: 1, red_crowns: 0, blue_tower_hp: 1534, red_tower_hp: 0 });
+  assert.deepEqual(v1.off_list, { blue: 0, red: 0 });
+
+  const bots = runBotMatch({ blueBot: "aggressive", redBot: "defender", seed: 505, maxTicks: 6040, arena: "benchmark" });
+  assert.equal(bots.tick, 6000);
+  assert.equal(bots.result.winner, null);
+  assert.deepEqual(bots.score, { blue_crowns: 1, red_crowns: 1, blue_tower_hp: 0, red_tower_hp: 0 });
+});
+
+test("the benchmark counts Edger plays outside its own legal list", () => {
+  // The full-grid decoder's tile centres are not in the benchmark arena's list.
+  const benchmarkArena = runBotMatch({ blueBot: EDGER_BOT_ID, redBot: "random", seed: 404, maxTicks: 600, arena: "benchmark" });
+  assert.ok(benchmarkArena.off_list.blue > 0);
+  const production = runBotMatch({ blueBot: EDGER_BOT_ID, redBot: "random", seed: 404, maxTicks: 600 });
+  assert.deepEqual(production.off_list, { blue: 0, red: 0 });
+  assert.throws(() => runBotMatch({ blueBot: EDGER_BOT_ID, redBot: "random", seed: 1, arena: "elsewhere" }), /unknown benchmark arena/);
 });

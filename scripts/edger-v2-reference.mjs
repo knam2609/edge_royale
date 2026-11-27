@@ -8,6 +8,7 @@ import { validateEdgerPolicyModel } from "../src/ai/mlPolicy.js";
 import { canonicalJson } from "./edger-corpus-core.mjs";
 import {
   EDGER_V2_REFERENCE_REPORT_SCHEMA,
+  edgerV2ReferenceMatchSeeds,
   executeEdgerV2EvaluationSpecs,
 } from "./edger-v2-evaluation-core.mjs";
 
@@ -77,6 +78,7 @@ function modelDescriptor(modelPath) {
 
 function buildSpecs({ args, opponents }) {
   const specs = [];
+  const seeds = edgerV2ReferenceMatchSeeds({ seed: args.seed, gamesPerOpponent: args.gamesPerOpponent });
   for (const opponent of opponents) {
     const group = opponent.kind === "bot"
       ? "heuristic"
@@ -88,7 +90,7 @@ function buildSpecs({ args, opponents }) {
           group,
           block: null,
           pair_id: `${group}|${pairIndex}`,
-          seed: args.seed + pairIndex,
+          seed: seeds[pairIndex],
           candidate_actor: candidateActor,
           opponent,
           verify_replay: true,

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import fs from "node:fs";
+import { EDGER_FULL_GRID_ACTION_SPACE_VERSION, EDGER_V2_ACTION_SPACE_VERSION } from "../src/ai/v2/observation.js";
 import path from "node:path";
 import { once } from "node:events";
 
@@ -70,6 +71,14 @@ function selectDefaultMix(shards, maxPlayerFraction) {
   );
 }
 
+function loadDecisionSequence(shard) {
+  const episode = loadTrainingEpisode(shard.uri);
+  if ((shard.action_space_version ?? EDGER_V2_ACTION_SPACE_VERSION) !== episode.compatibility.action_space_version) {
+    throw new Error(`manifest and episode action spaces differ for ${shard.episode_id}`);
+  }
+  return { ...deriveDecisionSequence(episode), result_winner: episode.result.winner };
+}
+
 function balancingStratum(row) {
   const outcome = row.is_winner ? "win" : row.result_winner ? "loss" : "draw";
   return `${row.source_kind}|${row.opponent_stratum}|${outcome}`;
@@ -80,13 +89,12 @@ function scanBalancingStrata(shards) {
   let samples = 0;
   const splits = {};
   for (const shard of shards) {
-    const episode = loadTrainingEpisode(shard.uri);
-    const sequence = deriveDecisionSequence(episode);
+    const sequence = loadDecisionSequence(shard);
     for (const sample of sequence.samples) {
       const row = {
         ...sample,
         split: shard.split,
-        result_winner: episode.result.winner,
+        result_winner: sequence.result_winner,
         compatibility_cohort: sequence.compatibility_cohort,
         reward_version: sequence.reward_version,
         per_tick_gamma: sequence.per_tick_gamma,
@@ -103,13 +111,12 @@ function scanBalancingStrata(shards) {
 async function writeDecisionRows(stream, shards, balance) {
   const meanCount = balance.samples / Math.max(1, balance.counts.size);
   for (const shard of shards) {
-    const episode = loadTrainingEpisode(shard.uri);
-    const sequence = deriveDecisionSequence(episode);
+    const sequence = loadDecisionSequence(shard);
     for (const sample of sequence.samples) {
       const row = {
         ...sample,
         split: shard.split,
-        result_winner: episode.result.winner,
+        result_winner: sequence.result_winner,
         compatibility_cohort: sequence.compatibility_cohort,
         reward_version: sequence.reward_version,
         per_tick_gamma: sequence.per_tick_gamma,
@@ -142,6 +149,9 @@ async function buildCache({ python, manifest, shards, out, scale }) {
       manifest.manifest_hash,
       "--scale",
       String(scale),
+      ...(shards.some((shard) => shard.action_space_version === EDGER_FULL_GRID_ACTION_SPACE_VERSION)
+        ? ["--action-space-version", EDGER_FULL_GRID_ACTION_SPACE_VERSION]
+        : []),
     ],
     { stdio: ["pipe", "inherit", "inherit"], python },
   );

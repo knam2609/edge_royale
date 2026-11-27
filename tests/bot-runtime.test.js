@@ -1,9 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
 
 import {
   EDGER_BOT_ID,
   HEURISTIC_BOT_ID,
+  actionSortKey,
   enumerateLegalCardActions,
   evaluateSpellAction,
   getBotConfig,
@@ -13,15 +15,26 @@ import {
   selectBotDecision,
   selectEdgerAction,
   selectHeuristicAction,
+  warmUpBotDecision,
 } from "../src/ai/botRuntime.js";
 import { createEdgerV2BootstrapModel } from "../src/ai/v2/policy.js";
 import { EDGER_POLICY_MODEL } from "../src/ai/generated/edgerPolicyCurrent.js";
+import { EDGER_FULL_GRID_ACTION_SPACE_VERSION } from "../src/ai/v2/observation.js";
 import { validateEdgerPolicyModel } from "../src/ai/mlPolicy.js";
 import { FIREBALL_CONFIG } from "../src/sim/config.js";
 import { createEngine } from "../src/sim/engine.js";
 import { ROYALE_LANE_X, ROYALE_TOWER_X, ROYALE_TOWER_Y, createArena, createRoyaleArena } from "../src/sim/map.js";
 import { createTower, createTroop } from "../src/sim/entities.js";
+import { createProductionEngine } from "../src/sim/productionMatch.js";
+import { createRng } from "../src/sim/random.js";
 import { getTowerStats } from "../src/sim/stats.js";
+
+// The v1 bootstrap that was live until the November 2026 v2 promotion, kept
+// byte for byte. The v1 ML path still serves any v1 model.
+const EDGER_V1_MODEL = JSON.parse(fs.readFileSync(
+  new URL("../artifacts/edger-training/retired/edger_policy_bootstrap_20260701/edger_policy.json", import.meta.url),
+  "utf8",
+));
 
 function makeCardState(redHand, blueHand = ["giant", "knight", "archers", "arrows"]) {
   return {
@@ -53,6 +66,43 @@ function makeEngine(redHand, { blueHand, blueElixir = 5 } = {}) {
   engine.state.elixir.blue.elixir = blueElixir;
   engine.state.elixir.red.elixir = 10;
   return engine;
+}
+
+// Heuristic blue against the given red bot on a production engine, the way the
+// browser loop schedules decisions. Records every decision for both actors.
+function playProductionMatch({ redBotId, edgerModel, seed = 314, ticks = 400 }) {
+  const engine = createProductionEngine({ seed });
+  const bots = {
+    blue: { botId: HEURISTIC_BOT_ID, rng: createRng(seed ^ 0x9e3779b9), nextTick: 1 },
+    red: { botId: redBotId, rng: createRng(seed ^ 0x5f3759df), nextTick: 1 },
+  };
+  const decisions = [];
+  const legalActionKeys = [];
+  for (let tick = 1; tick <= ticks && !engine.getMatchResult(); tick += 1) {
+    const actions = [];
+    for (const actor of ["blue", "red"]) {
+      const legalActions = enumerateLegalCardActions({ engine, actor });
+      legalActionKeys.push(legalActions.map(actionSortKey));
+      const bot = bots[actor];
+      if (tick < bot.nextTick) {
+        continue;
+      }
+      const decision = selectBotDecision({ botId: bot.botId, engine, actor, legalActions, rng: bot.rng, edgerModel });
+      bot.nextTick = tick + decision.delayTicks;
+      decisions.push([tick, actor, JSON.stringify(decision.action ?? null), decision.delayTicks]);
+      if (decision.action?.type === "PLAY_CARD") {
+        const { cardId, x, y } = decision.action;
+        actions.push({ tick, type: "PLAY_CARD", actor, cardId, x, y });
+      }
+    }
+    engine.step(actions);
+  }
+  return {
+    decisions,
+    legalActionKeys,
+    stateHash: engine.getStateHash(),
+    nextRedRandom: bots.red.rng(),
+  };
 }
 
 function makeRoyaleEngine(redHand, { blueLeftHp = getTowerStats("crown").hp, blueRightHp = getTowerStats("crown").hp } = {}) {
@@ -112,7 +162,7 @@ test("enumerateLegalCardActions unlocks only the captured 5x9 pocket and bridge 
   assert.ok(bridgeActions.every((action) => action.y === 15.5 || action.y === 16.5));
 });
 
-function cloneModel(model = EDGER_POLICY_MODEL) {
+function cloneModel(model = EDGER_V1_MODEL) {
   return JSON.parse(JSON.stringify(model));
 }
 
@@ -133,7 +183,65 @@ function makeTieModel() {
   return model;
 }
 
-test("Edger returns a legal action when one is available", () => {
+test("enumerateLegalCardActions orders live match actions by strictly increasing sort key", () => {
+  const { legalActionKeys } = playProductionMatch({ redBotId: HEURISTIC_BOT_ID, ticks: 1200 });
+  const cardsSeen = new Set();
+
+  for (const keys of legalActionKeys) {
+    for (let index = 1; index < keys.length; index += 1) {
+      // Unique, strictly increasing keys admit exactly one sorted order, so any
+      // stable sort by these keys returns the same list.
+      assert.ok(keys[index - 1].localeCompare(keys[index]) < 0, `${keys[index - 1]} !< ${keys[index]}`);
+    }
+    for (const key of keys) {
+      cardsSeen.add(key.split("|")[0]);
+    }
+  }
+  assert.ok(legalActionKeys.some((keys) => keys.length > 100));
+  assert.ok(["giant", "knight", "arrows", "fireball"].every((cardId) => cardsSeen.has(cardId)));
+});
+
+test("live Edger is the promoted full-grid v2 model and its live decision path stays legal", () => {
+  assert.equal(EDGER_POLICY_MODEL.schema_version, "edger_policy_model_v2");
+  assert.equal(EDGER_POLICY_MODEL.action_space_version, EDGER_FULL_GRID_ACTION_SPACE_VERSION);
+  assert.deepEqual(
+    JSON.parse(fs.readFileSync(new URL("../artifacts/edger-training/promoted/edger_policy_current.json", import.meta.url), "utf8")),
+    EDGER_POLICY_MODEL,
+  );
+  // As in the browser: a production match, the legacy shortlist passed in, and
+  // the live path re-enumerating the model's full grid and choosing from it.
+  const engine = createProductionEngine({ seed: 314 });
+  const heuristicRng = createRng(314);
+  const next = { red: 1, blue: 1 };
+  let plays = 0;
+  for (let tick = 1; tick <= 1800 && !engine.getMatchResult(); tick += 1) {
+    const actions = [];
+    for (const actor of ["red", "blue"]) {
+      if (tick < next[actor]) {
+        continue;
+      }
+      const legalActions = enumerateLegalCardActions({ engine, actor });
+      const botId = actor === "red" ? EDGER_BOT_ID : HEURISTIC_BOT_ID;
+      const decision = selectBotDecision({ botId, engine, actor, legalActions, rng: heuristicRng });
+      assert.ok(Number.isInteger(decision.delayTicks) && decision.delayTicks >= 1);
+      next[actor] = tick + decision.delayTicks;
+      if (decision.action?.type !== "PLAY_CARD") {
+        continue;
+      }
+      if (actor === "red") {
+        const modelLegal = enumerateLegalCardActions({ engine, actor, model: EDGER_POLICY_MODEL });
+        assert.ok(modelLegal.some((candidate) => JSON.stringify(candidate) === JSON.stringify(decision.action)));
+        plays += 1;
+      }
+      const { cardId, x, y } = decision.action;
+      actions.push({ tick, type: "PLAY_CARD", actor, cardId, x, y });
+    }
+    engine.step(actions);
+  }
+  assert.ok(plays > 0);
+});
+
+test("a v1 Edger model returns one of the given legal actions", () => {
   const engine = makeEngine(["giant", "knight", "arrows", "fireball"]);
   const legalActions = enumerateLegalCardActions({ engine, actor: "red" });
 
@@ -142,6 +250,7 @@ test("Edger returns a legal action when one is available", () => {
     engine,
     actor: "red",
     legalActions,
+    edgerModel: EDGER_V1_MODEL,
   });
 
   if (action.type === "PASS") {
@@ -220,6 +329,29 @@ test("v2 Edger runtime honors the model-selected decision delay", () => {
   assert.deepEqual(decision.action, { type: "PASS" });
   assert.equal(decision.delayTicks, 200);
 });
+
+for (const [label, makeModel] of [
+  ["v1", () => JSON.parse(JSON.stringify(EDGER_V1_MODEL))],
+  ["v2", () => createEdgerV2BootstrapModel()],
+  ["live", () => JSON.parse(JSON.stringify(EDGER_POLICY_MODEL))],
+]) {
+  test(`warmUpBotDecision leaves ${label} Edger decisions, state and random stream unchanged`, () => {
+    // Fresh model objects start with cold model caches, as on page load.
+    const cold = playProductionMatch({ redBotId: EDGER_BOT_ID, edgerModel: makeModel() });
+
+    const warmedModel = makeModel();
+    const disposable = createProductionEngine();
+    const disposableHash = disposable.getStateHash();
+    warmUpBotDecision({ botId: EDGER_BOT_ID, engine: disposable, edgerModel: warmedModel });
+    assert.equal(disposable.getStateHash(), disposableHash);
+    const warmed = playProductionMatch({ redBotId: EDGER_BOT_ID, edgerModel: warmedModel });
+
+    assert.ok(cold.decisions.some(([, actor]) => actor === "red"));
+    assert.deepEqual(warmed.decisions, cold.decisions);
+    assert.equal(warmed.stateHash, cold.stateHash);
+    assert.equal(warmed.nextRedRandom, cold.nextRedRandom);
+  });
+}
 
 test("Edger ML deterministic tie-break chooses the stable action-sort key", () => {
   const engine = makeEngine(["knight", "giant", "arrows", "fireball"]);

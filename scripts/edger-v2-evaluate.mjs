@@ -6,6 +6,7 @@ import path from "node:path";
 import {
   EDGER_V2_EVALUATION_PROFILES,
   evaluateEdgerV2Candidate,
+  summarizeReportedSkills,
 } from "./edger-v2-evaluation-core.mjs";
 
 function parseArgs(argv) {
@@ -21,6 +22,7 @@ function parseArgs(argv) {
     seed: 20260718,
     workers: 16,
     referenceHardware: "unspecified",
+    opportunityBank: null,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -46,6 +48,8 @@ function parseArgs(argv) {
       parsed.workers = Number.parseInt(argv[++index], 10);
     } else if (arg === "--reference-hardware" && argv[index + 1]) {
       parsed.referenceHardware = argv[++index];
+    } else if (arg === "--opportunity-bank" && argv[index + 1]) {
+      parsed.opportunityBank = argv[++index];
     }
   }
   if (!parsed.candidate || !parsed.out) {
@@ -76,6 +80,7 @@ try {
     seed: args.seed,
     workers: args.workers,
     referenceHardware: args.referenceHardware,
+    opportunityBankPath: args.opportunityBank,
   });
   const output = path.resolve(args.out);
   fs.mkdirSync(path.dirname(output), { recursive: true });
@@ -83,6 +88,9 @@ try {
   console.log(`wrote ${output}`);
   console.log(`generated_matches=${report.generated_matches}`);
   console.log(`promotion_passed=${report.promotion.passed ? "yes" : "no"}`);
+  for (const line of summarizeReportedSkills(report.reported)) {
+    console.log(`reported (not a gate): ${line}`);
+  }
   for (const failure of report.promotion.failures) {
     console.log(`promotion_gate_failed: ${failure}`);
   }

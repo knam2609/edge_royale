@@ -1,0 +1,53 @@
+{
+  "evaluation_report_checksum": "083262ddc5d6b016b2319dc5d097f08f2b983d84fa09ac4e20e81a49e147299c",
+  "frozen_league_mean": 0.935,
+  "matchups": {
+    "champion": {
+      "draws": 0,
+      "games": 800,
+      "losses": 80,
+      "paired_bootstrap_95_lower_bound": 0.88,
+      "paired_seeds": 400,
+      "score": 0.9,
+      "wins": 720
+    },
+    "heuristic": {
+      "draws": 0,
+      "games": 200,
+      "losses": 13,
+      "paired_bootstrap_95_lower_bound": 0.9,
+      "paired_seeds": 100,
+      "score": 0.935,
+      "wins": 187
+    },
+    "weak:aggressive": {
+      "draws": 0,
+      "games": 100,
+      "losses": 9,
+      "paired_bootstrap_95_lower_bound": 0.86,
+      "paired_seeds": 50,
+      "score": 0.91,
+      "wins": 91
+    },
+    "weak:defender": {
+      "draws": 0,
+      "games": 100,
+      "losses": 0,
+      "paired_bootstrap_95_lower_bound": 1,
+      "paired_seeds": 50,
+      "score": 1,
+      "wins": 100
+    },
+    "weak:random": {
+      "draws": 0,
+      "games": 100,
+      "losses": 0,
+      "paired_bootstrap_95_lower_bound": 1,
+      "paired_seeds": 50,
+      "score": 1,
+      "wins": 100
+    }
+  },
+  "model_id": "edger_v2_candidate_20261123-L_c3",
+  "schema_version": "edger_v2_reference_report_v1"
+}

@@ -31,6 +31,7 @@ import {
   createTrainingEpisode,
   storeTrainingEpisode,
 } from "./edger-corpus-core.mjs";
+import { leagueOpponentStratum } from "./edger-league-core.mjs";
 
 const modelCache = new Map();
 
@@ -91,7 +92,7 @@ function sampleMainDecision({
   rng,
   temperature,
 }) {
-  const legalActions = enumerateLegalCardActions({ engine, actor });
+  const legalActions = enumerateLegalCardActions({ engine, actor, model });
   const observation = buildEdgerV2Observation({ engine, actor });
   const encodedState = encodeEdgerV2PolicyState({ model, observation });
   const cardMasks = buildEdgerV2LegalMasks({
@@ -174,7 +175,7 @@ function maybeOpponentDecision({
   }
   if (opponent.kind === "model") {
     const model = loadModel(opponent.model_path);
-    const legalActions = enumerateLegalCardActions({ engine, actor });
+    const legalActions = enumerateLegalCardActions({ engine, actor, model });
     const decision = model.schema_version === "edger_policy_model_v2"
       ? selectEdgerV2PolicyDecision({
           model,
@@ -237,6 +238,7 @@ function runSpec(spec) {
   const opponentController = makeOpponentController(spec.seed ^ 0x5f3759df);
   const mainActor = spec.main_actor;
   const opponentActor = mainActor === "blue" ? "red" : "blue";
+  const opponentStratum = leagueOpponentStratum(spec.opponent);
   let mainNextDecisionTick = 1;
   const decisions = [];
 
@@ -257,7 +259,7 @@ function runSpec(spec) {
         action: decision.action,
         delay_ticks: decision.delayTicks,
         behavior_log_probability: decision.behaviorLogProbability,
-        opponent_stratum: spec.opponent.policy_id,
+        opponent_stratum: opponentStratum,
       });
       mainNextDecisionTick = tick + decision.delayTicks;
       if (decision.action.type === "PLAY_CARD") {
@@ -310,6 +312,7 @@ function runSpec(spec) {
     events: engine.state.replay.events,
     result: engine.getMatchResult(),
     finalStateHash: engine.getStateHash(),
+    actionSpaceVersion: model.action_space_version,
     policies,
     source: {
       kind: "simulator",
@@ -327,6 +330,7 @@ function runSpec(spec) {
     seed: spec.seed,
     main_actor: mainActor,
     opponent: spec.opponent.policy_id,
+    opponent_stratum: opponentStratum,
     winner: episode.result.winner,
     episode_id: episode.episode_id,
     uri: stored.uri,

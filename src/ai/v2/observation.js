@@ -1,13 +1,17 @@
 import { DEFAULT_DECK, getCard } from "../../sim/cards.js";
 import { MATCH_CONFIG, getMatchPhase } from "../../sim/config.js";
-import { getTowerStats } from "../../sim/stats.js";
+import { getSpellStats, getTowerStats } from "../../sim/stats.js";
 
-export const EDGER_V2_OBSERVATION_SCHEMA_VERSION = "edger_oracle_observation_v2";
+// v4 (October 26, 2026) adds spell-opportunity globals 96-103 to the v2
+// board. v3's static geometry channels were dropped after the RL comparison;
+// see docs/EDGER_TACTICAL_REVIEW.md proposals 1-2.
+export const EDGER_V2_OBSERVATION_SCHEMA_VERSION = "edger_oracle_observation_v4";
 export const EDGER_V2_ACTION_SPACE_VERSION = "edger_autoregressive_action_v2";
+export const EDGER_FULL_GRID_ACTION_SPACE_VERSION = "edger_autoregressive_full_grid_v1";
 export const EDGER_V2_BOARD_HEIGHT = 32;
 export const EDGER_V2_BOARD_WIDTH = 18;
 export const EDGER_V2_BOARD_CHANNELS = 24;
-export const EDGER_V2_GLOBAL_FEATURES = 96;
+export const EDGER_V2_GLOBAL_FEATURES = 104;
 export const EDGER_V2_CARD_ACTIONS = Object.freeze(["PASS", ...DEFAULT_DECK]);
 export const EDGER_V2_DELAY_BINS = 200;
 
@@ -48,6 +52,9 @@ function canonicalVector(actor, x, y) {
   }
   return { x, y };
 }
+
+const FIREBALL = getSpellStats("fireball");
+const ARROWS = getSpellStats("arrows");
 
 function boardOffset(row, column, channel) {
   return ((row * EDGER_V2_BOARD_WIDTH + column) * EDGER_V2_BOARD_CHANNELS) + channel;
@@ -166,6 +173,34 @@ function towerFeature(entity) {
   return getTowerHpRatio(entity);
 }
 
+function spellLethal(entity, spell) {
+  return entity && entity.hp > 0 && entity.hp <= spell.tower_damage ? 1 : 0;
+}
+
+// The most enemy troops one cast could hit now: the engine's impact rule
+// (troop center within the spell radius) at every cell center, independent of
+// whether the spell is in hand or affordable, which are separate inputs.
+function bestSpellTroopHits(troops, spell) {
+  const radiusSquared = spell.radius_tiles * spell.radius_tiles;
+  let best = 0;
+  for (let row = 0; row < EDGER_V2_BOARD_HEIGHT && best < troops.length; row += 1) {
+    const y = row + 0.5;
+    for (let column = 0; column < EDGER_V2_BOARD_WIDTH; column += 1) {
+      const x = column + 0.5;
+      let hits = 0;
+      for (const troop of troops) {
+        const dx = troop.x - x;
+        const dy = troop.y - y;
+        if (dx * dx + dy * dy <= radiusSquared) {
+          hits += 1;
+        }
+      }
+      best = Math.max(best, hits);
+    }
+  }
+  return best;
+}
+
 function buildGlobalFeatures(engine, actor) {
   const state = engine.state;
   const enemy = otherTeam(actor);
@@ -270,6 +305,14 @@ function buildGlobalFeatures(engine, actor) {
     actor === "blue" ? score.red_tower_hp : score.blue_tower_hp,
     15000,
   );
+
+  // Spell opportunities (v4): inputs only; the policy still decides.
+  [enemyLeft, enemyRight, enemyKing].forEach((tower, index) => {
+    features[96 + index] = spellLethal(tower, FIREBALL);
+    features[99 + index] = spellLethal(tower, ARROWS);
+  });
+  features[102] = safeRatio(bestSpellTroopHits(enemyTroops, FIREBALL), 8);
+  features[103] = safeRatio(bestSpellTroopHits(enemyTroops, ARROWS), 8);
 
   return features;
 }

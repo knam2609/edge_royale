@@ -7,6 +7,8 @@ import { Worker } from "node:worker_threads";
 import {
   HEURISTIC_BOT_ID,
   enumerateLegalCardActions,
+  rollDecisionDelayTicks,
+  selectBotAction,
 } from "../src/ai/botRuntime.js";
 import {
   buildEdgerV2LegalMasks,
@@ -15,18 +17,44 @@ import {
 import {
   computeEdgerV2Logits,
   getEdgerV2ActorParameterCount,
+  selectEdgerV2PolicyDecision,
   validateEdgerV2PolicyModel,
 } from "../src/ai/v2/policy.js";
 import { createRng } from "../src/sim/random.js";
 import { createProductionEngine } from "../src/sim/productionMatch.js";
 import {
   evaluateScenarioLeague,
+  evaluateScenarioFeasibility,
   evaluateTiming,
 } from "./edger-evaluation-core.mjs";
 import { spawnNativePython } from "./python-runtime.mjs";
+import { evaluateOpportunityBankFile } from "./edger-opportunity-bank.mjs";
+import { summarizeMatchSkills } from "./edger-match-skills.mjs";
 
-export const EDGER_V2_EVALUATION_REPORT_SCHEMA = "edger_v2_evaluation_report_v1";
+// v2 (November 20, 2026, docs/EDGER_GATE_REVIEW.md): the tactical scenarios
+// and the held-out Fireball bank moved from gates to the reported section, and
+// in-match skills were added there. v1 reports cannot promote.
+export const EDGER_V2_EVALUATION_REPORT_SCHEMA = "edger_v2_evaluation_report_v2";
 export const EDGER_V2_REFERENCE_REPORT_SCHEMA = "edger_v2_reference_report_v1";
+
+// Training labels that can never reach an acceptance evaluation or promotion
+// (owner, November 23, 2026; docs/EDGER_CANDIDATE_CAMPAIGN.md). The cadence
+// `train-arm` exports carry the first. Smoke-profile diagnostics stay allowed:
+// a smoke report cannot promote.
+export const EDGER_V2_NON_PROMOTABLE_STATUSES = Object.freeze([
+  "diagnostic_only_not_promotable",
+]);
+
+export function assertEdgerV2ModelPromotable(model, { context }) {
+  const status = model?.training?.promotion_status ?? null;
+  if (EDGER_V2_NON_PROMOTABLE_STATUSES.includes(status)) {
+    throw new Error(
+      `${context} refused: model ${model?.model_id ?? "(unknown)"} is labelled ` +
+        `training.promotion_status=${status}`,
+    );
+  }
+  return model;
+}
 
 export const EDGER_V2_EVALUATION_PROFILES = Object.freeze({
   full: Object.freeze({
@@ -213,6 +241,42 @@ export function buildEdgerV2EvaluationSpecs({
   return specs;
 }
 
+export const EDGER_V2_WEAK_BASELINES = Object.freeze(["random", "aggressive", "defender"]);
+
+// The distinct match seeds an evaluation schedule plays, in first-use order.
+// They come from buildEdgerV2EvaluationSpecs itself, with placeholder
+// opponents: the seeds depend only on the seed, the profile and the number of
+// anchors, never on the models. Used to check a new evaluator seed for overlap
+// before it is frozen (candidate campaign, owner decision of November 23, 2026).
+export function edgerV2EvaluationScheduleSeeds({ seed, profileName = "full", anchorCount = 0 }) {
+  const profile = EDGER_V2_EVALUATION_PROFILES[profileName];
+  if (!profile) {
+    throw new Error(`unknown evaluation profile ${profileName}`);
+  }
+  if (!Number.isInteger(seed)) {
+    throw new Error("the evaluator seed must be an integer");
+  }
+  const placeholder = (policyId) => ({ kind: "model", policy_id: policyId, checkpoint_id: null, model_path: null });
+  const specs = buildEdgerV2EvaluationSpecs({
+    seed,
+    profile,
+    champion: placeholder("champion"),
+    heuristic: descriptorForBot(HEURISTIC_BOT_ID),
+    anchors: Array.from({ length: anchorCount }, (_, index) => placeholder(`anchor_${index}`)),
+    weakBaselines: EDGER_V2_WEAK_BASELINES.map(descriptorForBot),
+  });
+  return [...new Set(specs.map((spec) => spec.seed))];
+}
+
+// The live-champion reference (edger:reference:v2) plays consecutive seeds
+// from its --seed, the same pair seeds against every opponent.
+export function edgerV2ReferenceMatchSeeds({ seed, gamesPerOpponent = 200 }) {
+  if (!Number.isInteger(seed)) {
+    throw new Error("the reference seed must be an integer");
+  }
+  return Array.from({ length: gamesPerOpponent / 2 }, (_, pairIndex) => seed + pairIndex);
+}
+
 function runWorker(workerData) {
   return new Promise((resolve, reject) => {
     const worker = new Worker(
@@ -241,6 +305,7 @@ export async function executeEdgerV2EvaluationSpecs({
   candidateModelPath,
   specs,
   workers,
+  trackSkills = false,
 }) {
   const partitions = Array.from(
     { length: Math.min(workers, specs.length) },
@@ -255,6 +320,7 @@ export async function executeEdgerV2EvaluationSpecs({
         runWorker({
           candidateModelPath: path.resolve(candidateModelPath),
           specs: partition,
+          trackSkills,
         })),
     )
   ).flat();
@@ -359,38 +425,370 @@ function externalGate(filePath, label, expectedGitCommit) {
   return { ...gate, report: path.resolve(filePath) };
 }
 
-export function checkCandidateParity(modelPath, model) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "edger-v2-eval-parity-"));
-  try {
-    const engine = createProductionEngine({ seed: 20260718 });
-    const legalActions = enumerateLegalCardActions({ engine, actor: "red" });
-    const observation = buildEdgerV2Observation({ engine, actor: "red" });
+// Legal logits must satisfy |js - pytorch| <= max(1e-5, 4 * ulp32(magnitude))
+// against PyTorch float32 (option C, approved October 25, 2026). Below
+// magnitude 32 the bound is exactly 1e-5; above it, 4 ULP. Masked coordinates
+// keep the absolute 1e-5. See docs/EDGER_PARITY_CONTRACT_REVIEW.md.
+export const EDGER_V2_PARITY_TOLERANCE = 1e-5;
+export const EDGER_V2_PARITY_ULP_MULTIPLE = 4;
+const EDGER_V2_PARITY_TOLERANCE_RULE =
+  "legal: |js - pytorch| <= max(1e-5, 4 * ulp32(max(|js|, |pytorch|))); masked: <= 1e-5";
+// Mid-match states, not just the opening position: the September campaign's
+// parity failure only appeared once activations had grown during a match.
+export const EDGER_V2_PARITY_SEEDS = Object.freeze([20260718, 20260719, 20260720]);
+const PARITY_STATES_PER_SEED = 6;
+const PARITY_STATE_STRIDE_TICKS = 240;
+export function float32Ulp(magnitude) {
+  const value = Math.abs(magnitude);
+  if (!Number.isFinite(value) || value === 0) {
+    return 2 ** -149;
+  }
+  const view = new DataView(new ArrayBuffer(4));
+  view.setFloat32(0, value);
+  const exponent = (view.getUint32(0) >>> 23) & 0xff;
+  return exponent === 0 ? 2 ** -149 : 2 ** (exponent - 127 - 23);
+}
+
+export function edgerV2ParityTolerance(jsValue, pytorchValue) {
+  const magnitude = Math.max(Math.abs(jsValue), Math.abs(pytorchValue));
+  return Math.max(
+    EDGER_V2_PARITY_TOLERANCE,
+    EDGER_V2_PARITY_ULP_MULTIPLE * float32Ulp(magnitude),
+  );
+}
+
+function parityFixturesFor(model, engine, stateId) {
+  const legalActions = enumerateLegalCardActions({ engine, actor: "red", model });
+  const observation = buildEdgerV2Observation({ engine, actor: "red" });
+  const cardMask = buildEdgerV2LegalMasks({ actor: "red", legalActions }).card;
+  const fixtures = [];
+  // Preserve the original PASS fixture, then exercise every legal card branch.
+  // A PASS-only fixture masks all placement cells except zero and never tests
+  // the other card embeddings or the delay head at a selected play location.
+  for (let cardIndex = 0; cardIndex < cardMask.length; cardIndex += 1) {
+    if (!cardMask[cardIndex]) {
+      continue;
+    }
     const masks = buildEdgerV2LegalMasks({
-      actor: "red",
-      legalActions,
-      selectedCardIndex: 0,
+      actor: "red", legalActions, selectedCardIndex: cardIndex,
     });
+    const id = cardIndex === 0 ? stateId : `${stateId}-card${cardIndex}`;
     const js = computeEdgerV2Logits({
       model,
       observation,
       legalMasks: masks,
-      forcedCardIndex: 0,
-      forcedPlacementIndex: 0,
+      forcedCardIndex: cardIndex,
     });
-    const fixturePath = path.join(root, "fixture.json");
+    fixtures.push({
+      id,
+      stateId,
+      masks,
+      js,
+      payload: {
+        id,
+        observation: {
+          board: Array.from(observation.board),
+          global: Array.from(observation.global),
+        },
+        legal_masks: {
+          card: Array.from(masks.card),
+          placement: Array.from(masks.placement),
+          delay: Array.from(masks.delay),
+        },
+        forced_card_index: cardIndex,
+        forced_placement_index: js.selected.placement_index,
+      },
+    });
+  }
+  return fixtures;
+}
+
+export function buildCandidateParityFixtures(model, { seeds = EDGER_V2_PARITY_SEEDS } = {}) {
+  const fixtures = [];
+  for (const [index, seed] of seeds.entries()) {
+    const engine = createProductionEngine({ seed });
+    const opening = index === 0;
+    if (opening) {
+      // The original opening fixture stays first so historical reports stay comparable.
+      fixtures.push(...parityFixturesFor(model, engine, `opening-${seed}`));
+    }
+    const opponentRng = createRng(seed ^ 0x5f3759df);
+    let candidateNextTick = 1;
+    let opponentNextTick = 1;
+    let captured = 0;
+    let lastCaptureTick = opening ? 0 : -Infinity;
+    while (engine.state.tick < 6040 && !engine.getMatchResult() && captured < PARITY_STATES_PER_SEED) {
+      const tick = engine.state.tick + 1;
+      const actions = [];
+      if (tick >= candidateNextTick) {
+        const legalActions = enumerateLegalCardActions({ engine, actor: "red", model });
+        const decision = selectEdgerV2PolicyDecision({ model, engine, actor: "red", legalActions });
+        if (legalActions.length > 0 && tick - lastCaptureTick >= PARITY_STATE_STRIDE_TICKS) {
+          fixtures.push(...parityFixturesFor(model, engine, `seed${seed}-tick${tick}`));
+          captured += 1;
+          lastCaptureTick = tick;
+        }
+        candidateNextTick = tick + (decision.delayTicks ?? 1);
+        const action = decision.action;
+        if (action?.type === "PLAY_CARD" && legalActions.some((candidate) =>
+          candidate.cardId === action.cardId && candidate.x === action.x && candidate.y === action.y)) {
+          actions.push({ tick, type: "PLAY_CARD", actor: "red", cardId: action.cardId, x: action.x, y: action.y });
+        }
+      }
+      if (tick >= opponentNextTick) {
+        const legalActions = enumerateLegalCardActions({ engine, actor: "blue" });
+        const selected = selectBotAction({
+          botId: HEURISTIC_BOT_ID,
+          engine,
+          actor: "blue",
+          legalActions,
+          rng: opponentRng,
+        });
+        opponentNextTick = tick + rollDecisionDelayTicks({ botId: HEURISTIC_BOT_ID, rng: opponentRng });
+        if (selected?.type === "PLAY_CARD") {
+          actions.push({ tick, type: "PLAY_CARD", actor: "blue", cardId: selected.cardId, x: selected.x, y: selected.y });
+        }
+      }
+      engine.step(actions);
+      if (engine.shouldStartOvertime()) {
+        engine.setOvertime(true);
+      }
+    }
+  }
+  return fixtures;
+}
+
+function maskedArgmaxOf(values, mask) {
+  let bestIndex = 0;
+  let bestValue = -Infinity;
+  for (let index = 0; index < values.length; index += 1) {
+    if (mask[index] && values[index] > bestValue) {
+      bestIndex = index;
+      bestValue = values[index];
+    }
+  }
+  return bestIndex;
+}
+
+function legalTop(values, mask) {
+  let best = -Infinity;
+  for (let index = 0; index < values.length; index += 1) {
+    if (mask[index] && values[index] > best) {
+      best = values[index];
+    }
+  }
+  const ties = [];
+  let runnerUp = -Infinity;
+  for (let index = 0; index < values.length; index += 1) {
+    if (!mask[index]) {
+      continue;
+    }
+    if (values[index] === best) {
+      ties.push(index);
+    } else if (values[index] > runnerUp) {
+      runnerUp = values[index];
+    }
+  }
+  return { ties, gap: best - runnerUp };
+}
+
+// Compares a parity bank's JS logits with PyTorch's output for the same
+// fixtures. Separated from checkCandidateParity so the contract can be checked
+// against recorded logits without a PyTorch process.
+export function compareCandidateParity(fixtures, pytorchFixtures) {
+  const heads = {};
+  for (const head of ["card", "placement", "delay"]) {
+    heads[head] = {
+      maximum_logit_difference: 0,
+      maximum_legal_logit_magnitude: 0,
+      maximum_ulp_error: 0,
+    };
+  }
+  let maximumDifference = 0;
+  let maximumMagnitude = 0;
+  let argmaxAgreement = true;
+  let tieSetAgreement = true;
+  let toleranceExceedances = 0;
+  let nonFinite = 0;
+  const fixtureReports = [];
+  const fragileMargins = [];
+  let openingArgmax = null;
+  let worstAbsoluteError = null;
+  let worstToleranceError = null;
+
+  for (let index = 0; index < fixtures.length; index += 1) {
+    const { id, stateId, payload, masks, js } = fixtures[index];
+    const pytorch = pytorchFixtures[index];
+    if (pytorch.id !== id) {
+      return fail("PyTorch parity returned fixtures out of order", {
+        expected_fixture: id,
+        received_fixture: pytorch.id ?? null,
+      });
+    }
+    let fixtureDifference = 0;
+    let fixtureMagnitude = 0;
+    let fixtureUlpError = 0;
+    let fixtureExceedances = 0;
+    const fixtureTieSetAgreement = {};
+    const fixtureFragileHeads = [];
+    for (const head of ["card", "placement", "delay"]) {
+      const jsValues = Array.from(js[head]);
+      if (!Array.isArray(pytorch[head]) || pytorch[head].length !== jsValues.length) {
+        return fail(`PyTorch ${head} logit shape mismatch`, { fixture: id });
+      }
+      let headLegalDifference = 0;
+      for (let position = 0; position < jsValues.length; position += 1) {
+        const jsValue = jsValues[position];
+        const pytorchValue = pytorch[head][position];
+        if (!Number.isFinite(jsValue) || !Number.isFinite(pytorchValue)) {
+          nonFinite += 1;
+          continue;
+        }
+        const difference = Math.abs(jsValue - pytorchValue);
+        fixtureDifference = Math.max(fixtureDifference, difference);
+        heads[head].maximum_logit_difference = Math.max(
+          heads[head].maximum_logit_difference,
+          difference,
+        );
+        const legal = Boolean(masks[head][position]);
+        const tolerance = legal
+          ? edgerV2ParityTolerance(jsValue, pytorchValue)
+          : EDGER_V2_PARITY_TOLERANCE;
+        if (difference > tolerance) {
+          fixtureExceedances += 1;
+        }
+        if (worstToleranceError === null || difference / tolerance > worstToleranceError.tolerance_ratio) {
+          worstToleranceError = {
+            fixture: id, head, index: position, legal,
+            js_value: jsValue, pytorch_value: pytorchValue,
+            absolute_difference: difference, tolerance, tolerance_ratio: difference / tolerance,
+          };
+        }
+        if (legal) {
+          headLegalDifference = Math.max(headLegalDifference, difference);
+          const magnitude = Math.max(Math.abs(jsValue), Math.abs(pytorchValue));
+          const ulp = float32Ulp(magnitude);
+          const ulpError = difference / ulp;
+          fixtureUlpError = Math.max(fixtureUlpError, ulpError);
+          heads[head].maximum_ulp_error = Math.max(heads[head].maximum_ulp_error, ulpError);
+          if (worstAbsoluteError === null || difference > worstAbsoluteError.absolute_difference) {
+            worstAbsoluteError = {
+              fixture: id, head, index: position,
+              js_value: jsValue, pytorch_value: pytorchValue,
+              absolute_difference: difference, float32_ulp: ulp, ulp_error: ulpError,
+            };
+          }
+          fixtureMagnitude = Math.max(fixtureMagnitude, magnitude);
+          heads[head].maximum_legal_logit_magnitude = Math.max(
+            heads[head].maximum_legal_logit_magnitude,
+            magnitude,
+          );
+        }
+      }
+      const jsTop = legalTop(jsValues, masks[head]);
+      const pytorchTop = legalTop(pytorch[head], masks[head]);
+      fixtureTieSetAgreement[head] =
+        jsTop.ties.length === pytorchTop.ties.length &&
+        jsTop.ties.every((position, rank) => position === pytorchTop.ties[rank]);
+      // A top choice whose PyTorch margin over the next distinct legal logit is
+      // within twice the measured error could flip under a different
+      // accumulation order. It does not fail the gate; it needs review.
+      if (Number.isFinite(pytorchTop.gap) && pytorchTop.gap <= 2 * headLegalDifference) {
+        fixtureFragileHeads.push(head);
+        fragileMargins.push({
+          fixture: id, head, pytorch_margin: pytorchTop.gap, maximum_legal_difference: headLegalDifference,
+        });
+      }
+    }
+    const jsArgmax = {
+      card: maskedArgmaxOf(js.card, masks.card),
+      placement: maskedArgmaxOf(js.placement, masks.placement),
+      delay: maskedArgmaxOf(js.delay, masks.delay),
+    };
+    const pytorchArgmax = {
+      card: pytorch.card_argmax,
+      placement: pytorch.placement_argmax,
+      delay: pytorch.delay_argmax,
+    };
+    const fixtureAgreement =
+      jsArgmax.card === pytorchArgmax.card &&
+      jsArgmax.placement === pytorchArgmax.placement &&
+      jsArgmax.delay === pytorchArgmax.delay;
+    const fixtureTieAgreement = Object.values(fixtureTieSetAgreement).every(Boolean);
+    argmaxAgreement = argmaxAgreement && fixtureAgreement;
+    tieSetAgreement = tieSetAgreement && fixtureTieAgreement;
+    toleranceExceedances += fixtureExceedances;
+    maximumDifference = Math.max(maximumDifference, fixtureDifference);
+    maximumMagnitude = Math.max(maximumMagnitude, fixtureMagnitude);
+    if (openingArgmax === null) {
+      openingArgmax = { js: jsArgmax, pytorch: pytorchArgmax };
+    }
+    fixtureReports.push({
+      id,
+      state_id: stateId,
+      forced_card_index: payload.forced_card_index,
+      forced_placement_index: payload.forced_placement_index,
+      maximum_logit_difference: fixtureDifference,
+      maximum_legal_logit_magnitude: fixtureMagnitude,
+      maximum_ulp_error: fixtureUlpError,
+      tolerance_exceedances: fixtureExceedances,
+      argmax_agreement: fixtureAgreement,
+      tie_set_agreement: fixtureTieAgreement,
+      fragile_margin_heads: fixtureFragileHeads,
+    });
+  }
+
+  const ulp = float32Ulp(maximumMagnitude);
+  // ULP spacing describes scale, not an error bound or a root cause. Two
+  // implementations can agree exactly at large magnitudes, or accumulate
+  // substantial error at small magnitudes. Only measured parity gates pass.
+  const details = {
+    maximum_logit_difference: maximumDifference,
+    maximum_legal_logit_magnitude: maximumMagnitude,
+    float32_ulp: ulp,
+    maximum_ulp_error: Math.max(...Object.values(heads).map((head) => head.maximum_ulp_error)),
+    worst_absolute_error: worstAbsoluteError,
+    tolerance: EDGER_V2_PARITY_TOLERANCE,
+    ulp_tolerance_multiple: EDGER_V2_PARITY_ULP_MULTIPLE,
+    tolerance_rule: EDGER_V2_PARITY_TOLERANCE_RULE,
+    tolerance_exceedances: toleranceExceedances,
+    worst_tolerance_error: worstToleranceError,
+    heads,
+    fixture_count: fixtures.length,
+    state_count: new Set(fixtures.map((fixture) => fixture.stateId)).size,
+    card_indices_covered: [...new Set(fixtures.map((fixture) => fixture.payload.forced_card_index))].sort((a, b) => a - b),
+    fixtures: fixtureReports,
+    argmax_agreement: argmaxAgreement,
+    tie_set_agreement: tieSetAgreement,
+    fragile_margin_count: fragileMargins.length,
+    fragile_margins: fragileMargins,
+    review_required: fragileMargins.length > 0,
+    js_argmax: openingArgmax.js,
+    pytorch_argmax: openingArgmax.pytorch,
+  };
+  if (nonFinite > 0) {
+    return fail("non-finite parity logits", { ...details, non_finite_logits: nonFinite });
+  }
+  if (!argmaxAgreement) {
+    return fail("PyTorch/generated-JS argmax disagreement", details);
+  }
+  if (!tieSetAgreement) {
+    return fail("PyTorch/generated-JS tie-set disagreement", details);
+  }
+  if (toleranceExceedances > 0) {
+    return fail("PyTorch/generated-JS parity exceeded tolerance", details);
+  }
+  return pass(details);
+}
+
+export function checkCandidateParity(modelPath, model) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "edger-v2-eval-parity-"));
+  try {
+    const fixtures = buildCandidateParityFixtures(model);
+    const fixturePath = path.join(root, "fixtures.json");
     const outputPath = path.join(root, "pytorch.json");
     fs.writeFileSync(fixturePath, JSON.stringify({
-      observation: {
-        board: Array.from(observation.board),
-        global: Array.from(observation.global),
-      },
-      legal_masks: {
-        card: Array.from(masks.card),
-        placement: Array.from(masks.placement),
-        delay: Array.from(masks.delay),
-      },
-      forced_card_index: 0,
-      forced_placement_index: 0,
+      fixtures: fixtures.map((fixture) => fixture.payload),
     }));
     const result = spawnNativePython([
       "scripts/edger-v2-training.py",
@@ -405,58 +803,82 @@ export function checkCandidateParity(modelPath, model) {
     if (result.status !== 0) {
       return fail("PyTorch parity process failed", { stderr: result.stderr });
     }
-    const pytorch = JSON.parse(fs.readFileSync(outputPath, "utf8"));
-    let maximumDifference = 0;
-    for (const head of ["card", "placement", "delay"]) {
-      const jsValues = Array.from(js[head]);
-      for (let index = 0; index < jsValues.length; index += 1) {
-        maximumDifference = Math.max(
-          maximumDifference,
-          Math.abs(jsValues[index] - pytorch[head][index]),
-        );
-      }
+    const pytorchFixtures = JSON.parse(fs.readFileSync(outputPath, "utf8")).fixtures;
+    if (!Array.isArray(pytorchFixtures) || pytorchFixtures.length !== fixtures.length) {
+      return fail("PyTorch parity returned the wrong fixture count");
     }
-    const maskedArgmax = (values, mask) => {
-      let bestIndex = 0;
-      let bestValue = -Infinity;
-      for (let index = 0; index < values.length; index += 1) {
-        if (mask[index] && values[index] > bestValue) {
-          bestIndex = index;
-          bestValue = values[index];
-        }
-      }
-      return bestIndex;
-    };
-    const jsArgmax = {
-      card: maskedArgmax(js.card, masks.card),
-      placement: maskedArgmax(js.placement, masks.placement),
-      delay: maskedArgmax(js.delay, masks.delay),
-    };
-    const pytorchArgmax = {
-      card: pytorch.card_argmax,
-      placement: pytorch.placement_argmax,
-      delay: pytorch.delay_argmax,
-    };
-    const argmaxAgreement =
-      pytorchArgmax.card === jsArgmax.card &&
-      pytorchArgmax.placement === jsArgmax.placement &&
-      pytorchArgmax.delay === jsArgmax.delay;
-    return maximumDifference <= 1e-5 && argmaxAgreement
-      ? pass({
-          maximum_logit_difference: maximumDifference,
-          argmax_agreement: true,
-          js_argmax: jsArgmax,
-          pytorch_argmax: pytorchArgmax,
-        })
-      : fail("PyTorch/generated-JS parity exceeded tolerance", {
-          maximum_logit_difference: maximumDifference,
-          argmax_agreement: argmaxAgreement,
-          js_argmax: jsArgmax,
-          pytorch_argmax: pytorchArgmax,
-        });
+    return compareCandidateParity(fixtures, pytorchFixtures);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+}
+
+
+// Reported sections never pass or fail promotion. Their top-level and
+// per-category "passed" become "minimums_met" so they cannot be read as gates.
+function asReported(section) {
+  const { passed, categories, ...rest } = section;
+  return {
+    blocking: false,
+    minimums_met: passed,
+    ...rest,
+    ...(categories ? {
+      categories: Object.fromEntries(Object.entries(categories).map(([name, category]) => {
+        const { passed: categoryPassed, ...categoryRest } = category;
+        return [name, { ...categoryRest, minimum_met: categoryPassed }];
+      })),
+    } : {}),
+  };
+}
+
+// The reported suites need valid inputs: a feasible tactical suite and a valid
+// frozen bank with both classes. Missing or invalid inputs still stop the
+// evaluation, so every report carries both measures.
+function skillReportInputsGate(feasibility, bank) {
+  const bankValid = typeof bank.bank_sha256 === "string" && Boolean(bank.categories) &&
+    Object.values(bank.categories).every((category) => category.count > 0);
+  if (!feasibility.passed) {
+    return fail("tactical fixture minimum is unreachable or production setup is invalid", {
+      tactical_feasibility: feasibility,
+    });
+  }
+  if (!bankValid) {
+    return fail(bank.reason?.startsWith("held-out Fireball capture")
+      ? "opportunity bank has an empty class"
+      : bank.reason ?? "opportunity bank is invalid");
+  }
+  return pass({
+    tactical_schema_version: feasibility.schema_version,
+    bank_sha256: bank.bank_sha256,
+    bank_artifact_checksum: bank.artifact_checksum,
+  });
+}
+
+export function evaluateEdgerV2Preflight({ candidateModelPath, candidate, referenceHardware, opportunityBankPath = null }) {
+  const scenarios = evaluateScenarioLeague(candidate);
+  const feasibility = evaluateScenarioFeasibility();
+  const timing = evaluateTiming(candidate, { samples: 100, budgetMs: 5 });
+  const bank = evaluateOpportunityBankFile(candidate, opportunityBankPath);
+  const gates = {
+    pytorch_js_parity: checkCandidateParity(candidateModelPath, candidate),
+    skill_report_inputs: skillReportInputsGate(feasibility, bank),
+    generated_js_timing: timing.passed
+      ? pass({ ...timing, reference_hardware: referenceHardware })
+      : fail("generated-JS p95 exceeded 5 ms", { ...timing, reference_hardware: referenceHardware }),
+  };
+  const reported = {
+    tactical_scenarios: asReported({
+      passed: scenarios.passed,
+      candidate_aggregate: scenarios.candidate_aggregate,
+      heuristic_aggregate: scenarios.heuristic_aggregate,
+      improved_over_heuristic: scenarios.improved_over_heuristic,
+      categories: scenarios.categories,
+      feasibility_passed: feasibility.passed,
+      schema_version: scenarios.schema_version,
+    }),
+    heldout_fireball: asReported(bank),
+  };
+  return { passed: Object.values(gates).every((gate) => gate.passed), gates, reported, scenarios, timing };
 }
 
 function safetyGate(results, requiredMatches) {
@@ -513,18 +935,24 @@ export async function evaluateEdgerV2Candidate({
   seed = 20260718,
   workers = 16,
   referenceHardware = "unspecified",
+  opportunityBankPath = null,
 }) {
   const profile = EDGER_V2_EVALUATION_PROFILES[profileName] ??
     EDGER_V2_EVALUATION_PROFILES.full;
   const candidate = validateEdgerV2PolicyModel(
     JSON.parse(fs.readFileSync(candidateModelPath, "utf8")),
   );
+  // An unknown profile name falls back to the full profile above, so the
+  // refusal keys on the profile itself. It runs before any match is played.
+  if (profile.acceptance_profile) {
+    assertEdgerV2ModelPromotable(candidate, { context: "v2 full evaluation" });
+  }
   const campaignGitCommit = candidate.training?.git_commit ?? null;
   const candidateBytes = fs.statSync(candidateModelPath).size;
   const champion = descriptorForModel(championModelPath);
   const anchors = anchorModelPaths.map(descriptorForModel);
   const heuristic = descriptorForBot(HEURISTIC_BOT_ID);
-  const weakBaselines = ["random", "aggressive", "defender"].map(descriptorForBot);
+  const weakBaselines = EDGER_V2_WEAK_BASELINES.map(descriptorForBot);
   const specs = buildEdgerV2EvaluationSpecs({
     seed,
     profile,
@@ -533,18 +961,23 @@ export async function evaluateEdgerV2Candidate({
     anchors,
     weakBaselines,
   });
-  const results = await executeEdgerV2EvaluationSpecs({
+  // Reject deterministic/cheap failures before paying for the match suite.
+  const preflight = evaluateEdgerV2Preflight({ candidateModelPath, candidate, referenceHardware, opportunityBankPath });
+  const results = preflight.passed ? await executeEdgerV2EvaluationSpecs({
     candidateModelPath,
     specs,
     workers,
-  });
+    trackSkills: true,
+  }) : [];
   const byGroup = new Map();
   for (const result of results) {
     const list = byGroup.get(result.group) ?? [];
     list.push(result);
     byGroup.set(result.group, list);
   }
-  const matchups = {};
+  const matchups = {
+    champion: summarizeMatchup([], { bootstrapSeed: seed, bootstrapResamples: profile.bootstrap_resamples }),
+  };
   for (const [group, groupResults] of byGroup) {
     if (group === "safety") {
       continue;
@@ -633,8 +1066,7 @@ export async function evaluateEdgerV2Candidate({
           improvement: referenceMean === null ? null : frozenMean - referenceMean,
           worst_anchor_score: worstAnchor,
         });
-  const scenarios = evaluateScenarioLeague(candidate);
-  const timing = evaluateTiming(candidate, { samples: 100, budgetMs: 5 });
+  const { scenarios, timing } = preflight;
   const allReplayChecked = results.filter((result) => result.replay_checked);
   const replayPassed = allReplayChecked.length > 0 &&
     allReplayChecked.every((result) => result.replay_passed);
@@ -649,32 +1081,19 @@ export async function evaluateEdgerV2Candidate({
             artifact_bytes: candidateBytes,
           })
         : fail("v2 actor parameter/byte cap failed"),
-    pytorch_js_parity: checkCandidateParity(candidateModelPath, candidate),
+    pytorch_js_parity: preflight.gates.pytorch_js_parity,
     champion: championGate,
     anchors: anchorsGate,
     weak_baselines: weakGate,
     frozen_league: frozenGate,
     safety: safetyGate(results, profile.safety_games),
-    tactical_scenarios: scenarios.passed
-      ? pass({
-          candidate_aggregate: scenarios.candidate_aggregate,
-          heuristic_aggregate: scenarios.heuristic_aggregate,
-        })
-      : fail("tactical scenario league failed", {
-          candidate_aggregate: scenarios.candidate_aggregate,
-          heuristic_aggregate: scenarios.heuristic_aggregate,
-        }),
+    skill_report_inputs: preflight.gates.skill_report_inputs,
     replay: replayPassed
       ? pass({ checked_matches: allReplayChecked.length })
       : fail("generated-action replay verification failed", {
           checked_matches: allReplayChecked.length,
         }),
-    generated_js_timing: timing.passed
-      ? pass({ ...timing, reference_hardware: referenceHardware })
-      : fail("generated-JS p95 exceeded 5 ms", {
-          ...timing,
-          reference_hardware: referenceHardware,
-        }),
+    generated_js_timing: preflight.gates.generated_js_timing,
     full_test_suite: externalGate(
       testReportPath,
       "full test suite",
@@ -686,6 +1105,11 @@ export async function evaluateEdgerV2Candidate({
       campaignGitCommit,
     ),
   };
+  if (!preflight.passed) {
+    for (const name of ["champion", "anchors", "weak_baselines", "frozen_league", "safety", "replay"]) {
+      gates[name] = fail("not run: candidate preflight failed", { skipped: true });
+    }
+  }
   const failures = Object.entries(gates)
     .filter(([, gate]) => !gate.passed)
     .map(([name, gate]) => `${name}: ${gate.reason}`);
@@ -706,6 +1130,7 @@ export async function evaluateEdgerV2Candidate({
     specs_checksum: sha256Json(specs),
     results_checksum: sha256Json(results),
     generated_matches: results.length,
+    match_suite_skipped: !preflight.passed,
     matchups,
     champion_blocks: championBlocks,
     frozen_league_mean: frozenMean,
@@ -713,6 +1138,12 @@ export async function evaluateEdgerV2Candidate({
     scenarios,
     timing,
     gates,
+    // Never gates: shown beside the match gates for the owner's separate
+    // promotion approval (docs/EDGER_GATE_REVIEW.md, November 20, 2026).
+    reported: {
+      ...preflight.reported,
+      match_skills: summarizeMatchSkills(results),
+    },
     promotion: {
       passed: failures.length === 0,
       failures,
@@ -720,9 +1151,43 @@ export async function evaluateEdgerV2Candidate({
   };
 }
 
+// Plain-text lines for the reported (non-gating) sections, printed by the
+// evaluate and promote commands.
+export function summarizeReportedSkills(reported) {
+  if (!reported) return [];
+  const lines = [];
+  const fixed = (value) => (typeof value === "number" ? value.toFixed(3) : "n/a");
+  const tactical = reported.tactical_scenarios;
+  if (tactical) {
+    const categories = Object.entries(tactical.categories ?? {})
+      .map(([name, category]) => `${name} ${fixed(category.candidate_score)}`).join(", ");
+    lines.push(`tactical aggregate ${fixed(tactical.candidate_aggregate)} (heuristic ${fixed(tactical.heuristic_aggregate)}); ` +
+      `category minimums met: ${tactical.minimums_met ? "yes" : "no"} [${categories}]`);
+  }
+  const bank = reported.heldout_fireball;
+  if (bank?.categories) {
+    const classes = Object.entries(bank.categories)
+      .map(([name, category]) => `${name} ${category.candidate_captures}/${category.count}`).join(", ");
+    lines.push(`held-out Fireball captures ${classes}; minimums met: ${bank.minimums_met ? "yes" : "no"}`);
+  } else if (bank) {
+    lines.push(`held-out Fireball: ${bank.reason ?? "not evaluated"}`);
+  }
+  const pooled = reported.match_skills?.pooled_excluding_safety;
+  if (pooled) {
+    const usage = Object.entries(pooled.deployments_per_game)
+      .map(([card, value]) => `${card} ${fixed(value)}`).join(", ");
+    lines.push(`in-match deployments per game over ${pooled.games} non-safety games: ${usage}`);
+    const capture = Object.entries(pooled.fireball_opportunities)
+      .map(([name, entry]) => `${name} ${entry.captures}/${entry.decisions} decisions, ` +
+        `${entry.games_with_capture}/${entry.games_with_opportunity} games`).join("; ");
+    lines.push(`in-match Fireball capture: ${capture}`);
+  }
+  return lines;
+}
+
 export function createEdgerV2ReferenceReport(evaluationReport) {
   if (evaluationReport.schema_version !== EDGER_V2_EVALUATION_REPORT_SCHEMA) {
-    throw new Error("reference source must be an edger_v2_evaluation_report_v1");
+    throw new Error(`reference source must be an ${EDGER_V2_EVALUATION_REPORT_SCHEMA}`);
   }
   return {
     schema_version: EDGER_V2_REFERENCE_REPORT_SCHEMA,

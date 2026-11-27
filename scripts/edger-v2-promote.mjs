@@ -7,13 +7,19 @@ import path from "node:path";
 import { validateEdgerV2PolicyModel } from "../src/ai/v2/policy.js";
 import {
   EDGER_V2_EVALUATION_REPORT_SCHEMA,
+  assertEdgerV2ModelPromotable,
   createEdgerV2ReferenceReport,
+  summarizeReportedSkills,
 } from "./edger-v2-evaluation-core.mjs";
 
 const PROMOTED_MODEL = "artifacts/edger-training/promoted/edger_policy_current.json";
 const PROMOTED_REPORT = "artifacts/edger-training/promoted/edger_policy_current_report.json";
 const PROMOTED_REFERENCE = "artifacts/edger-training/promoted/edger_policy_current_reference.json";
 const GENERATED_MODEL = "src/ai/generated/edgerPolicyCurrent.js";
+// The tactical scenarios, held-out Fireball bank and in-match skills are
+// reported, not gates (owner, November 20, 2026; docs/EDGER_GATE_REVIEW.md).
+// A report must still carry all three, and they are printed for review.
+const REQUIRED_REPORTED = ["tactical_scenarios", "heldout_fireball", "match_skills"];
 const REQUIRED_GATES = [
   "acceptance_profile",
   "schema_and_size",
@@ -23,7 +29,7 @@ const REQUIRED_GATES = [
   "weak_baselines",
   "frozen_league",
   "safety",
-  "tactical_scenarios",
+  "skill_report_inputs",
   "replay",
   "generated_js_timing",
   "full_test_suite",
@@ -69,6 +75,9 @@ function writeJson(filePath, value) {
 
 const args = parseArgs(process.argv.slice(2));
 const model = validateEdgerV2PolicyModel(JSON.parse(fs.readFileSync(args.model, "utf8")));
+// Checked first, whatever the report says. The report's artifact checksum
+// binds the exact bytes, so relabelling the model breaks that match.
+assertEdgerV2ModelPromotable(model, { context: "v2 promotion" });
 const report = JSON.parse(fs.readFileSync(args.report, "utf8"));
 if (report.schema_version !== EDGER_V2_EVALUATION_REPORT_SCHEMA) {
   throw new Error(`report schema must be ${EDGER_V2_EVALUATION_REPORT_SCHEMA}`);
@@ -81,6 +90,10 @@ if (report.candidate_model_id !== model.model_id) {
 }
 if (report.candidate_artifact_checksum !== sha256File(args.model)) {
   throw new Error("evaluation report artifact checksum does not match candidate");
+}
+const missingReported = REQUIRED_REPORTED.filter((name) => !report.reported?.[name]);
+if (missingReported.length > 0) {
+  throw new Error(`v2 promotion refused; report lacks reported sections: ${missingReported.join(", ")}`);
 }
 const failedGates = REQUIRED_GATES.filter((name) => report.gates?.[name]?.passed !== true);
 if (!report.promotion?.passed || failedGates.length > 0) {
@@ -114,6 +127,9 @@ fs.writeFileSync(
     `export const EDGER_POLICY_MODEL = ${JSON.stringify(canonical(model), null, 2)};\n\n` +
     "export default EDGER_POLICY_MODEL;\n",
 );
+for (const line of summarizeReportedSkills(report.reported)) {
+  console.log(`reported (not a gate): ${line}`);
+}
 console.log(`promoted ${model.model_id}`);
 console.log(`wrote ${PROMOTED_MODEL}`);
 console.log(`wrote ${PROMOTED_REPORT}`);

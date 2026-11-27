@@ -15,15 +15,15 @@ There are no player-facing bot levels, unlock gates, model selectors, self-play 
 
 ## Runtime model
 
-The live browser opponent still imports the promoted `edger_policy_model_v1` artifact synchronously from `src/ai/generated/edgerPolicyCurrent.js`. The compact `edger_policy_model_v2` actor exists beside it in shadow mode and cannot become live until every v2 scaling, safety, quality, replay, timing, test, and browser gate passes.
+Since the owner approved it on November 25, 2026 (merged into `edger-v2-accumulated` November 26 and proposed to `main` by pull request on November 28), the live browser opponent imports the promoted `edger_policy_model_v2` artifact `edger_v2_candidate_20261123-L_c3` synchronously from `src/ai/generated/edgerPolicyCurrent.js`. It plays the full grid with its own learned decision delay. It passed every safety, quality, replay, timing, test, and browser gate of the full evaluation before the owner approved it ([result](docs/EDGER_CANDIDATE_CAMPAIGN.md#owner-promotion-decision-november-25-2026)). The retired v1 bootstrap (`edger_policy_model_v1`) is kept byte for byte in `artifacts/edger-training/retired/edger_policy_bootstrap_20260701/`. Any later v2 model must again pass a full evaluation and a separate owner approval. The fixed 1%/10%/100% data-scaling proof gates the production league-training path, not promotion (owner, November 23, 2026; [candidate campaign review](docs/EDGER_CANDIDATE_CAMPAIGN.md)).
 
 V2 uses:
 
-- a relative-side `32×18×24` board and 96 full-oracle global features
+- a relative-side `32×18×24` board (24 entity/effect channels) and 104 full-oracle global features (96 plus 8 spell-opportunity inputs), observation schema `edger_oracle_observation_v4`
 - masked autoregressive card, row-major placement, and 1–200 tick delay heads
 - deterministic argmax and stable ties in production
 - no handcrafted heuristic prior
-- 36,402 exported actor parameters, below the 50,000 parameter and 1 MB limits
+- 36,914 exported actor parameters, below the 50,000 parameter and 1 MB limits
 
 The frozen handcrafted oracle remains `edger_heuristic` (alias `heuristic`) for corpus teaching, league opposition, and evaluation only.
 
@@ -37,7 +37,9 @@ npm run dev
 Open `http://127.0.0.1:5173`.
 
 The repository pins native Node 20 through `.node-version`. Browser validation
-also requires `npx playwright install chromium`.
+also requires `npx playwright install chromium`. On the current local host, run
+the full suite with `PYTHON=/usr/local/bin/python3 npm test` to use the installed
+PyTorch/pyarrow interpreter.
 
 Controls:
 
@@ -53,7 +55,7 @@ Browser automation hooks:
 
 ## Cumulative Edger training
 
-Raw runs and caches remain ignored. Immutable promoted artifacts remain tracked.
+Raw runs and caches remain ignored. Immutable promoted and retired (`artifacts/edger-training/retired/`) artifacts remain tracked.
 
 ```bash
 # Collect paired full production matches. Production uses an externally configured S3 URI.
@@ -107,9 +109,10 @@ verification before freezing the manifest.
 
 Cache construction is bounded-memory: it counts balancing strata in a first
 pass, streams decision rows in a second pass, and writes deterministic 256-row
-Parquet groups. BC, offline improvement, and V-trace iterate deterministically
-shuffled row groups and batches. V-trace targets are written episode-by-episode
-to a temporary Parquet cache.
+Parquet groups. BC and offline improvement iterate deterministically shuffled
+row groups and batches. V-trace visits episodes in source manifest order and
+refreshes targets immediately before each episode's optimizer update. Gradient
+microbatches bound activation memory without changing parameters mid-episode.
 
 Scaling caches reduce only training episodes. Validation and test episode lists
 are identical in the 1%, 10%, and 100% manifests. Export each BC checkpoint,
@@ -182,7 +185,7 @@ safety shutdown. Dispatch targets are `full-cache`, `offline`, then
 `full-evaluation`. `full-cache` rebuilds and durably stores only the recovered
 100% Parquet; later runners checksum-download that exact cache. Stage records
 and objects bind one Git SHA plus recovery-manifest checksum. Failed stages
-preserve evidence and never change live v1. Separate `promote` operation
+preserve evidence and never change live Edger. Separate `promote` operation
 requires matching full-evaluation marker and zero active runners, then opens an
 unmerged manual-review PR after revalidating candidate/report checksums.
 
@@ -224,7 +227,16 @@ npm run edger:promote:v2 -- \
   --report /path/to/evaluation-report.json
 ```
 
-The promotion command refuses smoke profiles, artifact checksum mismatches, missing external reports, or any failed gate. Campaign automation opens a pull request after it succeeds.
+The promotion command refuses smoke profiles, artifact checksum mismatches, missing external reports, or any failed gate. Both commands refuse a model whose `training.promotion_status` is `diagnostic_only_not_promotable` (the `train-arm` diagnostic exports): the evaluator before any match under the full profile, and promotion whatever the report says. Smoke-profile evaluation of such a model stays allowed. Campaign automation opens a pull request after it succeeds.
+
+The evaluator runs parity, timing, and the reported-measure inputs (a feasible
+tactical suite and a valid opportunity bank) first. A failed preflight writes a
+rejected report with the match gates explicitly skipped, avoiding the expensive
+match suite. The tactical scenarios, held-out Fireball captures, and in-match
+card usage and Fireball capture are reported for review, not gates (owner,
+November 20, 2026; [`docs/EDGER_GATE_REVIEW.md`](docs/EDGER_GATE_REVIEW.md)). See
+[`docs/EDGER_EVALUATION_DIAGNOSIS.md`](docs/EDGER_EVALUATION_DIAGNOSIS.md) for the
+September 2026 failure evidence, local corrections, and remaining cloud blockers.
 
 ## Docs
 

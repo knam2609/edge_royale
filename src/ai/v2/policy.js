@@ -1,5 +1,6 @@
 import {
   EDGER_V2_ACTION_SPACE_VERSION,
+  EDGER_FULL_GRID_ACTION_SPACE_VERSION,
   EDGER_V2_BOARD_CHANNELS,
   EDGER_V2_BOARD_HEIGHT,
   EDGER_V2_BOARD_WIDTH,
@@ -32,6 +33,7 @@ export const EDGER_V2_ARCHITECTURE = Object.freeze({
 
 const MODEL_CACHE = new WeakMap();
 const CONV_CACHE = new WeakMap();
+const PLACEMENT_COORDINATE_CACHE = new WeakMap();
 const MASKED_LOGIT = -1e30;
 
 function assertObject(value, label) {
@@ -100,6 +102,7 @@ function actorParameterCount(model) {
     model.weights.card_embedding,
     model.weights.placement_scorer.weights,
     model.weights.placement_scorer.bias,
+    ...(model.weights.placement_coordinates ? [model.weights.placement_coordinates] : []),
     model.weights.delay_encoder.weights,
     model.weights.delay_encoder.bias,
     model.weights.delay_head.weights,
@@ -117,8 +120,8 @@ export function validateEdgerV2PolicyModel(model) {
   if (model.schema_version !== EDGER_V2_POLICY_MODEL_SCHEMA_VERSION) {
     throw new Error(`model schema_version must be ${EDGER_V2_POLICY_MODEL_SCHEMA_VERSION}`);
   }
-  if (model.action_space_version !== EDGER_V2_ACTION_SPACE_VERSION) {
-    throw new Error(`model action_space_version must be ${EDGER_V2_ACTION_SPACE_VERSION}`);
+  if (![EDGER_V2_ACTION_SPACE_VERSION, EDGER_FULL_GRID_ACTION_SPACE_VERSION].includes(model.action_space_version)) {
+    throw new Error(`unsupported model action_space_version ${model.action_space_version}`);
   }
   if (model.observation_schema_version !== EDGER_V2_OBSERVATION_SCHEMA_VERSION) {
     throw new Error(`model observation_schema_version must be ${EDGER_V2_OBSERVATION_SCHEMA_VERSION}`);
@@ -134,6 +137,11 @@ export function validateEdgerV2PolicyModel(model) {
   const hidden = EDGER_V2_ARCHITECTURE.fused_hidden;
   const placementHidden = EDGER_V2_ARCHITECTURE.placement_hidden;
   assertObject(model.weights, "model.weights");
+  if (model.action_space_version === EDGER_FULL_GRID_ACTION_SPACE_VERSION) {
+    assertFiniteArray(model.weights.placement_coordinates, 2 * placementHidden, "weights.placement_coordinates");
+  } else if (model.weights.placement_coordinates !== undefined) {
+    throw new Error("placement coordinates require the full-grid action space");
+  }
   validateConv(
     model.weights.conv1,
     EDGER_V2_BOARD_CHANNELS,
@@ -281,6 +289,11 @@ function runConv(input, layer) {
           const kernel = compiledKernels[kernelY * layer.kernel_size + kernelX];
           for (let inputChannel = 0; inputChannel < layer.input_channels; inputChannel += 1) {
             const inputValue = input[sourceBase + inputChannel];
+            // Observations and ReLU activations are sparse. Skipping exact zero
+            // products preserves accumulation order for every nonzero term.
+            if (inputValue === 0) {
+              continue;
+            }
             const weightBase = inputChannel * layer.output_channels;
             for (let outputChannel = 0; outputChannel < layer.output_channels; outputChannel += 1) {
               accumulator[outputChannel] +=
@@ -302,15 +315,18 @@ function runConv(input, layer) {
 }
 
 function meanPool(spatial, channels) {
-  const pooled = new Float32Array(channels);
+  // Accumulate in float64 and round once to float32. A float32 running sum
+  // over 576 cells was the main deviation from PyTorch's pooled mean.
+  const sums = new Float64Array(channels);
   const cells = EDGER_V2_BOARD_HEIGHT * EDGER_V2_BOARD_WIDTH;
   for (let cell = 0; cell < cells; cell += 1) {
     for (let channel = 0; channel < channels; channel += 1) {
-      pooled[channel] += spatial[cell * channels + channel];
+      sums[channel] += spatial[cell * channels + channel];
     }
   }
+  const pooled = new Float32Array(channels);
   for (let channel = 0; channel < channels; channel += 1) {
-    pooled[channel] /= cells;
+    pooled[channel] = sums[channel] / cells;
   }
   return pooled;
 }
@@ -459,17 +475,46 @@ export function computeEdgerV2PlacementLogits({
     true,
   );
   const cardEmbedding = embeddingForCard(checked, cardIndex);
+  const coordinateOffsets = placementCoordinateOffsets(checked);
   const placementLogits = new Float32Array(EDGER_V2_BOARD_HEIGHT * EDGER_V2_BOARD_WIDTH);
   for (let placementIndex = 0; placementIndex < placementLogits.length; placementIndex += 1) {
     const spatial = spatialAt(encodedState.spatial, placementIndex);
     let logit = checked.weights.placement_scorer.bias[0];
     for (let channel = 0; channel < EDGER_V2_ARCHITECTURE.placement_hidden; channel += 1) {
-      const hidden = relu(spatial[channel] + placementContext[channel] + cardEmbedding[channel]);
+      const spatialWithContext = spatial[channel] + placementContext[channel];
+      // Match the float32 additions before applying the coordinate projection.
+      const preActivation = coordinateOffsets
+        ? Math.fround(Math.fround(spatialWithContext) + cardEmbedding[channel])
+          + coordinateOffsets[placementIndex * EDGER_V2_ARCHITECTURE.placement_hidden + channel]
+        : spatialWithContext + cardEmbedding[channel];
+      const hidden = relu(preActivation);
       logit += hidden * checked.weights.placement_scorer.weights[channel];
     }
     placementLogits[placementIndex] = mask[placementIndex] ? logit : MASKED_LOGIT;
   }
   return placementLogits;
+}
+
+function placementCoordinateOffsets(model) {
+  const weights = model.weights.placement_coordinates;
+  if (!weights) return null;
+  if (PLACEMENT_COORDINATE_CACHE.has(model)) return PLACEMENT_COORDINATE_CACHE.get(model);
+
+  const { placement_hidden: channels } = EDGER_V2_ARCHITECTURE;
+  const offsets = new Float32Array(EDGER_V2_BOARD_HEIGHT * EDGER_V2_BOARD_WIDTH * channels);
+  for (let row = 0; row < EDGER_V2_BOARD_HEIGHT; row += 1) {
+    const y = Math.fround((2 * row) / (EDGER_V2_BOARD_HEIGHT - 1) - 1);
+    for (let column = 0; column < EDGER_V2_BOARD_WIDTH; column += 1) {
+      const x = Math.fround((2 * column) / (EDGER_V2_BOARD_WIDTH - 1) - 1);
+      const offset = (row * EDGER_V2_BOARD_WIDTH + column) * channels;
+      for (let channel = 0; channel < channels; channel += 1) {
+        offsets[offset + channel] = y * Math.fround(weights[2 * channel])
+          + x * Math.fround(weights[2 * channel + 1]);
+      }
+    }
+  }
+  PLACEMENT_COORDINATE_CACHE.set(model, offsets);
+  return offsets;
 }
 
 export function computeEdgerV2DelayLogits({

@@ -6,6 +6,8 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 
 import {
+  EDGER_COMPATIBILITY_COHORT,
+  EDGER_EPISODE_OBSERVATION_SCHEMA_VERSION,
   buildDatasetManifest,
   createTrainingEpisode,
   deriveDecisionSequence,
@@ -26,6 +28,14 @@ import {
   cloneProductionInitialCardState,
   createProductionEngine,
 } from "../src/sim/productionMatch.js";
+import {
+  EDGER_FULL_GRID_ACTION_SPACE_VERSION,
+  EDGER_V2_BOARD_CHANNELS,
+  EDGER_V2_BOARD_HEIGHT,
+  EDGER_V2_BOARD_WIDTH,
+  EDGER_V2_GLOBAL_FEATURES,
+  EDGER_V2_OBSERVATION_SCHEMA_VERSION,
+} from "../src/ai/v2/observation.js";
 
 function makeCompletePassiveEpisode({
   seed = 7201,
@@ -136,6 +146,26 @@ test("incompatible schemas are rejected before entering a manifest", () => {
   );
 });
 
+test("episodes keep the v2 recording cohort while caches derive the current observation", () => {
+  // Exact pre-v4 cohort: existing episodes, ids and manifest hashes rely on it.
+  assert.equal(
+    EDGER_COMPATIBILITY_COHORT,
+    "edge_royale_rules_2026_07_18|edge_royale_simulator_v1|1.1|edger_oracle_observation_v2|edger_autoregressive_action_v2",
+  );
+  assert.equal(EDGER_EPISODE_OBSERVATION_SCHEMA_VERSION, "edger_oracle_observation_v2");
+  assert.equal(EDGER_V2_OBSERVATION_SCHEMA_VERSION, "edger_oracle_observation_v4");
+  assert.equal(EDGER_V2_BOARD_CHANNELS, 24);
+  assert.equal(EDGER_V2_GLOBAL_FEATURES, 104);
+  const episode = makeCompletePassiveEpisode({ seed: 7205 });
+  assert.equal(episode.compatibility.observation_schema_version, "edger_oracle_observation_v2");
+  const sample = deriveDecisionSequence(episode).samples[0];
+  assert.equal(
+    sample.board.length,
+    EDGER_V2_BOARD_HEIGHT * EDGER_V2_BOARD_WIDTH * EDGER_V2_BOARD_CHANNELS,
+  );
+  assert.equal(sample.global.length, EDGER_V2_GLOBAL_FEATURES);
+});
+
 test("decision derivation uses sparse delays and excludes unknown human probabilities from V-trace", () => {
   const episode = makeCompletePassiveEpisode({
     seed: 7204,
@@ -151,6 +181,47 @@ test("decision derivation uses sparse delays and excludes unknown human probabil
   assert.ok(blue.every((sample) => sample.vtrace_eligible === false));
   assert.ok(red.every((sample) => sample.vtrace_eligible === true));
   assert.ok(sequence.samples.every((sample) => Number.isFinite(sample.discounted_return)));
+});
+
+test("full-grid human replay keeps a new placement as a demonstration", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "edger-full-grid-replay-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  let seed = 1;
+  let engine = createProductionEngine({ seed });
+  while (!engine.getHand("blue").includes("giant")) {
+    seed += 1;
+    engine = createProductionEngine({ seed });
+  }
+  engine.step([{ tick: 1, type: "PLAY_CARD", actor: "blue", cardId: "giant", x: 0.5, y: 17.5 }]);
+  assert.equal(engine.state.replay.actions.length, 1);
+  while (!engine.getMatchResult()) {
+    engine.step([]);
+    if (engine.shouldStartOvertime()) engine.setOvertime(true);
+  }
+  const file = path.join(root, "replay.json");
+  fs.writeFileSync(file, JSON.stringify({
+    schema_version: "edger_manual_replay_export_v1",
+    seed,
+    replay: JSON.parse(engine.exportReplay()),
+    result: engine.getMatchResult(),
+    final_state_hash: engine.getStateHash(),
+  }));
+  const imported = spawnSync(process.execPath, [
+    "scripts/edger-corpus.mjs", "import", "--file", file, "--store", root,
+    "--action-space-version", EDGER_FULL_GRID_ACTION_SPACE_VERSION,
+  ], { encoding: "utf8" });
+  assert.equal(imported.status, 0, imported.stderr || imported.stdout);
+  const [entry] = JSON.parse(imported.stdout).imported;
+  const episode = loadTrainingEpisode(entry.uri);
+  assert.equal(episode.compatibility.action_space_version, EDGER_FULL_GRID_ACTION_SPACE_VERSION);
+  const manifest = buildDatasetManifest({ store: root });
+  assert.equal(manifest.shards[0].action_space_version, EDGER_FULL_GRID_ACTION_SPACE_VERSION);
+  const { samples } = deriveDecisionSequence(episode);
+  const move = samples.find(({ tick, actor }) => tick === 1 && actor === "blue");
+  assert.ok(move.selected.card_index > 0);
+  assert.equal(move.legal_masks.placement[move.selected.placement_index], 1);
+  assert.equal(move.legal_masks.placement.reduce((total, bit) => total + bit), 236);
+  assert.ok(samples.every(({ vtrace_eligible }) => !vtrace_eligible));
 });
 
 test("collector specs are stable paired seeds with balanced sides and opponents", () => {

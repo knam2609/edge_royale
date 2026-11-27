@@ -7,9 +7,11 @@ import { execFileSync } from "node:child_process";
 import { Worker } from "node:worker_threads";
 
 import {
+  EDGER_BOT_ID,
   normalizeBotId,
 } from "../src/ai/botRuntime.js";
 import {
+  cloneProductionInitialCardState,
   createProductionEngine,
 } from "../src/sim/productionMatch.js";
 import {
@@ -54,6 +56,7 @@ function parseArgs(argv) {
     workers: Math.min(16, os.availableParallelism()),
     pairOffset: 0,
     files: [],
+    actionSpaceVersion: undefined,
     report: null,
     canaryTicks: 80,
   };
@@ -61,6 +64,8 @@ function parseArgs(argv) {
     const arg = argv[index];
     if (arg === "--store" && argv[index + 1]) {
       parsed.store = argv[++index];
+    } else if (arg === "--action-space-version" && argv[index + 1]) {
+      parsed.actionSpaceVersion = argv[++index];
     } else if (arg === "--manifest" && argv[index + 1]) {
       parsed.manifest = argv[++index];
     } else if (arg === "--out" && argv[index + 1]) {
@@ -311,7 +316,7 @@ async function collectCommand(args) {
   }
 }
 
-function importManualExport(payload, filePath) {
+function importManualExport(payload, filePath, actionSpaceVersion) {
   if (payload.schema_version !== MANUAL_EXPORT_SCHEMA_VERSION) {
     throw new Error(`manual export schema_version must be ${MANUAL_EXPORT_SCHEMA_VERSION}`);
   }
@@ -355,13 +360,17 @@ function importManualExport(payload, filePath) {
     events: engine.state.replay.events,
     result: engine.getMatchResult(),
     finalStateHash: engine.getStateHash(),
+    actionSpaceVersion,
     policies: {
       blue: {
         policy_id: "opted_in_human",
         checkpoint_id: null,
         behavior_probabilities: "unknown",
       },
-      red: policyDescriptor(EDGER_BOT_ID),
+      red: {
+        policy_id: EDGER_BOT_ID,
+        behavior_probabilities: "unknown",
+      },
     },
     source: {
       kind: "opted_in_player",
@@ -387,7 +396,7 @@ function importCommand(args) {
       const payload = JSON.parse(raw.toString("utf8"));
       const episode = payload.schema_version === "edger_training_episode_v1"
         ? validateTrainingEpisode(payload, { verifyReplay: true })
-        : importManualExport(payload, filePath);
+        : importManualExport(payload, filePath, args.actionSpaceVersion);
       report.imported.push({
         file: path.resolve(filePath),
         ...storeTrainingEpisode({ episode, store: args.store }),
@@ -642,7 +651,7 @@ function campaignCompleteCommand(args) {
 function help() {
   console.log(`Usage:
   node scripts/edger-corpus.mjs collect [--store DIR|s3://...] [--matches EVEN] [--seed N] [--pair-offset N] [--workers 1-32] [--opponents ids] [--report FILE]
-  node scripts/edger-corpus.mjs import --file replay.json [--store DIR|s3://...]
+  node scripts/edger-corpus.mjs import --file replay.json [--store DIR|s3://...] [--action-space-version VERSION]
   node scripts/edger-corpus.mjs validate [--store DIR|s3://...] [--manifest FILE] [--workers 1-32] [--report FILE]
   node scripts/edger-corpus.mjs manifest [--store DIR|s3://...] [--out FILE]
   node scripts/edger-corpus.mjs health [--manifest FILE] [--state FILE] [--report FILE]

@@ -5,6 +5,7 @@ import { EDGER_POLICY_MODEL } from "../src/ai/generated/edgerPolicyCurrent.js";
 import {
   checkPromotionReport,
   evaluateScenarioLeague,
+  evaluateScenarioFeasibility,
   evaluateTiming,
   wilsonLowerBound,
 } from "../scripts/edger-evaluation-core.mjs";
@@ -36,6 +37,22 @@ test("scenario league reports heuristic-relative categories", () => {
   }
 });
 
+test("every tactical minimum is reachable with a legal action and the fixed deck", () => {
+  const report = evaluateScenarioFeasibility();
+  assert.equal(report.passed, true, JSON.stringify(report));
+  const spell = report.scenarios.find((scenario) => scenario.category === "spell_value");
+  assert.equal(spell.minimum, 0.7);
+  assert.equal(spell.maximum_score, 0.96);
+  assert.equal(spell.best_action.cardId, "arrows");
+  for (const scenario of report.scenarios) {
+    assert.equal(scenario.valid_fixed_decks, true);
+    assert.equal(scenario.production_arena, true);
+    assert.ok(scenario.maximum_score >= scenario.minimum);
+  }
+  const impossible = evaluateScenarioFeasibility({ minimums: { spell_value: 1.3 } });
+  assert.equal(impossible.passed, false);
+});
+
 test("timing report includes p95 and budget fields", () => {
   const timing = evaluateTiming(EDGER_POLICY_MODEL, { samples: 3, budgetMs: 5 });
 
@@ -55,4 +72,26 @@ test("promotion report refuses failed gates", () => {
 
   assert.equal(result.passed, false);
   assert.deepEqual(result.failures, ["benchmark: benchmark gate failed"]);
+});
+
+test("tactical pass means every category minimum is met; beating the heuristic is reported only", () => {
+  const strict = evaluateScenarioLeague(EDGER_POLICY_MODEL);
+  // Live v1 misses the spell, finishing and pocket minimums.
+  assert.equal(strict.passed, false);
+  assert.equal(strict.categories.spell_value.passed, false);
+  const lenient = evaluateScenarioLeague(EDGER_POLICY_MODEL, {
+    minimums: { defense: 0, spell_value: 0, tower_finishing: 0, elixir_punishment: 0, pocket_pressure: 0 },
+  });
+  // Below the heuristic's aggregate, yet passing once every minimum is met.
+  assert.ok(lenient.candidate_aggregate < lenient.heuristic_aggregate);
+  assert.equal(lenient.improved_over_heuristic, false);
+  assert.equal(lenient.passed, true);
+});
+
+test("legacy promotion check ignores the reported tactical scenarios", () => {
+  const result = checkPromotionReport({
+    gates: { schema: { passed: true }, benchmark: { passed: true } },
+    scenarios: { passed: false, blocking: false },
+  });
+  assert.deepEqual(result, { passed: true, failures: [] });
 });

@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
+import copy
 import json
+import math
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -16,6 +20,10 @@ import torch
 
 ROOT = Path(__file__).resolve().parents[1]
 TRAINING_SCRIPT = ROOT / "scripts" / "edger-v2-training.py"
+spec = importlib.util.spec_from_file_location("edger_training", TRAINING_SCRIPT)
+training = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = training
+spec.loader.exec_module(training)
 
 
 def canonical_json(value: object) -> str:
@@ -48,8 +56,8 @@ def decision_row(index: int, split: str) -> dict[str, object]:
         "tick": index + 1,
         "actor": "red",
         "opponent_stratum": "edger_heuristic",
-        "board": [0.0] * (32 * 18 * 24),
-        "global": [0.0] * 96,
+        "board": [0.0] * (32 * 18 * training.BOARD_INPUT_CHANNELS),
+        "global": [0.0] * training.GLOBAL_FEATURES,
         "legal_masks": {
             "card": [1] * 9,
             "placement": [1] * (32 * 18),
@@ -72,7 +80,8 @@ def decision_row(index: int, split: str) -> dict[str, object]:
         "policy_league_rating": None,
         "split": split,
         "result_winner": "blue",
-        "compatibility_cohort": "test-cohort",
+        # Real cohorts end in the action space; V-trace keeps only matching rows.
+        "compatibility_cohort": f"test-cohort|{training.ACTION_SCHEMA}",
         "reward_version": "edger_potential_reward_v1",
         "per_tick_gamma": 0.9997,
         "balance_stratum": "simulator|edger_heuristic|loss",
@@ -115,7 +124,7 @@ def recovery_decision_row(index: int) -> dict[str, object]:
     }
 
 
-class StreamingTrainingTest(unittest.TestCase):
+class TrainingFixture(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory(prefix="edger-streaming-test-")
         self.root = Path(self.temporary.name)
@@ -182,6 +191,8 @@ class StreamingTrainingTest(unittest.TestCase):
         )
         return json.loads(validation.read_text())
 
+
+class StreamingTrainingTest(TrainingFixture):
     def test_recovery_cache_matches_independently_pinned_schema(self) -> None:
         rows = [recovery_decision_row(index) for index in range(257)]
         output = self.root / "recovery.parquet"
@@ -205,6 +216,17 @@ class StreamingTrainingTest(unittest.TestCase):
         with self.assertRaises(subprocess.CalledProcessError) as rejected:
             self.validate_cache(output, "0" * 64)
         self.assertIn("schema checksum mismatch", rejected.exception.stderr)
+
+    def test_cache_records_and_requires_the_observation_schema(self) -> None:
+        rows = [decision_row(index, "train") for index in range(3)]
+        output = self.root / "observation.parquet"
+        report = json.loads(self.prepare(rows, output).read_text())
+        self.assertEqual(report["observation_schema_version"], training.OBSERVATION_SCHEMA)
+        metadata = training.parquet_metadata(output)
+        training.require_cache_observation_schema(metadata, output)
+        for stale in ({}, {"observation_schema_version": "edger_oracle_observation_v2"}):
+            with self.assertRaisesRegex(ValueError, "re-derive"):
+                training.require_cache_observation_schema(stale, output)
 
     def test_logical_hash_accepts_lossless_numeric_round_trip_only(self) -> None:
         rows = [recovery_decision_row(index) for index in range(257)]
@@ -529,14 +551,463 @@ class StreamingTrainingTest(unittest.TestCase):
             cwd=self.git_root,
         )
         vtrace_payload = torch.load(vtrace, map_location="cpu", weights_only=False)
-        self.assertTrue(
-            vtrace_payload["metrics"]["vtrace"]["episode_grouped_target_parquet"],
-        )
         self.assertEqual(
-            vtrace_payload["metrics"]["vtrace"]["target_row_group_size"],
-            256,
+            vtrace_payload["metrics"]["vtrace"]["target_refresh"],
+            "before_each_episode_update",
         )
+        self.assertEqual(vtrace_payload["metrics"]["vtrace"]["optimizer_updates"], 6)
         self.assertEqual(vtrace_payload["metrics"]["train_samples"], 6)
+        # A bounded learner comparison needs the pre-clip gradient norm of every
+        # episode update, not only the fact that training finished.
+        gradients = vtrace_payload["metrics"]["vtrace"]["gradient_norms_per_epoch"]
+        self.assertEqual(len(gradients), 1)
+        self.assertEqual(gradients[0]["epoch"], 0)
+        self.assertEqual(gradients[0]["updates"], 6)
+        self.assertTrue(gradients[0]["all_finite"])
+        self.assertEqual(gradients[0]["clip_threshold"], 1.0)
+        self.assertGreaterEqual(gradients[0]["maximum"], gradients[0]["mean"])
+        self.assertGreaterEqual(gradients[0]["mean"], gradients[0]["minimum"])
+        self.assertGreaterEqual(gradients[0]["minimum"], 0.0)
+        self.assertLessEqual(gradients[0]["clipped_updates"], 6)
+
+    def test_vtrace_refuses_strata_missing_from_the_parent_vocabulary(self) -> None:
+        rows = [
+            decision_row(index, "train" if index < 6 else "validation")
+            for index in range(8)
+        ]
+        dataset = self.root / "known.parquet"
+        self.prepare(rows, dataset)
+        checkpoint = self.root / "bc.pt"
+        run_training(
+            [
+                "bc", "--dataset", str(dataset), "--out", str(checkpoint),
+                "--seed", "20260718", "--epochs", "1", "--batch-size", "2",
+                "--learning-rate", "1e-3",
+            ],
+            cwd=self.git_root,
+        )
+        vocab = torch.load(checkpoint, map_location="cpu", weights_only=False)[
+            "opponent_stratum_vocabulary"
+        ]
+        self.assertEqual(vocab, {"edger_heuristic": 0})
+        training.require_strata_in_vocabulary(dataset, vocab)
+
+        # The pre-repair league label: a model id that the row lookup would
+        # have mapped to index 0 without an error.
+        stale = [
+            {**row, "opponent_stratum": "edger_policy_bootstrap_20260701"}
+            if index % 2 else row
+            for index, row in enumerate(rows)
+        ]
+        stale_dataset = self.root / "stale.parquet"
+        self.prepare(stale, stale_dataset)
+        self.assertEqual(
+            training.parquet_stratum_values(stale_dataset),
+            {"edger_heuristic", "edger_policy_bootstrap_20260701"},
+        )
+        with self.assertRaisesRegex(ValueError, "edger_policy_bootstrap_20260701"):
+            training.require_strata_in_vocabulary(stale_dataset, vocab)
+        output = self.root / "stale-vtrace.pt"
+        with self.assertRaises(subprocess.CalledProcessError) as raised:
+            run_training(
+                [
+                    "vtrace", "--dataset", str(stale_dataset),
+                    "--checkpoint", str(checkpoint), "--out", str(output),
+                    "--seed", "20260718", "--epochs", "1", "--batch-size", "2",
+                ],
+                cwd=self.git_root,
+            )
+        self.assertIn("missing from the parent vocabulary", raised.exception.stderr)
+        self.assertFalse(output.exists())
+
+
+class VtraceFreshnessTest(unittest.TestCase):
+    def test_targets_refresh_after_each_update_and_microbatches_do_not_step(self):
+        torch.set_num_threads(1)
+        training.seed_everything(91)
+        model = training.EdgerV2Policy(1)
+        full_batch_model = copy.deepcopy(model)
+        rows = [decision_row(index, "train") for index in range(5)]
+        for row in rows:
+            row["episode_id"] = "one-trajectory"
+            row["reward"] = -0.1
+        optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
+        full_optimizer = torch.optim.SGD(full_batch_model.parameters(), lr=0.1)
+        options = dict(value_loss_weight=0.5, entropy_bonus=0.001)
+        vocab, device = {"edger_heuristic": 0}, torch.device("cpu")
+        snapshots = []
+        attach = training.attach_vtrace_targets
+
+        def capture(*args):
+            targets = attach(*args)
+            snapshots.append([row["target_log_probability_before_update"] for row in targets])
+            return targets
+
+        with mock.patch.object(training, "attach_vtrace_targets", side_effect=capture), \
+                mock.patch.object(optimizer, "step", wraps=optimizer.step) as step:
+            update = training.train_vtrace_episode(model, rows, vocab, 2, device, optimizer, **options)
+            self.assertEqual(step.call_count, 1)
+            self.assertEqual(update["samples"], 5)
+            self.assertTrue(math.isfinite(update["gradient_norm"]))
+            full_update = training.train_vtrace_episode(
+                full_batch_model, rows, vocab, 5, device, full_optimizer, **options
+            )
+            # Microbatched accumulation must also report the same pre-clip norm
+            # as the equivalent single-batch update.
+            self.assertAlmostEqual(
+                update["gradient_norm"], full_update["gradient_norm"], places=5
+            )
+            for name, value in model.state_dict().items():
+                torch.testing.assert_close(value, full_batch_model.state_dict()[name], rtol=1e-5, atol=1e-7)
+            training.train_vtrace_episode(model, rows, vocab, 2, device, optimizer, **options)
+            self.assertEqual(step.call_count, 2)
+            self.assertNotEqual(snapshots[0], snapshots[2])
+
+    def test_negative_advantage_is_reweighted_by_current_policy(self):
+        class TinyPolicy(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.card = torch.nn.Parameter(torch.zeros(9))
+
+            def actor_logits(self, board, global_features, selected_card, selected_placement):
+                size = board.shape[0]
+                return {
+                    "card": self.card.expand(size, -1),
+                    "placement": torch.zeros(size, 576),
+                    "delay": torch.zeros(size, 200),
+                    "fused": torch.zeros(size, 1),
+                }
+
+            def value(self, fused, stratum):
+                return fused[:, 0]
+
+        torch.set_num_threads(1)
+        model = TinyPolicy()
+        optimizer = torch.optim.SGD(model.parameters(), lr=1)
+        row = decision_row(0, "train")
+        row["reward"] = -1.0
+        row["behavior_log_probability"] = -float(torch.log(torch.tensor(9.0 * 200)))
+        vocab, device = {"edger_heuristic": 0}, torch.device("cpu")
+        initial = training.attach_vtrace_targets(model, [row], vocab, 1, device)[0]
+        for _ in range(100):
+            training.train_vtrace_episode(model, [row], vocab, 1, device, optimizer,
+                                         value_loss_weight=0, entropy_bonus=0)
+        final = training.attach_vtrace_targets(model, [row], vocab, 1, device)[0]
+        # Reusing the initial advantage would keep a near-unit gradient even
+        # after the rejected action becomes vanishingly unlikely.
+        self.assertLess(abs(final["vtrace_advantage"]), abs(initial["vtrace_advantage"]) / 50)
+        self.assertGreater(final["target_log_probability_before_update"], -15)
+
+
+class LogitScaleMetricTest(TrainingFixture):
+    def _validation(self, model: "training.EdgerV2Policy") -> dict[str, object]:
+        rows = [
+            decision_row(index, "train" if index < 4 else "validation")
+            for index in range(6)
+        ]
+        dataset = self.root / "logit-scale.parquet"
+        self.prepare(rows, dataset)
+        return training.evaluate_loss_parquet(
+            model,
+            dataset,
+            "validation",
+            {"edger_heuristic": 0},
+            2,
+            torch.device("cpu"),
+        )
+
+    def test_validation_reports_a_logit_scale_warning(self) -> None:
+        torch.set_num_threads(1)
+        training.seed_everything(23)
+        model = training.EdgerV2Policy(1).eval()
+        conditioned = self._validation(model)
+        self.assertLess(
+            conditioned["maximum_legal_logit_magnitude"],
+            training.LOGIT_SCALE_WARNING_MAGNITUDE,
+        )
+        self.assertFalse(conditioned["logit_scale_warning"])
+
+        # A shared bias raises magnitude without changing softmax probabilities.
+        # This merits a scale warning, not a conclusion that parity is impossible.
+        with torch.no_grad():
+            model.delay_head.bias.add_(1_000.0)
+        diverged = self._validation(model)
+        self.assertGreater(
+            diverged["maximum_legal_logit_magnitude"],
+            training.LOGIT_SCALE_WARNING_MAGNITUDE,
+        )
+        self.assertTrue(diverged["logit_scale_warning"])
+        self.assertEqual(diverged["logit_scale_warning_threshold"], training.LOGIT_SCALE_WARNING_MAGNITUDE)
+
+    def test_logit_scale_warning_estimate_follows_the_absolute_tolerance(self) -> None:
+        self.assertEqual(training.PARITY_ABSOLUTE_TOLERANCE, 1e-5)
+        self.assertAlmostEqual(training.LOGIT_SCALE_WARNING_MAGNITUDE, 83.886, places=3)
+
+
+def spell_features(
+    *,
+    fireball_legal: bool = True,
+    lethal: tuple[int, ...] = (),
+    arrows_lethal: tuple[int, ...] = (),
+    fireball_hits: int = 0,
+    arrows_hits: int = 0,
+) -> tuple[list[float], list[int]]:
+    """v4 globals and a card mask with the given spell-opportunity inputs."""
+    global_features = [0.0] * training.GLOBAL_FEATURES
+    for tower in lethal:
+        global_features[96 + tower] = 1.0
+    for tower in arrows_lethal:
+        global_features[99 + tower] = 1.0
+    global_features[102] = fireball_hits / 8
+    global_features[103] = arrows_hits / 8
+    card_mask = [1] * training.CARD_ACTIONS
+    card_mask[training.FIREBALL_CARD_INDEX] = int(fireball_legal)
+    return global_features, card_mask
+
+
+def opportunity_row(index: int, split: str, policy: str, card: int, **features: object) -> dict[str, object]:
+    row = decision_row(index, split)
+    row["global"], row["legal_masks"]["card"] = spell_features(**features)
+    row["policy_id"] = policy
+    row["selected"]["card_index"] = card
+    return row
+
+
+class FireballOpportunityRecipeTest(TrainingFixture):
+    def test_fireball_opportunity_reads_the_v4_spell_globals(self) -> None:
+        cases = [
+            ({"lethal": (1,)}, 1),
+            ({"lethal": (2,), "fireball_hits": 5}, 1),
+            ({"fireball_hits": 3}, 2),
+            ({"fireball_hits": 2, "arrows_hits": 6}, 0),
+            ({"arrows_lethal": (0, 1, 2)}, 0),
+            ({"fireball_legal": False, "lethal": (0,), "fireball_hits": 8}, 0),
+        ]
+        features = [spell_features(**case) for case, _ in cases]
+        codes = training.fireball_opportunity(
+            torch.tensor([global_features for global_features, _ in features]),
+            torch.tensor([mask for _, mask in features], dtype=torch.bool),
+        )
+        self.assertEqual(codes.tolist(), [expected for _, expected in cases])
+        for (global_features, mask), (_, expected) in zip(features, cases):
+            row = {"global": global_features, "legal_masks": {"card": mask}}
+            self.assertEqual(training.row_fireball_opportunity(row), expected)
+
+    def test_row_expansion_drops_filtered_card_targets_and_repeats_opportunities(self) -> None:
+        self.assertIsNone(training.bc_row_expansion("none", 1))
+        for invalid in (("all", 1), ("none", 0)):
+            with self.assertRaises(ValueError):
+                training.bc_row_expansion(*invalid)
+        lethal = opportunity_row(0, "train", "aggressive", 1, lethal=(0,))
+        teacher = opportunity_row(1, "train", "edger", 8, lethal=(0,))
+        ordinary = opportunity_row(2, "train", "random", 8, fireball_hits=1)
+        expand = training.bc_row_expansion("opportunity", 3)
+        filtered = expand(lethal)
+        self.assertEqual(len(filtered), 3)
+        self.assertTrue(all(item["card_loss_weight"] == 0.0 for item in filtered))
+        self.assertNotIn("card_loss_weight", lethal)
+        self.assertEqual(expand(teacher), [teacher] * 3)
+        self.assertEqual(expand(ordinary), [ordinary])
+        self.assertEqual(training.bc_row_expansion("opportunity", 1)(lethal)[0]["card_loss_weight"], 0.0)
+        self.assertEqual(training.bc_row_expansion("none", 2)(lethal), [lethal] * 2)
+
+    def test_a_zero_card_weight_keeps_the_placement_and_delay_targets(self) -> None:
+        torch.set_num_threads(1)
+        training.seed_everything(29)
+        model = training.EdgerV2Policy(1).eval()
+        rows = [opportunity_row(index, "train", "edger", 1 + index, lethal=(0,)) for index in range(3)]
+        rows[1]["card_loss_weight"] = 0.0
+        batch = next(iter(training.loader_for(rows, {"edger_heuristic": 0}, 3, False, 1)))
+        with torch.no_grad():
+            logits = training.forward_batch(model, batch)
+            joint, parts = training.actor_losses(logits, batch)
+            self.assertTrue(torch.equal(training.bc_joint_loss(logits, batch, False), joint))
+            weighted = training.bc_joint_loss(logits, batch, True)
+        self.assertEqual(float(weighted[0]), float(joint[0]))
+        self.assertEqual(float(weighted[2]), float(joint[2]))
+        self.assertEqual(float(weighted[1]), float(parts["placement"][1] + parts["delay"][1]))
+        self.assertGreater(float(parts["card"][1]), 0.0)
+        self.assertGreater(float(parts["placement"][1]), 0.0)
+
+    def test_capture_is_the_deterministic_card_choice_on_held_out_opportunities(self) -> None:
+        rows = [
+            opportunity_row(0, "train", "edger", 8, lethal=(0,)),
+            opportunity_row(1, "validation", "edger", 1, lethal=(1,)),
+            opportunity_row(2, "validation", "aggressive", 1, lethal=(2,), fireball_hits=4),
+            opportunity_row(3, "validation", "edger", 8, fireball_hits=3),
+            opportunity_row(4, "validation", "edger", 1, fireball_hits=2),
+            opportunity_row(5, "validation", "edger", 1, fireball_legal=False, lethal=(0,)),
+        ]
+        dataset = self.root / "capture.parquet"
+        self.prepare(rows, dataset)
+        torch.set_num_threads(1)
+        model = training.EdgerV2Policy(1).eval()
+        vocab = {"edger_heuristic": 0}
+        for bias, captured in ((2.0, True), (-1.0, False)):
+            with torch.no_grad():
+                model.card_head.weight.zero_()
+                model.card_head.bias.zero_()
+                model.card_head.bias[training.FIREBALL_CARD_INDEX] = bias
+            capture = training.evaluate_opportunity_capture(
+                model, dataset, "validation", vocab, 2, torch.device("cpu")
+            )
+            p = math.exp(bias) / (math.exp(bias) + training.CARD_ACTIONS - 1)
+            for name, rows_expected in (("lethal", 2), ("cluster", 1), ("opportunity", 3)):
+                entry = capture[name]
+                self.assertEqual(entry["rows"], rows_expected, name)
+                self.assertEqual(entry["fireball_argmax"], rows_expected if captured else 0, name)
+                self.assertEqual(entry["capture_rate"], 1.0 if captured else 0.0, name)
+                self.assertAlmostEqual(entry["mean_p_fireball"], p, places=6)
+
+    def test_heldout_batches_come_from_one_read_of_the_validation_split(self) -> None:
+        spec = importlib.util.spec_from_file_location(
+            "edger_v2_cadence_for_streaming_test", ROOT / "scripts" / "edger-v2-cadence-experiment.py"
+        )
+        cadence = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = cadence
+        spec.loader.exec_module(cadence)
+        rows = []
+        for index in range(80):
+            split = "train" if index % 5 == 0 else "validation"
+            features = (
+                {"lethal": (index % 3,)} if index % 7 == 0
+                else {"fireball_hits": 3} if index % 4 == 0
+                else {"fireball_hits": 2}
+            )
+            rows.append(opportunity_row(index, split, "edger", index % 9, **features))
+        dataset = self.root / "heldout.parquet"
+        self.prepare(rows, dataset)
+        vocab = {"edger_heuristic": 0}
+        learner = cadence.training
+        reads = mock.Mock(wraps=learner.iter_parquet_rows)
+        with mock.patch.object(learner, "iter_parquet_rows", reads):
+            validation, opportunity = cadence.heldout_batches(dataset, vocab)
+        self.assertEqual(reads.call_count, 1)
+        for found, predicate in (
+            (validation, None),
+            (opportunity, lambda row: learner.row_fireball_opportunity(row) != learner.OPPORTUNITY_NONE),
+        ):
+            expected = list(learner.batches_for_parquet(
+                dataset, vocab, 32, split="validation", shuffle=False, seed=1, predicate=predicate,
+            ))
+            self.assertEqual(len(found), len(expected))
+            for left, right in zip(found, expected):
+                for field, value in left.__dict__.items():
+                    self.assertTrue(torch.equal(value, getattr(right, field)), field)
+        self.assertEqual([batch.card.shape[0] for batch in validation], [32, 32])
+        self.assertGreater(sum(batch.card.shape[0] for batch in opportunity), 0)
+
+    def test_bc_records_the_data_recipe_and_held_out_capture(self) -> None:
+        rows = [
+            opportunity_row(0, "train", "aggressive", 1, lethal=(0,)),
+            opportunity_row(1, "train", "edger", 8, lethal=(0,)),
+            opportunity_row(2, "train", "random", 8, fireball_hits=3),
+            opportunity_row(3, "train", "defender", 1, fireball_hits=1),
+            opportunity_row(4, "train", "edger", 1),
+            opportunity_row(5, "train", "edger", 0),
+            opportunity_row(6, "validation", "edger", 8, lethal=(1,)),
+            opportunity_row(7, "validation", "edger", 0),
+        ]
+        dataset = self.root / "recipe.parquet"
+        self.prepare(rows, dataset)
+
+        def bc(name: str, *recipe: str) -> dict[str, object]:
+            checkpoint = self.root / f"{name}.pt"
+            run_training(
+                ["bc", "--dataset", str(dataset), "--out", str(checkpoint), "--seed", "20260718",
+                 "--epochs", "1", "--batch-size", "2", *recipe],
+                cwd=self.git_root,
+            )
+            return torch.load(checkpoint, map_location="cpu", weights_only=False)
+
+        plain = bc("plain")
+        self.assertEqual(plain["metrics"]["data_recipe"], {
+            "card_teacher_filter": "none",
+            "card_target_filtered_teachers": [],
+            "opportunity_oversample": 1,
+            "train_rows_after_expansion": 6,
+            "train_card_targets_dropped": 0,
+            "train_lethal_rows": 2,
+            "train_cluster_rows": 1,
+        })
+        recipe = ["--card-teacher-filter", "opportunity", "--opportunity-oversample", "3"]
+        first, second = bc("recipe-a", *recipe), bc("recipe-b", *recipe)
+        self.assertEqual(first["metrics"]["data_recipe"], {
+            "card_teacher_filter": "opportunity",
+            "card_target_filtered_teachers": ["aggressive", "defender", "random"],
+            "opportunity_oversample": 3,
+            "train_rows_after_expansion": 12,
+            "train_card_targets_dropped": 6,
+            "train_lethal_rows": 2,
+            "train_cluster_rows": 1,
+        })
+        capture = first["metrics"]["validation_opportunity_capture"]
+        self.assertEqual(capture["lethal"]["rows"], 1)
+        self.assertEqual(capture["cluster"]["rows"], 0)
+        self.assertEqual(capture["opportunity"]["rows"], 1)
+        for name, value in first["model_state"].items():
+            self.assertTrue(torch.equal(value, second["model_state"][name]), name)
+        self.assertFalse(torch.equal(first["model_state"]["card_head.bias"], plain["model_state"]["card_head.bias"]))
+
+
+class ActorExportFidelityTest(unittest.TestCase):
+    def _checkpoint(self) -> dict[str, object]:
+        return {
+            "checkpoint_id": "edger_v2_bc_export_fidelity",
+            "phase": "bc",
+            "seed": 11,
+            "git_commit": "0" * 40,
+            "parent_checkpoint": None,
+            "manifest_hash": "a" * 64,
+            "dataset_checksum": "b" * 64,
+            "environment": {"python": "test"},
+            "metrics": {},
+        }
+
+    def _model(self) -> "training.EdgerV2Policy":
+        torch.set_num_threads(1)
+        training.seed_everything(17)
+        model = training.EdgerV2Policy(1)
+        # Weights this small lost trained digits under the old eight-decimal
+        # export, which is exactly the range conv1 occupies after training.
+        with torch.no_grad():
+            model.conv1.weight.view(-1)[0] = 5.8231e-06
+            model.conv1.weight.view(-1)[1] = -1.234567891e-03
+            model.delay_head.weight.view(-1)[0] = 9.87654321e-05
+        return model.eval()
+
+    def test_exported_actor_reloads_as_the_trained_float32_weights(self) -> None:
+        model = self._model()
+        payload = training.export_model_payload(self._checkpoint(), model, None)
+        reloaded = training.load_actor_payload(payload)
+        trained = dict(model.named_parameters())
+        for name, parameter in reloaded.named_parameters():
+            if name.startswith(("value_head", "value_stratum")):
+                continue
+            self.assertTrue(
+                torch.equal(trained[name].detach(), parameter.detach()),
+                f"{name} did not reload as the trained float32 weights",
+            )
+        encoded = (json.dumps(payload, sort_keys=True, indent=2) + "\n").encode()
+        self.assertLessEqual(len(encoded), 1_000_000)
+
+    def test_eight_decimal_rounding_is_rejected_as_a_lossy_export(self) -> None:
+        model = self._model()
+        with mock.patch.object(training, "float32_json", lambda value: round(float(value), 8)):
+            with self.assertRaises(ValueError) as caught:
+                training.export_model_payload(self._checkpoint(), model, None)
+        self.assertIn("lossy", str(caught.exception))
+
+    def test_float32_json_round_trips_every_trained_weight(self) -> None:
+        model = self._model()
+        values = [
+            float(value)
+            for parameter in training.actor_parameters(model)
+            for value in parameter.detach().cpu().flatten()
+        ]
+        encoded = [training.float32_json(value) for value in values]
+        reloaded = torch.tensor(encoded, dtype=torch.float32).tolist()
+        self.assertEqual(values, reloaded)
 
 
 if __name__ == "__main__":
