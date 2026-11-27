@@ -16,7 +16,7 @@ There is no bot selector, player-facing level, unlock, training UI, or model con
 
 ## Live Edger: v2 candidate c3
 
-Since the owner approved it (November 25, 2026; merged into `edger-v2-accumulated` November 26 and proposed to `main` by pull request on November 28), the live artifact is:
+Since the owner approved it (November 25, 2026; merged into `edger-v2-accumulated` November 26 and merged into `main` by PR #15 on November 28 (merge commit `38c3a39`)), the live artifact is:
 
 - `artifacts/edger-training/promoted/edger_policy_current.json` (`edger_v2_candidate_20261123-L_c3`, SHA-256 `26a56150…`)
 - `src/ai/generated/edgerPolicyCurrent.js`

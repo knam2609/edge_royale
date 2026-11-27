@@ -11,8 +11,8 @@ of the full evaluation** ([result](#result-november-23-2026)). **On November
 ([decision](#owner-promotion-decision-november-25-2026)). It was promoted on
 the local review branch `edger-v2-promote-c3`, which the owner accepted into
 `edger-v2-accumulated` on November 26 ([merge](#merge-november-26-2026)).
-On November 28 the owner chose to publish it by pull request to `main`. The
-owner approved the design on November 23 with one change (see
+On November 28 the owner merged it into `main` by PR #15 (merge commit
+`38c3a39`). The owner approved the design on November 23 with one change (see
 [Owner decision](#owner-decision-november-23-2026)). The proposal below is kept as
 written at HEAD `6a522e8`; where it differs from the decision, the decision
 wins. Every number below is read from saved outputs or from that code.
@@ -125,7 +125,8 @@ The owner approved promoting c3. It was promoted on the local branch
 `edger-v2-promote-c3`, cut from `edger-v2-accumulated` at `d53fdf8`. The
 branch stayed unmerged and unpushed, with live v1 live everywhere else, until
 the owner accepted it on November 26 ([merge](#merge-november-26-2026)).
-On November 28 the owner chose to publish it by pull request to `main`.
+On November 28 the owner merged it into `main` by PR #15 (merge commit
+`38c3a39`).
 
 **Binding checked by hand first**, since `edger:promote:v2` does not. A
 read-only script ran in `CC/repo` (clean at `567ec98` before and after) and
@@ -227,7 +228,8 @@ promotion commit `f89c1c2`. The fast-forward adds no changes, so the tree is
 the one validated above. c3 is live on `edger-v2-accumulated`. Nothing is
 pushed: `main` and the remote still run live v1, and publishing needs the
 owner's separate push/PR approval after the full diff review. The findings
-above are still open.
+above are still open. (On November 28, after that review, the owner merged
+the branch into `main` by PR #15, merge commit `38c3a39`.)
 
 ## Summary
 

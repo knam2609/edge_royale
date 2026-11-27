@@ -627,7 +627,7 @@ npm run edger:scaling:recover -- \
 
 ## 8. Promotion gate
 
-The corpus, BC, offline-improvement, scaling, league/V-trace, parity, large-sample evaluator, checksum-bound promotion, and campaign PR foundations are implemented. The first passing full report is the [candidate campaign's](EDGER_CANDIDATE_CAMPAIGN.md#result-november-23-2026) (November 23, 2026). The owner approved promoting that candidate, c3, on November 25, 2026; it is live on `edger-v2-accumulated` since the owner accepted the review branch on November 26 and was proposed to `main` by pull request on November 28 ([record](EDGER_CANDIDATE_CAMPAIGN.md#owner-promotion-decision-november-25-2026)). Every later v2 model needs its own passing report and approval. The gates:
+The corpus, BC, offline-improvement, scaling, league/V-trace, parity, large-sample evaluator, checksum-bound promotion, and campaign PR foundations are implemented. The first passing full report is the [candidate campaign's](EDGER_CANDIDATE_CAMPAIGN.md#result-november-23-2026) (November 23, 2026). The owner approved promoting that candidate, c3, on November 25, 2026; it is live since the owner accepted the review branch into `edger-v2-accumulated` on November 26, and on `main` since PR #15 merged it on November 28 (merge commit `38c3a39`) ([record](EDGER_CANDIDATE_CAMPAIGN.md#owner-promotion-decision-november-25-2026)). Every later v2 model needs its own passing report and approval. The gates:
 
 - paired champion bootstrap bounds
 - heuristic and anchor non-regression bounds
