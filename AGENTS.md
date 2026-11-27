@@ -115,7 +115,7 @@ If you cannot run a needed validation step, say exactly what was not run and why
 
 ## Current Hot Spots
 
-- Live Edger is the v2 candidate c3 (owner approval, November 25, 2026; merged into `edger-v2-accumulated` November 26, unpushed, so `main` keeps v1). The v1 bootstrap is retired to `artifacts/edger-training/retired/`. Since November 28 (owner decision, `docs/EDGER_HARNESS_REVIEW.md`), the benchmark gate plays live c3 through `selectBotDecision` on the production arena and fails on any off-list play. The bare `edger` id in the cadence tooling and corpus collection plays the retired v1 (`scripts/edger-harness-opponents.mjs`), so recorded plans and corpora keep their opponent.
+- Live Edger is the v2 candidate c3 (owner approval, November 25, 2026; merged into `edger-v2-accumulated` November 26 and proposed to `main` by pull request on November 28). The v1 bootstrap is retired to `artifacts/edger-training/retired/`. Since November 28 (owner decision, `docs/EDGER_HARNESS_REVIEW.md`), the benchmark gate plays live c3 through `selectBotDecision` on the production arena and fails on any off-list play. The bare `edger` id in the cadence tooling and corpus collection plays the retired v1 (`scripts/edger-harness-opponents.mjs`), so recorded plans and corpora keep their opponent.
 - Browser validation is useful but not yet fully standardized beyond `npm run smoke:browser`.
 
 ## `progress.md` Contract
