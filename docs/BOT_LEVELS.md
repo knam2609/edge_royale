@@ -75,4 +75,4 @@ npm run edger:canary -- --seed 20260718 --canary-ticks 80
 
 The legacy `npm run edger:evaluate` and `npm run edger:promote` commands apply to v1 only. V2 uses `npm run edger:evaluate:v2` and `npm run edger:promote:v2`; a v2 model promotes only with a passing full report under the large-sample contract in `docs/EDGER_TRAINING.md` and the owner's approval. Both v2 commands refuse `diagnostic_only_not_promotable` models.
 
-`npm run bot:bench` still plays Edger through `selectBotAction`: the legacy shortlist, a one-tick delay and a single-tower arena. For the promoted c3 that is not its live path; see the [promotion record](EDGER_CANDIDATE_CAMPAIGN.md#owner-promotion-decision-november-25-2026).
+`npm run bot:bench` still plays Edger through `selectBotAction`: the legacy shortlist, a one-tick delay and a single-tower arena. For the promoted c3 that is not its live path; see the [promotion record](EDGER_CANDIDATE_CAMPAIGN.md#owner-promotion-decision-november-25-2026) and the [harness review](EDGER_HARNESS_REVIEW.md), which awaits an owner decision.
