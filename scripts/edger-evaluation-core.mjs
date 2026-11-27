@@ -513,12 +513,14 @@ function evaluateBenchmarkGate(model, {
   roundsPerOpponent = PROMOTION_GATE_CONFIG.roundsPerOpponent,
   maxTicks = PROMOTION_GATE_CONFIG.maxTicks,
 } = {}) {
+  // The legacy v1 gate keeps the single-tower arena it was calibrated on.
   const suite = runEdgerBenchmarkSuite({
     opponents: [HEURISTIC_BOT_ID, ...INTERNAL_BASELINE_BOTS],
     seed,
     roundsPerOpponent,
     maxTicks,
     edgerModel: model,
+    arena: "benchmark",
   });
   const pairs = suite.pairs.map((pair) => ({
     ...pair,

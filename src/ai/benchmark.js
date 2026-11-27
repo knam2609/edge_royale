@@ -2,6 +2,7 @@ import { MATCH_CONFIG, FIREBALL_CONFIG } from "../sim/config.js";
 import { createEngine } from "../sim/engine.js";
 import { createTower, createTroop } from "../sim/entities.js";
 import { createArena } from "../sim/map.js";
+import { createProductionEngine } from "../sim/productionMatch.js";
 import { createRng } from "../sim/random.js";
 import {
   EDGER_BOT_ID,
@@ -9,9 +10,18 @@ import {
   INTERNAL_BASELINE_BOTS,
   enumerateLegalCardActions,
   normalizeBotId,
-  rollDecisionDelayTicks,
-  selectBotAction,
+  selectBotDecision,
 } from "./botRuntime.js";
+import { EDGER_POLICY_MODEL } from "./generated/edgerPolicyCurrent.js";
+
+// Every bot plays through selectBotDecision, the browser's path: the shipped
+// Edger with its own legal actions and delay; every other bot, and a v1 Edger
+// model, with the delay roll and then selection, exactly as before. The gate
+// plays on the production arena. The single-tower "benchmark" arena stays for
+// the legacy v1 evaluator (owner decision, November 28, 2026;
+// docs/EDGER_HARNESS_REVIEW.md).
+export const BENCHMARK_ARENAS = Object.freeze(["production", "benchmark"]);
+export const DEFAULT_BENCHMARK_ARENA = "production";
 
 export function makeBenchmarkArena() {
   return createArena({ minX: 0, maxX: 18, minY: 0, maxY: 32 });
@@ -26,11 +36,38 @@ export function makeBenchmarkInitialEntities() {
   ];
 }
 
+function createBenchmarkEngine({ seed, arena }) {
+  if (arena === "production") {
+    return createProductionEngine({ seed });
+  }
+  if (arena === "benchmark") {
+    return createEngine({
+      seed,
+      arena: makeBenchmarkArena(),
+      fireballConfig: FIREBALL_CONFIG,
+      initialEntities: makeBenchmarkInitialEntities(),
+    });
+  }
+  throw new Error(`unknown benchmark arena ${arena}; expected one of ${BENCHMARK_ARENAS.join(", ")}`);
+}
+
 function makeBotController(seed) {
   return {
     rng: createRng(seed),
     nextDecisionTick: 1,
+    offList: 0,
   };
+}
+
+// Whether a play is in the list the bot's own decision chose from: Edger's
+// model enumerates its own actions (the full grid for c3); every other bot,
+// and the legacy shortlist, use the shared list.
+function isOwnLegalPlay({ engine, actor, botId, edgerModel, legalActions, action }) {
+  const own = botId === EDGER_BOT_ID
+    ? enumerateLegalCardActions({ engine, actor, model: edgerModel ?? EDGER_POLICY_MODEL })
+    : legalActions;
+  return own.some((candidate) =>
+    candidate.cardId === action.cardId && candidate.x === action.x && candidate.y === action.y);
 }
 
 function maybeSelectAction({ engine, actor, botId, controller, edgerModel }) {
@@ -40,10 +77,7 @@ function maybeSelectAction({ engine, actor, botId, controller, edgerModel }) {
   }
 
   const legalActions = enumerateLegalCardActions({ engine, actor });
-  const decisionDelay = rollDecisionDelayTicks({ botId, rng: controller.rng });
-  controller.nextDecisionTick = tick + decisionDelay;
-
-  const action = selectBotAction({
+  const decision = selectBotDecision({
     botId,
     engine,
     actor,
@@ -51,9 +85,14 @@ function maybeSelectAction({ engine, actor, botId, controller, edgerModel }) {
     rng: controller.rng,
     edgerModel,
   });
+  controller.nextDecisionTick = tick + decision.delayTicks;
+  const action = decision.action;
 
   if (!action || action.type !== "PLAY_CARD") {
     return null;
+  }
+  if (!isOwnLegalPlay({ engine, actor, botId, edgerModel, legalActions, action })) {
+    controller.offList += 1;
   }
 
   return {
@@ -72,14 +111,9 @@ export function runBotMatch({
   seed,
   maxTicks = MATCH_CONFIG.regulation_ticks + MATCH_CONFIG.overtime_ticks + 40,
   edgerModel = undefined,
+  arena = DEFAULT_BENCHMARK_ARENA,
 }) {
-  const arena = makeBenchmarkArena();
-  const engine = createEngine({
-    seed,
-    arena,
-    fireballConfig: FIREBALL_CONFIG,
-    initialEntities: makeBenchmarkInitialEntities(),
-  });
+  const engine = createBenchmarkEngine({ seed, arena });
 
   const blueId = normalizeBotId(blueBot);
   const redId = normalizeBotId(redBot);
@@ -121,6 +155,10 @@ export function runBotMatch({
     result: engine.getMatchResult(),
     score: engine.getScore(),
     tick: engine.state.tick,
+    // Plays outside the list the bot's own decision chose from. The engine
+    // snaps or rejects them, so a nonzero count means the match did not test
+    // the bot's masked policy.
+    off_list: { blue: blue.offList, red: red.offList },
   };
 }
 
@@ -131,6 +169,7 @@ export function runBenchmark({
   rounds = 100,
   maxTicks = undefined,
   edgerModel = undefined,
+  arena = DEFAULT_BENCHMARK_ARENA,
 }) {
   const rng = createRng(seed);
   const leftBot = normalizeBotId(botA);
@@ -139,6 +178,8 @@ export function runBenchmark({
   let winsA = 0;
   let winsB = 0;
   let draws = 0;
+  let offListA = 0;
+  let offListB = 0;
 
   for (let i = 0; i < rounds; i += 1) {
     const matchSeed = 1 + Math.floor(rng() * 2_000_000_000);
@@ -150,7 +191,10 @@ export function runBenchmark({
       seed: matchSeed,
       maxTicks,
       edgerModel,
+      arena,
     });
+    offListA += swapSides ? match.off_list.red : match.off_list.blue;
+    offListB += swapSides ? match.off_list.blue : match.off_list.red;
 
     const winner = match.result?.winner ?? null;
     if (!winner) {
@@ -176,6 +220,8 @@ export function runBenchmark({
     draws,
     resolved,
     winRateA,
+    offListA,
+    offListB,
   };
 }
 
@@ -185,6 +231,7 @@ export function runEdgerBenchmarkSuite({
   roundsPerOpponent = 30,
   maxTicks = MATCH_CONFIG.regulation_ticks + MATCH_CONFIG.overtime_ticks + 40,
   edgerModel = undefined,
+  arena = DEFAULT_BENCHMARK_ARENA,
 } = {}) {
   const normalizedOpponents = Array.isArray(opponents)
     ? opponents.map(normalizeBotId).filter((botId) => botId !== EDGER_BOT_ID)
@@ -201,6 +248,7 @@ export function runEdgerBenchmarkSuite({
       rounds: roundsPerOpponent,
       maxTicks,
       edgerModel,
+      arena,
     });
     return {
       bot: EDGER_BOT_ID,
@@ -212,11 +260,13 @@ export function runEdgerBenchmarkSuite({
       draws: benchmark.draws,
       resolved: benchmark.resolved,
       win_rate: benchmark.winRateA,
+      off_list: benchmark.offListA,
     };
   });
 
   return {
     seed,
+    arena,
     rounds_per_opponent: roundsPerOpponent,
     max_ticks: maxTicks,
     bot: EDGER_BOT_ID,
@@ -231,6 +281,7 @@ export function runBenchmarkMatrix({
   seed = 1337,
   roundsPerPair = 100,
   maxTicks = undefined,
+  arena = DEFAULT_BENCHMARK_ARENA,
 } = {}) {
   const requested = Array.isArray(bots) ? bots : tiers;
   const normalizedBots = Array.isArray(requested)
@@ -251,6 +302,7 @@ export function runBenchmarkMatrix({
         seed: pairSeed,
         rounds: roundsPerPair,
         maxTicks,
+        arena,
       });
 
       pairs.push({
@@ -263,12 +315,15 @@ export function runBenchmarkMatrix({
         draws: benchmark.draws,
         resolved: benchmark.resolved,
         win_rate_a: benchmark.winRateA,
+        off_list_a: benchmark.offListA,
+        off_list_b: benchmark.offListB,
       });
     }
   }
 
   return {
     seed,
+    arena,
     rounds_per_pair: roundsPerPair,
     bots: botList,
     pairs,

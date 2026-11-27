@@ -341,7 +341,9 @@ test("only the selected run, with its whole lineage verified, is exported as a c
   try {
     const clone = path.join(directory, "clone");
     fs.mkdirSync(clone);
-    for (const name of ["scripts", "src"]) {
+    // The cadence harness's `edger` opponent loads the retired v1 module
+    // (scripts/edger-harness-opponents.mjs).
+    for (const name of ["scripts", "src", "artifacts/edger-training/retired"]) {
       fs.cpSync(path.join(ROOT, name), path.join(clone, name), {
         recursive: true, filter: (source) => !source.includes("__pycache__"),
       });

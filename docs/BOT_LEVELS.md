@@ -75,4 +75,6 @@ npm run edger:canary -- --seed 20260718 --canary-ticks 80
 
 The legacy `npm run edger:evaluate` and `npm run edger:promote` commands apply to v1 only. V2 uses `npm run edger:evaluate:v2` and `npm run edger:promote:v2`; a v2 model promotes only with a passing full report under the large-sample contract in `docs/EDGER_TRAINING.md` and the owner's approval. Both v2 commands refuse `diagnostic_only_not_promotable` models.
 
-`npm run bot:bench` still plays Edger through `selectBotAction`: the legacy shortlist, a one-tick delay and a single-tower arena. For the promoted c3 that is not its live path; see the [promotion record](EDGER_CANDIDATE_CAMPAIGN.md#owner-promotion-decision-november-25-2026) and the [harness review](EDGER_HARNESS_REVIEW.md), which awaits an owner decision.
+Since November 28, 2026 ([harness review](EDGER_HARNESS_REVIEW.md), owner decision), `npm run bot:bench` plays every bot through `selectBotDecision` on the production arena, so live c3 plays with its full grid and learned delay, exactly as in the browser. A pair fails on any Edger play outside its own legal list (`off_list`). `--arena benchmark` selects the old single-tower arena, which the legacy v1 evaluator still uses.
+
+The bare `edger` id in the cadence tooling (`train-arm`, `evaluate`, `probe`, `convert-collection`) and in corpus collection plays the retired v1 (`scripts/edger-harness-opponents.mjs`), the bot every recorded plan, comparison and corpus played. To play live c3 there, pass it as a model opponent (`--opponent-model`).

@@ -10,6 +10,7 @@ import {
   encodeCadenceEpisode,
   runEdgerV2CadenceMatch,
 } from "./edger-v2-cadence-core.mjs";
+import { EDGER_RETIRED_V1_MODEL } from "./edger-harness-opponents.mjs";
 
 const models = new Map();
 
@@ -47,6 +48,7 @@ export function runFireballBranchSpec(spec) {
     model,
     cadence: spec.cadence,
     opponentBotId: spec.opponent,
+    edgerBotModel: EDGER_RETIRED_V1_MODEL,
   };
   const own = runEdgerV2CadenceMatch({ ...game, fireballOpportunityLog: true });
   const output = {
@@ -106,6 +108,7 @@ export function runCadenceSpec(spec) {
     cadence: spec.cadence,
     opponentBotId: spec.opponent,
     opponentModel,
+    edgerBotModel: EDGER_RETIRED_V1_MODEL,
     mode: spec.kind === "collect" ? "sample" : "deterministic",
     recordRows: spec.kind === "collect",
     probeStride: spec.kind === "probe" ? spec.probe_stride : 0,

@@ -10,7 +10,7 @@ import {
   rollDecisionDelayTicks,
   selectBotAction,
 } from "../src/ai/botRuntime.js";
-import { EDGER_POLICY_MODEL } from "../src/ai/generated/edgerPolicyCurrent.js";
+import { EDGER_RETIRED_V1_MODEL } from "./edger-harness-opponents.mjs";
 import { createRng } from "../src/sim/random.js";
 import {
   cloneProductionInitialCardState,
@@ -166,7 +166,8 @@ function policyDescriptor(botId) {
   const normalized = normalizeBotId(botId);
   return {
     policy_id: normalized,
-    checkpoint_id: normalized === EDGER_BOT_ID ? EDGER_POLICY_MODEL.model_id : null,
+    // The bare `edger` id collects the retired v1 (edger-harness-opponents.mjs).
+    checkpoint_id: normalized === EDGER_BOT_ID ? EDGER_RETIRED_V1_MODEL.model_id : null,
     behavior_probabilities:
       normalized === EDGER_BOT_ID || normalized === HEURISTIC_BOT_ID ? "known" : "unknown",
     league_rating: null,
@@ -191,7 +192,7 @@ function maybeBotAction({ engine, actor, botId, controller }) {
     actor,
     legalActions,
     rng: controller.rng,
-    edgerModel: EDGER_POLICY_MODEL,
+    edgerModel: EDGER_RETIRED_V1_MODEL,
   });
   if (selected?.type !== "PLAY_CARD") {
     return null;

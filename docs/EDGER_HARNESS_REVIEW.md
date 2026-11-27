@@ -1,9 +1,14 @@
 # How internal harnesses play `edger` after the c3 promotion: review, November 28, 2026
 
-This review prepares the owner decision in Next Task 2 of `progress.md`. When
+This review prepared the owner decision in what was then Next Task 2 of `progress.md`. When
 written, no harness, gate, test or frozen run had changed. The numbers come
 from a read-only scratch copy of the benchmark suite, run on the clean
 `edger-v2-accumulated` tree.
+
+**Owner decision, November 28, 2026: option B with B2, as recommended.** The
+[implementation](#implementation-november-28-2026) follows the review, which
+was written before the decision. Question 3 (refuse the bare `edger` id) was
+not taken up, so seed plans keep their labels.
 
 - `HR` = `~/edge_royale-runs/20261127-harness-review.noindex/`: `scripts/gate.mjs`, `logs/` (one JSON line per variant), `repo-commit.txt`, `README.md` (commands) and `SHA256SUMS`.
 - `PV` = `~/edge_royale-runs/20261125-promotion-review.noindex/`, the November 25 promotion review (its gate log, scratch live-path benchmark and acceptance probe).
@@ -26,7 +31,9 @@ The browser calls `selectBotDecision`. For a v2 model, that function enumerates 
 | `scripts/edger-v2-cadence-core.mjs`, bot-opponent branch | `train-arm` (each plan's `training_opponents`: `edger` everywhere outside the heuristic band [0.4, 0.6)), `evaluate --opponent edger` (development and selection seed sets), `probe` | the same off-path c3, production arena | **selection, then delay roll** |
 | `scripts/edger-collection-core.mjs` | `edger:corpus:collect` (the `edger-corpus-collect.yml` workflow), `edger:canary` | the same off-path c3, production arena, labelled `checkpoint_id` = c3's id with `behavior_probabilities: "known"` | delay roll, then selection |
 
-These already pass models explicitly and are unaffected: the v2 evaluator and its worker, the league worker (the champion and snapshots are model opponents), the scaling evaluator (live v1 by path), the October runtime-cost study (pinned to v1), and the browser.
+These already pass models explicitly and are unaffected: the v2 evaluator and its worker, the league worker (the champion and snapshots are model opponents), the scaling evaluator (live v1 by path), and the browser.
+
+The review missed one more caller, found during implementation: the October runtime-cost study. Its v1 baseline refuses a v2 live module by design. Its diagnostic driver (`scripts/edger-v2-runtime-cost-adapter.js`) also plays a bare `edger` opponent through `selectBotAction`, and `checkFullMatch` requires that driver to equal `runEdgerV2CadenceMatch` called directly. Both sides use the live module, so they still agree with each other. That study is frozen and spent, so its harness was left alone (see the implementation).
 
 One correction to the earlier note in `progress.md`, which said rerouting through `selectBotDecision` is bit-identical for every other bot because the delay roll comes first. That holds for the benchmark and collection harnesses. The cadence harness selects first and rolls after, so rerouting its whole bot branch would change the random, aggressive and defender games (the heuristic draws nothing from the RNG). Aggressive is a selection opponent. Only that harness's `edger` case can change without moving other games.
 
@@ -95,3 +102,32 @@ Times are wall clock with all six variants running at once on the M6, so they co
 - 90 games per variant on one suite seed. These show where each path stands against the gate, not how close the variants are to each other.
 - The off-list count reflects the model's own enumeration on each arena. It is not a test of the engine's snapping rules.
 - No variant was measured against the heuristic, which the AGENTS.md gate does not include (the bot spec's longer command does).
+
+## Implementation (November 28, 2026)
+
+- `scripts/edger-harness-opponents.mjs` exports `EDGER_RETIRED_V1_MODEL`, the retired v1 module (`69333cd5…`).
+- `scripts/edger-v2-cadence-core.mjs`: `runEdgerV2CadenceMatch` takes `edgerBotModel`, the model a bare `edger` bot opponent plays through `selectBotAction`. Its default is unchanged (the live module), so the frozen runtime-cost study's driver and reference still agree.
+  - The cadence worker (`train-arm`, `evaluate`, `probe`, `collect` and the Fireball branch sets) and `convert-collection` pass the retired v1. The call order (selection, then delay roll) is unchanged.
+  - Collections, headers and reports keep their schemas and bytes. Plans and reports still name the opponent `edger`, which again means the retired v1.
+- `scripts/edger-collection-core.mjs`: corpus collection and `edger:canary` play the retired v1 and label it `checkpoint_id: edger_policy_bootstrap_20260701`.
+- `src/ai/benchmark.js`: every bot plays through `selectBotDecision`. That gives the shipped Edger its own legal actions and delay. For every other bot, and for a v1 Edger model, it is the same delay roll and then selection.
+  - `arena` (`production`, the default, or `benchmark`) is a parameter of `runBotMatch`, `runBenchmark`, `runEdgerBenchmarkSuite` and `runBenchmarkMatrix`.
+  - Each match reports `off_list` per side, and suites report it per pair.
+  - The legacy v1 evaluator passes `arena: "benchmark"`, so its gate is unchanged.
+- `scripts/bot-benchmark.mjs` prints the arena and an `off_list` column. A pair fails on any off-list play. `--arena benchmark` reproduces the old arena.
+- Tests:
+  - `tests/edger-harness-opponents.test.js`:
+    - the pin is the retired module byte for byte;
+    - the collection canary (seed 20260718, 600 ticks) and a full collected episode equal a clean checkout of `503ebd9` (pre-rewrite `d53fdf8`), label included;
+    - a cadence-worker `evaluate` game of c3 against `edger` equals the same checkout.
+
+    Before the change, all three differed (`HR/logs/reference-*.json`); in the cadence game, c3 lost instead of winning.
+  - `tests/bot-regression.test.js`:
+    - the gate floor test runs on the production arena with 0 off-list plays;
+    - a v1-model match and a baseline match on the benchmark arena equal the pre-change code;
+    - live c3 on the benchmark arena is counted off-list;
+    - an unknown arena is refused.
+  - `tests/edger-candidate-campaign.test.js` copies the retired module into its partial clone.
+- Results:
+  - The gate command now reads 30-0, 29-1 and 30-0 with 0 off-list plays, equal to the scratch `production`/`live` variant, in 10 s instead of 2 min 49 s.
+  - With `--arena benchmark` it fails: 56 off-list plays in 2 games against random.

@@ -545,6 +545,12 @@ export function actionStreamHash(actions) {
 // enumerated for that model, waiting its own learned delay. Bot opponents are
 // unchanged, and their results carry no model-opponent fields.
 //
+// `edgerBotModel` is the model a bare `edger` bot opponent plays through
+// selectBotAction. Left unset it is the live module, as the October
+// runtime-cost study's frozen reference expects. The cadence worker and
+// convert-collection pass the retired v1 (scripts/edger-harness-opponents.mjs)
+// so recorded plans keep their opponent (owner decision, November 28, 2026).
+//
 // Fireball diagnostics (ninth comparison), all off by default and absent from
 // the result unless requested:
 // - `fireballOpportunityLog`: the candidate's first decision of each
@@ -563,6 +569,7 @@ export function runEdgerV2CadenceMatch({
   cadence,
   opponentBotId,
   opponentModel = null,
+  edgerBotModel = undefined,
   mode = "deterministic",
   recordRows = false,
   probeStride = 0,
@@ -800,6 +807,7 @@ export function runEdgerV2CadenceMatch({
         actor: opponentActor,
         legalActions,
         rng: opponent.rng,
+        edgerModel: edgerBotModel,
       });
       opponent.nextDecisionTick = tick + rollDecisionDelayTicks({
         botId: opponentBotId,

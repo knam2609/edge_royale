@@ -32,6 +32,7 @@ import {
   runEdgerV2CadenceMatch,
 } from "./edger-v2-cadence-core.mjs";
 import { assertRewardVersion } from "./edger-reward-core.mjs";
+import { EDGER_RETIRED_V1_MODEL } from "./edger-harness-opponents.mjs";
 import { edgerV2EvaluationScheduleSeeds, edgerV2ReferenceMatchSeeds } from "./edger-v2-evaluation-core.mjs";
 import {
   EDGER_V2_PLAYSTYLE_DIAGNOSTICS_SCHEMA,
@@ -2065,6 +2066,7 @@ export function convertCadenceCollection({ collectionPath, headersDir = null, st
       model,
       cadence: collection.cadence,
       opponentBotId: item.opponent,
+      edgerBotModel: EDGER_RETIRED_V1_MODEL,
       mode: "sample",
       recordRows: true,
       returnReplay: true,
